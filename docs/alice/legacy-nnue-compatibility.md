@@ -101,8 +101,10 @@ The bridge is accepted only after all of the following pass on a fixed corpus:
 
 1. The new full-refresh feature extraction matches the legacy executable's
    output exactly for positions the legacy representation can express.
-2. Incremental evaluation equals a fresh rebuild after every move, capture,
-   promotion, castling move, undo, and null move used by search.
+2. Every enabled incremental evaluation path equals a fresh rebuild after
+   every move, capture, promotion, castling move, undo, and reachable null
+   move. A declared full-refresh-only bridge is permitted, but it MUST NOT
+   claim or exercise incremental support.
 3. The loaded path and SHA-256 remain stable across `ucinewgame`, position
    changes, thread-count changes, and repeated searches.
 4. Missing, corrupt, wrong-version, wrong-architecture, wrong-prefix, and

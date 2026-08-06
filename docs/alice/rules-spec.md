@@ -38,6 +38,10 @@ The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
    transfer.
 6. Standard chess piece types and colors are used. There are no drops, gates,
    walls, null transfers, or optional transfers.
+7. The primitive occupancy query takes an explicit layer, such as
+   `occupancy_on(Board)`. `board_of(square)` and any square-derived occupancy
+   shorthand require an occupied coordinate and MUST reject an empty square;
+   an empty coordinate does not imply layer `A`.
 
 ## 2. Ordinary move, capture, and transfer
 
@@ -82,9 +86,11 @@ layer, captured piece, clocks, rights, and all derived state exactly.
    other. They may not become adjacent on the same layer.
 3. A legal move MUST satisfy both the provisional source-board check rule and
    final two-layer king safety described in section 2.
-4. A move played on the layer opposite the checked king MAY evade check when
-   the transferred piece captures the checker or interposes on the king's
-   layer in the final position.
+4. A move on the checked king's layer MAY capture the checker before the mover
+   transfers away. A move originating on the other layer MAY evade the check
+   by transferring to an interposition square on the king's layer. It cannot
+   capture that checker across layers: the checker's occupied coordinate would
+   block the transfer.
 5. Moving a blocker on the king's layer does not evade a line check merely by
    occupying an interposition square provisionally: the blocker transfers away,
    so the final line would reopen.
@@ -172,7 +178,7 @@ layer.
 
 ### 7.2 Legacy 16-wide input
 
-A parser MAY receive a placement whose every rank expands to 16 cells. It is
+A parser MUST accept a placement whose every rank expands to 16 cells. It is
 interpreted as:
 
 ```text
@@ -192,6 +198,21 @@ The compact example above is equivalent to:
 
 Mixed-width ranks, mixed compact/16-wide markers, double occupancy, missing or
 extra ranks, and any expanded width other than 8 or 16 are invalid.
+
+### 7.3 Accepted material domain
+
+Input retains the orthodox reachable-material limits of the pinned chassis:
+
+- exactly one king of each color;
+- no more than eight pawns or sixteen total pieces per color;
+- no more than 32 total pieces;
+- no unpromoted pawn on rank 1 or rank 8;
+- promoted surplus per color is bounded by the missing pawns, using
+  `max(knights-2, 0) + max(bishops-2, 0) + max(rooks-2, 0) + max(queens-1, 0)
+  <= 8-pawns`.
+
+These checks apply equally to compact and legacy input. Invalid input MUST be
+rejected transactionally and MUST NOT leave a partially updated position.
 
 ## 8. UCI move contract and layer ambiguity
 
