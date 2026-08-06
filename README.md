@@ -1,3 +1,19 @@
+# Alice-Stockfish
+
+Alice-Stockfish is a dedicated [Alice Chess](https://www.chessvariants.com/other.dir/alice.html)
+engine derived from official Stockfish. The project is currently in its
+correctness-first engineering phase and is not yet a public playing release.
+
+The pinned chassis, rules contract, legacy audit, NNUE compatibility boundary,
+and measurement protocol are collected in the
+[Alice engineering dossier](docs/alice/README.md).
+
+The historical Fairy-Stockfish Alice branch is retained as a compatibility
+reference. It is not merged into this codebase and is not treated as an
+independent rules authority.
+
+---
+
 <div align="center">
 
   [![Stockfish][stockfish128-logo]][website-link]

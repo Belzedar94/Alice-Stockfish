@@ -1,0 +1,537 @@
+{
+  "fixtureSchema": {
+    "id": "alice-rules-fixtures",
+    "version": 1,
+    "rulesVersion": "alice-rules-v1",
+    "caseKinds": [
+      "move",
+      "position",
+      "fen-normalization",
+      "fen-validation",
+      "identity",
+      "sequence"
+    ],
+    "oracleStatuses": [
+      "normative",
+      "agrees",
+      "diagnostic",
+      "known-divergence"
+    ],
+    "requiredCaseFields": [
+      "id",
+      "kind",
+      "description",
+      "oracles",
+      "expected"
+    ]
+  },
+  "sourceCatalog": {
+    "rules-spec-v1": {
+      "type": "normative-specification",
+      "path": "docs/alice/rules-spec.md",
+      "rulesVersion": "alice-rules-v1"
+    },
+    "legacy-source-4b1940a": {
+      "type": "source-witness",
+      "repository": "https://github.com/fairy-stockfish/Fairy-Stockfish",
+      "commit": "4b1940a8d0f60eeb853de7e77af3b39ebf1b6f79",
+      "relevantFiles": [
+        "src/variant.cpp",
+        "src/movegen.cpp",
+        "src/position.cpp",
+        "src/position.h",
+        "src/uci.cpp"
+      ],
+      "limitations": [
+        "The legacy position and pawn keys do not encode the mirror-board layer.",
+        "The legacy UCI parser returns the first matching legal move instead of rejecting a collision.",
+        "The legacy FEN parser silently discards a non-applicable en-passant target."
+      ]
+    },
+    "legacy-binary-b70afe": {
+      "type": "executable-witness",
+      "sha256": "B70AFE03EC9A67258CD7B5B848C46FC9E5C83F53B9F2825E9A5946FEEFB59599",
+      "variant": "alice",
+      "role": "Differential witness for legacy-compatible move and FEN behavior, not for corrected state identity."
+    },
+    "pychess-alice-rules": {
+      "type": "external-rules-reference",
+      "url": "https://www.pychess.org/variants/alice"
+    },
+    "ccif-alice-rules": {
+      "type": "external-rules-reference",
+      "url": "https://ccif.sourceforge.net/formal-board-rules.html"
+    }
+  },
+  "conventions": {
+    "layers": {
+      "A": "Unmarked piece in compact FEN.",
+      "B": "Piece prefixed by | in compact FEN."
+    },
+    "checkField": "sideToMoveInCheck",
+    "uci": "from-square + to-square + optional lowercase promotion suffix; the current position supplies the source layer",
+    "canonicalOutput": "compact FEN",
+    "numericPositionKeys": "not normative; only equality relations are asserted"
+  },
+  "cases": [
+    {
+      "id": "quiet-transfer-a-to-b",
+      "kind": "move",
+      "description": "A quiet move is made on layer A and the pawn finishes on layer B.",
+      "initialFen": "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+      "move": "e2e4",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"},
+        {"id": "pychess-alice-rules", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "4k3/8/8/8/4|P3/8/8/4K3 b - - 0 1",
+        "mover": {"piece": "P", "from": "A:e2", "to": "B:e4"},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "quiet-transfer-b-to-a-same-uci",
+      "kind": "move",
+      "description": "The same UCI string resolves in context to the opposite transfer direction.",
+      "initialFen": "4k3/8/8/8/8/8/4|P3/4K3 w - - 0 1",
+      "move": "e2e4",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"},
+        {"id": "ccif-alice-rules", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "4k3/8/8/8/4P3/8/8/4K3 b - - 0 1",
+        "mover": {"piece": "P", "from": "B:e2", "to": "A:e4"},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "slider-ignores-other-layer-blocker",
+      "kind": "move",
+      "description": "A piece on the other layer does not block the rook's source-layer ray.",
+      "initialFen": "7k/8/8/8/8/8/|p7/R6K w - - 0 1",
+      "move": "a1a3",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-source-4b1940a", "status": "agrees"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "7k/8/8/8/8/|R7/|p7/7K b - - 1 1",
+        "mover": {"piece": "R", "from": "A:a1", "to": "B:a3"},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "occupied-transfer-destination-is-illegal",
+      "kind": "move",
+      "description": "A quiet source-board rook move is illegal when its arrival square on the other layer is occupied.",
+      "initialFen": "7k/8/8/8/8/|p7/8/R6K w - - 0 1",
+      "move": "a1a3",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"},
+        {"id": "pychess-alice-rules", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "B:a3 is occupied; transfer cannot capture or displace that piece."
+      }
+    },
+    {
+      "id": "capture-on-source-layer-then-transfer",
+      "kind": "move",
+      "description": "The bishop captures on layer A, removes that victim, and finishes on layer B.",
+      "initialFen": "7k/5p2/8/8/2B5/8/8/7K w - - 0 1",
+      "move": "c4f7",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-source-4b1940a", "status": "agrees"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "7k/5|B2/8/8/8/8/8/7K b - - 0 1",
+        "mover": {"piece": "B", "from": "A:c4", "to": "B:f7"},
+        "captured": {"piece": "p", "at": "A:f7"},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "cross-layer-capture-is-illegal",
+      "kind": "move",
+      "description": "The bishop cannot capture a pawn that occupies only the other layer.",
+      "initialFen": "7k/5|p2/8/8/2B5/8/8/7K w - - 0 1",
+      "move": "c4f7",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"},
+        {"id": "pychess-alice-rules", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "A:f7 is not a capture target and B:f7 is occupied, so transfer is blocked."
+      }
+    },
+    {
+      "id": "different-layer-rook-does-not-check",
+      "kind": "position",
+      "description": "A rook and king on different layers do not interact.",
+      "initialFen": "4r2k/8/8/8/8/8/8/4|K3 w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "accepted": true,
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "same-layer-rook-gives-check",
+      "kind": "position",
+      "description": "The identical square overlay is check when rook and king share layer B.",
+      "initialFen": "4|r2|k/8/8/8/8/8/8/4|K3 w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "accepted": true,
+        "sideToMoveInCheck": true,
+        "checkers": ["B:e8"]
+      }
+    },
+    {
+      "id": "other-layer-interposition-evades-check",
+      "kind": "move",
+      "description": "A rook moves on B and transfers to A:e2, where it blocks the check in the final position.",
+      "initialFen": "4r2|k/8/8/8/8/8/|R7/4K3 w - - 0 1",
+      "move": "a2e2",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "4r2|k/8/8/8/8/8/4R3/4K3 b - - 1 1",
+        "mover": {"piece": "R", "from": "B:a2", "to": "A:e2"},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "same-layer-provisional-block-reopens-after-transfer",
+      "kind": "move",
+      "description": "A rook on the king's layer cannot block a line if transfer removes it from the final line.",
+      "initialFen": "4r2|k/8/8/8/8/8/R7/4K3 w - - 0 1",
+      "move": "a2e2",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "The rook would finish on B:e2 and the white king would remain checked on layer A."
+      }
+    },
+    {
+      "id": "king-ordinary-evasion-then-transfer",
+      "kind": "move",
+      "description": "The king first moves to an unattacked source-layer square and then transfers to safety.",
+      "initialFen": "4r2|k/8/8/8/8/8/8/4K3 w - - 0 1",
+      "move": "e1d1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "4r2|k/8/8/8/8/8/8/3|K4 b - - 1 1",
+        "mover": {"piece": "K", "from": "A:e1", "to": "B:d1"},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "king-cannot-transfer-into-check",
+      "kind": "move",
+      "description": "A source-board king step is illegal when the transferred king would be attacked on the destination layer.",
+      "initialFen": "3|r3k/8/8/8/8/8/8/4K3 w - - 0 1",
+      "move": "e1d1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "The king would finish on B:d1 in the B:d8 rook's line."
+      }
+    },
+    {
+      "id": "king-move-must-be-safe-on-source-board-before-transfer",
+      "kind": "move",
+      "description": "Final safety on B is not enough when the ordinary king destination is attacked on source layer A.",
+      "initialFen": "3r3|k/8/8/8/8/8/8/4K3 w - - 0 1",
+      "move": "e1d1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"},
+        {"id": "pychess-alice-rules", "status": "agrees"},
+        {"id": "ccif-alice-rules", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "The provisional king on A:d1 is attacked by the rook on A:d8 before transfer."
+      }
+    },
+    {
+      "id": "quiet-promotion-transfers-promoted-piece",
+      "kind": "move",
+      "description": "Promotion is mandatory on the source layer, then the chosen piece transfers to the opposite layer.",
+      "initialFen": "7k/P7/8/8/8/8/8/7K w - - 0 1",
+      "move": "a7a8q",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-source-4b1940a", "status": "agrees"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "|Q6k/8/8/8/8/8/8/7K b - - 0 1",
+        "mover": {"piece": "P", "from": "A:a7", "to": "B:a8", "resultPiece": "Q"},
+        "transitionOrder": [
+          "promote P to Q on A:a8",
+          "transfer Q from A:a8 to B:a8"
+        ],
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "promotion-suffix-is-required",
+      "kind": "move",
+      "description": "Entering the final rank without a promotion choice is not a complete UCI move.",
+      "initialFen": "7k/P7/8/8/8/8/8/7K w - - 0 1",
+      "move": "a7a8",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "A promotion suffix q, r, b, or n is mandatory."
+      }
+    },
+    {
+      "id": "kingside-castling-transfers-king-and-rook",
+      "kind": "move",
+      "description": "Orthodox castling is completed on A and both pieces transfer to B.",
+      "initialFen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "move": "e1g1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-source-4b1940a", "status": "agrees"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "r3k2r/8/8/8/8/8/8/R4|R|K1 b kq - 1 1",
+        "king": {"from": "A:e1", "to": "B:g1"},
+        "rook": {"from": "A:h1", "to": "B:f1"},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "castling-transfer-square-must-be-empty",
+      "kind": "move",
+      "description": "Castling is illegal when the rook's final square on the destination layer is occupied.",
+      "initialFen": "k7/8/8/8/8/8/8/4K|n1R w K - 0 1",
+      "move": "e1g1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "B:f1 is occupied and is the rook's required arrival square."
+      }
+    },
+    {
+      "id": "castling-cannot-cross-source-layer-check",
+      "kind": "move",
+      "description": "The king may not cross an attacked source-layer transit square before transfer.",
+      "initialFen": "|k4r2/8/8/8/8/8/8/4K2R w K - 0 1",
+      "move": "e1g1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "A:f1 is attacked by the rook on A:f8."
+      }
+    },
+    {
+      "id": "double-push-creates-no-en-passant-target",
+      "kind": "move",
+      "description": "A double pawn push transfers normally but the FEN en-passant field stays disabled.",
+      "initialFen": "7k/3p4/8/4P3/8/8/8/7K b - - 0 1",
+      "move": "d7d5",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-source-4b1940a", "status": "agrees"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "7k/8/8/3|pP3/8/8/8/7K w - - 0 2",
+        "mover": {"piece": "p", "from": "A:d7", "to": "B:d5"},
+        "enPassantTarget": null,
+        "subsequentMoveLegality": {"e5d6": false},
+        "sideToMoveInCheck": false
+      }
+    },
+    {
+      "id": "sixteen-wide-input-normalizes-to-compact-fen",
+      "kind": "fen-normalization",
+      "description": "Each 16-cell rank is A:a-h followed by B:a-h and emits compact marker notation.",
+      "inputFen": "4k11/16/16/16/12P3/16/16/4K11 w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-source-4b1940a", "status": "agrees"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"}
+      ],
+      "expected": {
+        "accepted": true,
+        "canonicalFen": "4k3/8/8/8/4|P3/8/8/4K3 w - - 0 1",
+        "pieces": ["A:e8=black king", "B:e4=white pawn", "A:e1=white king"]
+      }
+    },
+    {
+      "id": "nonempty-en-passant-fen-field-is-rejected",
+      "kind": "fen-validation",
+      "description": "Rules v1 rejects a stale en-passant target instead of silently discarding it.",
+      "inputFen": "7k/8/8/3pP3/8/8/8/7K w - d6 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {
+          "id": "legacy-binary-b70afe",
+          "status": "known-divergence",
+          "observation": "The frozen executable accepts the input and canonicalizes the field to -."
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "The en-passant field must be -."
+      }
+    },
+    {
+      "id": "sixteen-wide-double-occupancy-is-rejected",
+      "kind": "fen-validation",
+      "description": "The 16-wide form may not place two pieces on the same shared coordinate.",
+      "inputFen": "4k11/16/16/16/4P7p3/16/16/4K11 w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "ccif-alice-rules", "status": "agrees"}
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "A:e4 and B:e4 cannot both be occupied."
+      }
+    },
+    {
+      "id": "layer-is-part-of-position-identity",
+      "kind": "identity",
+      "description": "Equal square overlays with different pawn layers are distinct positions.",
+      "positions": {
+        "left": "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+        "right": "4k3/8/8/8/8/8/4|P3/4K3 w - - 0 1"
+      },
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {
+          "id": "legacy-source-4b1940a",
+          "status": "diagnostic",
+          "observation": "The frozen implementation omits mirrorBoard from set_state() keys."
+        },
+        {
+          "id": "legacy-binary-b70afe",
+          "status": "known-divergence",
+          "observation": "Both positions report legacy key A5A7E7F409B09EE4."
+        }
+      ],
+      "expected": {
+        "fullPositionKeyRelation": "different",
+        "pawnKeyRelation": "different",
+        "countOnlyMaterialKeyRelation": "same",
+        "repetitionEquivalent": false
+      }
+    },
+    {
+      "id": "repetition-requires-the-same-layers",
+      "kind": "sequence",
+      "description": "A six-ply coordinate cycle restores the overlay but flips both queen layers; only every second cycle restores repetition identity.",
+      "initialFen": "3q3k/8/8/8/8/8/8/3Q3K w - - 0 1",
+      "moves": [
+        "d1d2", "d8d7", "d2e2", "d7e7", "e2d1", "e7d8",
+        "d1d2", "d8d7", "d2e2", "d7e7", "e2d1", "e7d8",
+        "d1d2", "d8d7", "d2e2", "d7e7", "e2d1", "e7d8",
+        "d1d2", "d8d7", "d2e2", "d7e7", "e2d1", "e7d8"
+      ],
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {
+          "id": "legacy-source-4b1940a",
+          "status": "diagnostic",
+          "observation": "Legacy repetition compares a position key that does not encode mirrorBoard."
+        },
+        {
+          "id": "legacy-binary-b70afe",
+          "status": "known-divergence",
+          "observation": "The initial and six-ply positions both report legacy key 32FC7FF780874DBE."
+        }
+      ],
+      "expected": {
+        "allMovesLegal": true,
+        "checkpoints": [
+          {
+            "afterPly": 6,
+            "fen": "3|q3k/8/8/8/8/8/8/3|Q3K w - - 6 4",
+            "fullPositionKeyRelationToInitial": "different",
+            "repetitionEquivalentToInitial": false,
+            "initialIdentityOccurrences": 1,
+            "threefold": false
+          },
+          {
+            "afterPly": 12,
+            "fen": "3q3k/8/8/8/8/8/8/3Q3K w - - 12 7",
+            "fullPositionKeyRelationToInitial": "same",
+            "repetitionEquivalentToInitial": true,
+            "initialIdentityOccurrences": 2,
+            "threefold": false
+          },
+          {
+            "afterPly": 18,
+            "fen": "3|q3k/8/8/8/8/8/8/3|Q3K w - - 18 10",
+            "fullPositionKeyRelationToInitial": "different",
+            "repetitionEquivalentToInitial": false,
+            "initialIdentityOccurrences": 2,
+            "threefold": false
+          },
+          {
+            "afterPly": 24,
+            "fen": "3q3k/8/8/8/8/8/8/3Q3K w - - 24 13",
+            "fullPositionKeyRelationToInitial": "same",
+            "repetitionEquivalentToInitial": true,
+            "initialIdentityOccurrences": 3,
+            "threefold": true
+          }
+        ]
+      }
+    }
+  ]
+}
