@@ -1,0 +1,113 @@
+name: Alice verification
+
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-release:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x86-64-bmi2
+          - x86-64-avx2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build
+        run: make -C src -j2 build ARCH=${{ matrix.arch }} COMP=gcc
+      - name: Verify rules and executable
+        run: |
+          python3 tests/alice/test_reference.py
+          python3 tests/alice/test_engine.py --engine src/stockfish
+      - name: Verify closed binary
+        run: |
+          test "$(stat -c%s src/stockfish)" -lt 10000000
+          ! strings src/stockfish | grep -q 'nn-ab28990d4ea3.nnue'
+
+  windows-release:
+    name: Windows ${{ matrix.arch }}
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x86-64-bmi2
+          - x86-64-avx2
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up MinGW
+        uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2.31.1
+        with:
+          msystem: mingw64
+          install: mingw-w64-x86_64-gcc make
+      - name: Build
+        shell: msys2 {0}
+        run: make -C src -j2 build ARCH=${{ matrix.arch }} COMP=mingw
+      - name: Verify rules and executable
+        shell: pwsh
+        run: |
+          python tests/alice/test_reference.py
+          python tests/alice/test_engine.py --engine src/stockfish.exe
+          if ((Get-Item src/stockfish.exe).Length -ge 10000000) {
+            throw "Alice binary unexpectedly contains a large embedded payload."
+          }
+
+  linux-instrumented:
+    name: Linux ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: glibcxx-assertions
+            sanitizer: none
+            flags: -O1 -fno-inline -D_GLIBCXX_ASSERTIONS
+          - name: address-undefined
+            sanitizer: address undefined
+            flags: -O1 -fno-inline -fno-omit-frame-pointer
+          - name: thread
+            sanitizer: thread
+            flags: -O1 -fno-inline
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Lower address randomization for thread instrumentation
+        if: matrix.name == 'thread'
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: Build
+        env:
+          CXXFLAGS: ${{ matrix.flags }}
+        run: >-
+          make -C src -j2 build ARCH=x86-64-sse41-popcnt COMP=gcc
+          debug=yes optimize=no sanitize='${{ matrix.sanitizer }}'
+      - name: Verify rules and executable
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: |
+          python3 tests/alice/test_reference.py
+          python3 tests/alice/test_engine.py --engine src/stockfish
