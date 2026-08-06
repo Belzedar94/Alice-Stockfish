@@ -121,6 +121,12 @@ enum Color : u8 {
     COLOR_NB = 2
 };
 
+enum Board : u8 {
+    BOARD_A,
+    BOARD_B,
+    BOARD_NB = 2
+};
+
 enum CastlingRights : u8 {
     NO_CASTLING,
     WHITE_OO,
@@ -377,6 +383,11 @@ constexpr Square& operator-=(Square& s, Direction d) { return s = s - d; }
 
 // Toggle color
 constexpr Color operator~(Color c) { return Color(c ^ BLACK); }
+
+constexpr Board opposite(Board b) {
+    assert(b == BOARD_A || b == BOARD_B);
+    return Board(b ^ BOARD_B);
+}
 
 // Swap A1 <-> A8
 constexpr Square flip_rank(Square s) { return Square(s ^ SQ_A8); }

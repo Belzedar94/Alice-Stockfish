@@ -45,6 +45,7 @@ struct SharedHistories;
 struct StateInfo {
 
     // Copied when making a move
+    Bitboard boardB;
     Key    materialKey;
     Key    pawnKey;
     Key    minorPieceKey;
@@ -103,10 +104,21 @@ class Position {
     Bitboard pieces(Color c) const;
     template<typename... PieceTypes>
     Bitboard                            pieces(Color c, PieceTypes... pts) const;
+    Board                               board_of(Square s) const;
+    Bitboard                            occupancy_on(Board b) const;
+    Bitboard                            pieces_on(Board b) const;
+    template<typename... PieceTypes>
+    Bitboard pieces_on(Board b, PieceTypes... pts) const;
+    Bitboard pieces_on(Board b, Color c) const;
+    template<typename... PieceTypes>
+    Bitboard pieces_on(Board b, Color c, PieceTypes... pts) const;
     Piece                               piece_on(Square s) const;
+    Piece                               piece_on(Board b, Square s) const;
     const std::array<Piece, SQUARE_NB>& piece_array() const;
     Square                              ep_square() const;
-    bool                                empty(Square s) const;
+    bool                                empty(Square s) const;  // Coordinate-empty on both boards
+    bool                                occupied_on(Board b, Square s) const;
+    bool                                empty_on(Board b, Square s) const;
     template<PieceType Pt>
     int count(Color c) const;
     template<PieceType Pt>
@@ -186,6 +198,7 @@ class Position {
     StateInfo* state() const;
 
     void put_piece(Piece pc, Square s, DirtyThreats* const dts = nullptr);
+    void put_piece(Piece pc, Square s, Board b, DirtyThreats* const dts = nullptr);
     void remove_piece(Square s, DirtyThreats* const dts = nullptr);
     void swap_piece(Square s, Piece pc, DirtyThreats* const dts = nullptr);
 
@@ -204,6 +217,7 @@ class Position {
                               DirtyThreats* const dts,
                               Bitboard            noRaysContaining = -1ULL) const;
     void move_piece(Square from, Square to, DirtyThreats* const dts = nullptr);
+    void move_piece(Square from, Square to, Board destination, DirtyThreats* const dts = nullptr);
     template<bool Do>
     void do_castling(Color               us,
                      Square              from,
@@ -240,9 +254,44 @@ inline Piece Position::piece_on(Square s) const {
     return board[s];
 }
 
+inline Board Position::board_of(Square s) const {
+    assert(piece_on(s) != NO_PIECE);
+    return (st->boardB & s) ? BOARD_B : BOARD_A;
+}
+
+inline Bitboard Position::occupancy_on(Board b) const {
+    assert(b == BOARD_A || b == BOARD_B);
+    return pieces() & (b == BOARD_B ? st->boardB : ~st->boardB);
+}
+
+inline Bitboard Position::pieces_on(Board b) const { return occupancy_on(b); }
+
+template<typename... PieceTypes>
+inline Bitboard Position::pieces_on(Board b, PieceTypes... pts) const {
+    return occupancy_on(b) & pieces(pts...);
+}
+
+inline Bitboard Position::pieces_on(Board b, Color c) const {
+    return occupancy_on(b) & pieces(c);
+}
+
+template<typename... PieceTypes>
+inline Bitboard Position::pieces_on(Board b, Color c, PieceTypes... pts) const {
+    return occupancy_on(b) & pieces(c, pts...);
+}
+
+inline Piece Position::piece_on(Board b, Square s) const {
+    Piece pc = piece_on(s);
+    return pc != NO_PIECE && board_of(s) == b ? pc : NO_PIECE;
+}
+
 inline const std::array<Piece, SQUARE_NB>& Position::piece_array() const { return board; }
 
 inline bool Position::empty(Square s) const { return piece_on(s) == NO_PIECE; }
+
+inline bool Position::occupied_on(Board b, Square s) const { return piece_on(b, s) != NO_PIECE; }
+
+inline bool Position::empty_on(Board b, Square s) const { return !occupied_on(b, s); }
 
 inline Piece Position::moved_piece(Move m) const { return piece_on(m.from_sq()); }
 
@@ -379,11 +428,20 @@ inline bool Position::capture_stage(Move m) const {
 inline Piece Position::captured_piece() const { return st->capturedPiece; }
 
 inline void Position::put_piece(Piece pc, Square s, DirtyThreats* const dts) {
+    put_piece(pc, s, BOARD_A, dts);
+}
+
+inline void Position::put_piece(Piece pc, Square s, Board b, DirtyThreats* const dts) {
+    assert(empty(s));
     board[s] = pc;
     byTypeBB[ALL_PIECES] |= byTypeBB[type_of(pc)] |= s;
     byColorBB[color_of(pc)] |= s;
     pieceCount[pc]++;
     pieceCount[make_piece(color_of(pc), ALL_PIECES)]++;
+
+    st->boardB &= ~square_bb(s);
+    if (b == BOARD_B)
+        st->boardB |= s;
 
     if (dts)
         update_piece_threats(pc, true, s, dts);
@@ -398,12 +456,20 @@ inline void Position::remove_piece(Square s, DirtyThreats* const dts) {
     byTypeBB[ALL_PIECES] ^= s;
     byTypeBB[type_of(pc)] ^= s;
     byColorBB[color_of(pc)] ^= s;
+    st->boardB &= ~square_bb(s);
     board[s] = NO_PIECE;
     pieceCount[pc]--;
     pieceCount[make_piece(color_of(pc), ALL_PIECES)]--;
 }
 
 inline void Position::move_piece(Square from, Square to, DirtyThreats* const dts) {
+    move_piece(from, to, board_of(from), dts);
+}
+
+inline void Position::move_piece(Square from,
+                                 Square to,
+                                 Board  destination,
+                                 DirtyThreats* const dts) {
     Piece    pc     = board[from];
     Bitboard fromTo = from | to;
 
@@ -413,6 +479,9 @@ inline void Position::move_piece(Square from, Square to, DirtyThreats* const dts
     byTypeBB[ALL_PIECES] ^= fromTo;
     byTypeBB[type_of(pc)] ^= fromTo;
     byColorBB[color_of(pc)] ^= fromTo;
+    st->boardB &= ~fromTo;
+    if (destination == BOARD_B)
+        st->boardB |= to;
     board[from] = NO_PIECE;
     board[to]   = pc;
 
@@ -422,13 +491,14 @@ inline void Position::move_piece(Square from, Square to, DirtyThreats* const dts
 
 inline void Position::swap_piece(Square s, Piece pc, DirtyThreats* const dts) {
     Piece old = board[s];
+    Board b   = board_of(s);
 
     remove_piece(s);
 
     if (dts)
         update_piece_threats<false>(old, false, s, dts);
 
-    put_piece(pc, s);
+    put_piece(pc, s, b);
 
     if (dts)
         update_piece_threats<false>(pc, true, s, dts);

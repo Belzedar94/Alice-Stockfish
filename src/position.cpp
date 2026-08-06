@@ -1637,6 +1637,9 @@ bool Position::material_key_is_ok() const { return compute_material_key() == st-
 // This is meant to be helpful when debugging.
 bool Position::pos_is_ok() const {
 
+    if (st->boardB & ~pieces())
+        assert(0 && "pos_is_ok: boardB contains empty coordinates");
+
     if ((sideToMove != WHITE && sideToMove != BLACK) || piece_on(square<KING>(WHITE)) != W_KING
         || piece_on(square<KING>(BLACK)) != B_KING
         || (ep_square() != SQ_NONE && relative_rank(sideToMove, ep_square()) != RANK_6))
