@@ -151,6 +151,11 @@ struct IncrementalVerificationStats {
     u64 fullRefreshes[COLOR_NB] = {};
     u64 maxPieceEvents          = 0;
     u64 maxThreatEvents         = 0;
+    u64 cacheChecks             = 0;
+    u64 cachePieceAdds          = 0;
+    u64 cachePieceRemoves       = 0;
+    u64 cacheBoardBEvents       = 0;
+    u64 simdChecks              = 0;
 };
 
 struct PerspectiveTrace {

@@ -153,7 +153,7 @@ network suite proves that the embedded list and fixture produce the same node
 count, and repeated fresh processes produce the same signature. This is a
 build-admission identity, not a strength measurement.
 
-## Native NNUE N0-N4 and N6 wire milestone
+## Native NNUE N0-N6 qualification milestone
 
 The native v1 manifest, identifiers, dimensions, relation order, component
 hashes, tensor order, and wire version are frozen in the public contract. A
@@ -180,8 +180,13 @@ alice_native_verify_incremental <depth 0..2>
 
 The accumulator weights in this verification route are bounded deterministic
 fixtures; they are not a trained network and are not used by evaluation.
-Native cache/SIMD optimization, real parameter allocation, checkpoint export,
-and evaluation remain closed until their exact parity gates land.
+A board-aware fixture cache is indexed by perspective, king board, and king
+square. Each entry stores the complete piece array, occupied-coordinate mask,
+and `boardB` mask. Its scalar refresh result is compared with a fresh rebuild
+at every visited position. A separate bounded-integer SIMD route covers every
+accumulator lane and PSQT bucket and must equal the scalar result exactly on
+each supported build target. These routes remain qualification fixtures; they
+do not allocate native network parameters or provide evaluation.
 
 The N6 wire validator now accepts only the exact native version, composite and
 component hashes, 1,043-byte canonical manifest, raw little-endian tensor
@@ -205,8 +210,8 @@ alice_native_wire_status
 ```
 
 Wire validation deliberately does not allocate parameters or make the file an
-evaluator. Native cache/SIMD work, real checkpoint quantization, parameter
-loading, and evaluation routing remain separate gates.
+evaluator. Real checkpoint quantization, parameter loading, and evaluation
+routing remain separate gates.
 
 ## Cross-platform verification
 

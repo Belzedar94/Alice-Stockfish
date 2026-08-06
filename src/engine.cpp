@@ -519,8 +519,10 @@ std::optional<std::string> Engine::verify_native_incremental(Depth depth, std::s
         << stats.transitions << " captures " << stats.captures << " promotions " << stats.promotions
         << " castlings " << stats.castlings << " king_moves " << stats.kingMoves << " refreshes "
         << stats.fullRefreshes[WHITE] << ',' << stats.fullRefreshes[BLACK] << " max_piece_events "
-        << stats.maxPieceEvents << " max_threat_events " << stats.maxThreatEvents << " depth "
-        << depth;
+        << stats.maxPieceEvents << " max_threat_events " << stats.maxThreatEvents
+        << " cache_checks " << stats.cacheChecks << " cache_adds " << stats.cachePieceAdds
+        << " cache_removes " << stats.cachePieceRemoves << " cache_board_b_events "
+        << stats.cacheBoardBEvents << " simd_checks " << stats.simdChecks << " depth " << depth;
     report = out.str();
     return std::nullopt;
 }

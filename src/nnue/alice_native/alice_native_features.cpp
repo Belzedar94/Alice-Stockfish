@@ -14,6 +14,7 @@
 #include <array>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <tuple>
 #include <vector>
@@ -23,6 +24,7 @@
 #include "../../movegen.h"
 #include "../../position.h"
 #include "../features/full_threats.h"
+#include "../simd.h"
 
 namespace Stockfish::Eval::NNUE::AliceNative {
 
@@ -236,6 +238,28 @@ struct FixtureAccumulator {
     std::array<i64, PsqtBuckets> psqt{};
 };
 
+struct alignas(CacheLineSize) SimdFixtureAccumulator {
+    alignas(CacheLineSize) std::array<i16, L1> values{};
+    alignas(CacheLineSize) std::array<i32, PsqtBuckets> psqt{};
+};
+
+struct FixtureCacheEntry {
+    FixtureAccumulator           pieceAccumulator;
+    std::array<Piece, SQUARE_NB> pieces{};
+    Bitboard                     pieceBB = 0;
+    Bitboard                     boardB  = 0;
+
+    FixtureCacheEntry() {
+        for (IndexType lane = 0; lane < L1; ++lane)
+            pieceAccumulator.values[lane] = fixture_bias(lane);
+        pieces.fill(NO_PIECE);
+    }
+};
+
+struct FixtureCache {
+    std::array<std::array<std::array<FixtureCacheEntry, SQUARE_NB>, BOARD_NB>, COLOR_NB> entries;
+};
+
 void update_fixture_piece(FixtureAccumulator& accumulator, IndexType index, i32 sign) {
     for (IndexType lane = 0; lane < L1; ++lane)
         accumulator.values[lane] += sign * fixture_piece_weight(index, lane);
@@ -250,6 +274,45 @@ void update_fixture_threat(FixtureAccumulator& accumulator, IndexType index, i32
         accumulator.psqt[bucket] += sign * fixture_threat_psqt(index, bucket);
 }
 
+template<typename WeightFunction, typename PsqtFunction>
+void update_simd_fixture(SimdFixtureAccumulator& accumulator,
+                         IndexType               index,
+                         i32                     sign,
+                         WeightFunction          weight,
+                         PsqtFunction            psqt) {
+    using namespace SIMD;
+
+    alignas(CacheLineSize) std::array<i16, L1>          laneWeights;
+    alignas(CacheLineSize) std::array<i32, PsqtBuckets> psqtWeights;
+    for (IndexType lane = 0; lane < L1; ++lane)
+        laneWeights[lane] = i16(weight(index, lane));
+    for (IndexType bucket = 0; bucket < PsqtBuckets; ++bucket)
+        psqtWeights[bucket] = psqt(index, bucket);
+
+    static_assert(L1 % (sizeof(vec_t) / sizeof(i16)) == 0);
+    static_assert(PsqtBuckets % (sizeof(psqt_vec_t) / sizeof(i32)) == 0);
+
+    auto*       destination = reinterpret_cast<vec_t*>(accumulator.values.data());
+    const auto* source      = reinterpret_cast<const vec_t*>(laneWeights.data());
+    for (usize block = 0; block < L1 / (sizeof(vec_t) / sizeof(i16)); ++block)
+    {
+        const vec_t current = vec_load(&destination[block]);
+        const vec_t column  = vec_load(&source[block]);
+        vec_store(&destination[block],
+                  sign > 0 ? vec_add_16(current, column) : vec_sub_16(current, column));
+    }
+
+    auto*       psqtDestination = reinterpret_cast<psqt_vec_t*>(accumulator.psqt.data());
+    const auto* psqtSource      = reinterpret_cast<const psqt_vec_t*>(psqtWeights.data());
+    for (usize block = 0; block < PsqtBuckets / (sizeof(psqt_vec_t) / sizeof(i32)); ++block)
+    {
+        const psqt_vec_t current = vec_load_psqt(&psqtDestination[block]);
+        const psqt_vec_t column  = vec_load_psqt(&psqtSource[block]);
+        vec_store_psqt(&psqtDestination[block], sign > 0 ? vec_add_psqt_32(current, column)
+                                                         : vec_sub_psqt_32(current, column));
+    }
+}
+
 FixtureAccumulator build_fixture_accumulator(const PerspectiveTrace& trace) {
     FixtureAccumulator accumulator;
     for (IndexType lane = 0; lane < L1; ++lane)
@@ -259,6 +322,93 @@ FixtureAccumulator build_fixture_accumulator(const PerspectiveTrace& trace) {
     for (const auto& feature : trace.threats)
         update_fixture_threat(accumulator, feature.index, 1);
     return accumulator;
+}
+
+SimdFixtureAccumulator build_simd_fixture_accumulator(const PerspectiveTrace& trace) {
+    SimdFixtureAccumulator accumulator;
+    for (IndexType lane = 0; lane < L1; ++lane)
+        accumulator.values[lane] = i16(fixture_bias(lane));
+    for (const auto& feature : trace.pieces)
+        update_simd_fixture(accumulator, feature.index, 1, fixture_piece_weight,
+                            fixture_piece_psqt);
+    for (const auto& feature : trace.threats)
+        update_simd_fixture(accumulator, feature.index, 1, fixture_threat_weight,
+                            fixture_threat_psqt);
+    return accumulator;
+}
+
+FixtureAccumulator refresh_fixture_cache(const Position&               position,
+                                         const PerspectiveTrace&       trace,
+                                         FixtureCache&                 cache,
+                                         IncrementalVerificationStats& stats) {
+    FixtureCacheEntry& entry = cache.entries[trace.perspective][trace.kingBoard][trace.kingSquare];
+    const Bitboard     currentPieceBB = position.pieces();
+    const Bitboard     currentBoardB  = position.occupancy_on(BOARD_B);
+
+    for (Square square = SQ_A1; square <= SQ_H8; ++square)
+    {
+        const Bitboard squareBB   = square_bb(square);
+        const bool     oldPresent = bool(entry.pieceBB & squareBB);
+        const Piece    oldPiece   = oldPresent ? entry.pieces[square] : NO_PIECE;
+        const Board    oldBoard   = entry.boardB & squareBB ? BOARD_B : BOARD_A;
+        const Piece    newPiece   = position.piece_on(square);
+        const bool     newPresent = newPiece != NO_PIECE;
+        const Board    newBoard   = newPresent ? position.board_of(square) : BOARD_A;
+        const bool     unchanged =
+          oldPresent && newPresent && oldPiece == newPiece && oldBoard == newBoard;
+
+        if (oldPresent && !unchanged)
+        {
+            const IndexType index = PieceSquareFeatures::make_index(
+              trace.perspective, square, oldPiece, oldBoard, trace.kingSquare, trace.kingBoard);
+            update_fixture_piece(entry.pieceAccumulator, index, -1);
+            ++stats.cachePieceRemoves;
+            stats.cacheBoardBEvents += oldBoard == BOARD_B;
+        }
+        if (newPresent && !unchanged)
+        {
+            const IndexType index = PieceSquareFeatures::make_index(
+              trace.perspective, square, newPiece, newBoard, trace.kingSquare, trace.kingBoard);
+            update_fixture_piece(entry.pieceAccumulator, index, 1);
+            ++stats.cachePieceAdds;
+            stats.cacheBoardBEvents += newBoard == BOARD_B;
+        }
+
+        entry.pieces[square] = newPiece;
+    }
+
+    entry.pieceBB = currentPieceBB;
+    entry.boardB  = currentBoardB;
+
+    FixtureAccumulator result = entry.pieceAccumulator;
+    for (const auto& feature : trace.threats)
+        update_fixture_threat(result, feature.index, 1);
+    ++stats.cacheChecks;
+    return result;
+}
+
+std::optional<std::string> verify_refresh_routes(const Position&               position,
+                                                 const PositionTrace&          trace,
+                                                 FixtureCache&                 cache,
+                                                 IncrementalVerificationStats& stats) {
+    for (Color perspective : {WHITE, BLACK})
+    {
+        const FixtureAccumulator     scalar = build_fixture_accumulator(trace[perspective]);
+        const SimdFixtureAccumulator simd   = build_simd_fixture_accumulator(trace[perspective]);
+        for (IndexType lane = 0; lane < L1; ++lane)
+            if (scalar.values[lane] != simd.values[lane])
+                return "Alice native SIMD accumulator mismatch at " + position.fen() + ".";
+        for (IndexType bucket = 0; bucket < PsqtBuckets; ++bucket)
+            if (scalar.psqt[bucket] != simd.psqt[bucket])
+                return "Alice native SIMD PSQT mismatch at " + position.fen() + ".";
+        ++stats.simdChecks;
+
+        const FixtureAccumulator cached =
+          refresh_fixture_cache(position, trace[perspective], cache, stats);
+        if (cached.values != scalar.values || cached.psqt != scalar.psqt)
+            return "Alice native board-aware cache mismatch at " + position.fen() + ".";
+    }
+    return std::nullopt;
 }
 
 bool erase_index(std::vector<IndexType>& indices, IndexType index) {
@@ -575,17 +725,21 @@ verify_incremental(Position& position, Depth depth, IncrementalVerificationStats
 
     const std::string rootFen = position.fen();
     const Key         rootKey = position.key();
+    auto              cache   = std::make_unique<FixtureCache>();
 
     std::function<std::optional<std::string>(Depth)> visit;
     visit = [&](Depth remaining) -> std::optional<std::string> {
         ++stats.positions;
+        const PositionTrace currentTrace = build_trace(position);
+        if (auto error = verify_refresh_routes(position, currentTrace, *cache, stats))
+            return error;
         if (remaining == 0)
             return std::nullopt;
 
         const std::string   nodeFen  = position.fen();
         const Key           nodeKey  = position.key();
         const SemanticState before   = collect_semantic_state(position);
-        const PositionTrace oldTrace = build_trace(position);
+        const PositionTrace oldTrace = currentTrace;
         std::vector<Move>   legalMoves;
         for (Move move : MoveList<LEGAL>(position))
             legalMoves.push_back(move);
