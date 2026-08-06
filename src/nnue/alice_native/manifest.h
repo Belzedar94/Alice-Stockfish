@@ -25,6 +25,8 @@ inline constexpr std::string_view PairFeatureId        = "None";
 inline constexpr std::string_view RulesId              = "alice-rules-v1";
 inline constexpr std::string_view TensorLayoutId       = "alice-native-tensors-v1";
 inline constexpr std::string_view QuantizationId       = "alice-native-quant-v1";
+inline constexpr std::string_view ManifestSha256 =
+  "BFEAC25BC943190C2512B03DD3BC955FD5D3D9FE55109440B81F3DC6A7C883CA";
 
 constexpr u32 WireVersion = 0xA11CE001u;
 
@@ -46,6 +48,14 @@ constexpr IndexType L3          = 32;
 constexpr IndexType PsqtBuckets = 8;
 constexpr IndexType LayerStacks = 8;
 
+constexpr u64 CanonicalManifestBytes = 1043;
+constexpr u64 FeatureTensorBytes =
+  2 * u64(L1) + u64(ThreatDimensions) * L1 + u64(ThreatDimensions) * PsqtBuckets * 4
+  + u64(PieceSquareDimensions) * L1 * 2 + u64(PieceSquareDimensions) * PsqtBuckets * 4;
+constexpr u64 DenseStackTensorBytes = 32 * 4 + 32 * u64(L1) + 32 * 4 + 32 * 64 + 4 + 128;
+constexpr u64 NativeWireBytes       = 12 + CanonicalManifestBytes + 4 + FeatureTensorBytes
+                              + u64(LayerStacks) * (4 + DenseStackTensorBytes);
+
 constexpr u32 PieceSquareHash       = 0x5280C41Eu;
 constexpr u32 ThreatHash            = 0x6EE7B82Cu;
 constexpr u32 DenseArchitectureHash = 0x63337116u;
@@ -64,6 +74,9 @@ static_assert(ThreatDimensions == 119616);
 static_assert(LogicalInputDimensions == 164672);
 static_assert(FeatureTransformerHash == 0x8F4FBC46u);
 static_assert(CompositeArchitectureHash == 0xEC7CCD50u);
+static_assert(FeatureTensorBytes == 220033024);
+static_assert(DenseStackTensorBytes == 35204);
+static_assert(NativeWireBytes == 220315747);
 
 }  // namespace Stockfish::Eval::NNUE::AliceNative
 

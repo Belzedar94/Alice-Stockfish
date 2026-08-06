@@ -153,7 +153,7 @@ network suite proves that the embedded list and fixture produce the same node
 count, and repeated fresh processes produce the same signature. This is a
 build-admission identity, not a strength measurement.
 
-## Native NNUE N0-N4 milestone
+## Native NNUE N0-N4 and N6 wire milestone
 
 The native v1 manifest, identifiers, dimensions, relation order, component
 hashes, tensor order, and wire version are frozen in the public contract. A
@@ -180,8 +180,33 @@ alice_native_verify_incremental <depth 0..2>
 
 The accumulator weights in this verification route are bounded deterministic
 fixtures; they are not a trained network and are not used by evaluation.
-Native cache/SIMD optimization, serialized parameters, loading, checkpoint
-export, and evaluation remain closed until their exact parity gates land.
+Native cache/SIMD optimization, real parameter allocation, checkpoint export,
+and evaluation remain closed until their exact parity gates land.
+
+The N6 wire validator now accepts only the exact native version, composite and
+component hashes, 1,043-byte canonical manifest, raw little-endian tensor
+layout, 220,315,747-byte total size, exact EOF, and an optional sealed SHA-256.
+It computes the full file digest in streaming mode and commits metadata only
+after every structural and identity check succeeds. A failed replacement
+clears the prior validation state.
+
+An independent sparse all-zero integer exporter creates a logically complete
+fixture without checking a network into the repository. Repeated exports have
+identical bytes and SHA-256; the independent parser walks all tensor regions.
+The negative matrix covers the historical version, wrong native version,
+architecture, manifest, transformer hash, every dense-stack hash, truncation,
+trailing data, a changed tensor byte under a sealed SHA, and stale-state
+replacement. The public diagnostic commands are:
+
+```text
+alice_native_validate_file <path> [expected-sha256]
+alice_native_try_validate_file <path> [expected-sha256]
+alice_native_wire_status
+```
+
+Wire validation deliberately does not allocate parameters or make the file an
+evaluator. Native cache/SIMD work, real checkpoint quantization, parameter
+loading, and evaluation routing remain separate gates.
 
 ## Cross-platform verification
 

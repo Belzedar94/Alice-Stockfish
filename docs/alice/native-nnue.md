@@ -44,6 +44,19 @@ manifest is [`native-nnue-v1-manifest.json`](native-nnue-v1-manifest.json).
 The wire version is `A11CE001`. This version is deliberately incompatible in
 both directions with the historical `7AF32F20/3C103E72` format.
 
+The canonical manifest is 1,043 UTF-8 bytes with SHA-256
+`BFEAC25BC943190C2512B03DD3BC955FD5D3D9FE55109440B81F3DC6A7C883CA`.
+Tensor integers are raw little-endian values. A complete v1 container is
+220,315,747 bytes: the 12-byte header, canonical manifest, transformer hash,
+220,033,024 feature-tensor bytes, and eight dense hashes followed by 35,204
+tensor bytes per stack.
+
+The transactional wire validator checks exact length before walking every
+section, validates all component hashes and exact EOF, computes the complete
+file SHA-256 in streaming mode, and commits metadata only after success. An
+optional expected SHA seals a qualified export. Validation is not parameter
+allocation and does not make a file available to evaluation.
+
 ### Piece-square index
 
 The eleven planes are own pawn, opposing pawn, own knight, opposing knight,

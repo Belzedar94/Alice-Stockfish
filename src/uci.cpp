@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
 #include <iterator>
 #include <optional>
 #include <sstream>
@@ -190,6 +191,39 @@ void UCIEngine::loop() {
                 terminate_on_critical_error(*error);
             sync_cout << report << sync_endl;
         }
+        else if (token == "alice_native_validate_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file)))
+                terminate_on_critical_error(
+                  "alice_native_validate_file requires a path and an optional SHA-256.");
+            is >> expectedSha256;
+
+            const std::optional<std::string> expected =
+              expectedSha256.empty() ? std::nullopt : std::optional{expectedSha256};
+            if (auto error = engine.validate_native_wire(path_from_utf8(file), expected))
+                terminate_on_critical_error(*error);
+            sync_cout << engine.native_wire_status() << sync_endl;
+        }
+        else if (token == "alice_native_try_validate_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file)))
+                terminate_on_critical_error(
+                  "alice_native_try_validate_file requires a path and an optional SHA-256.");
+            is >> expectedSha256;
+
+            const std::optional<std::string> expected =
+              expectedSha256.empty() ? std::nullopt : std::optional{expectedSha256};
+            if (auto error = engine.validate_native_wire(path_from_utf8(file), expected))
+                sync_cout << *error << sync_endl;
+            else
+                sync_cout << engine.native_wire_status() << sync_endl;
+        }
+        else if (token == "alice_native_wire_status")
+            sync_cout << engine.native_wire_status() << sync_endl;
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")

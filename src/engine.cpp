@@ -525,6 +525,17 @@ std::optional<std::string> Engine::verify_native_incremental(Depth depth, std::s
     return std::nullopt;
 }
 
+std::optional<std::string>
+Engine::validate_native_wire(const std::filesystem::path&      file,
+                             const std::optional<std::string>& expectedSha256) {
+    wait_for_search_finished();
+    if (auto error = nativeWireValidator.validate(file, expectedSha256))
+        return "Alice native wire rejected: " + *error;
+    return std::nullopt;
+}
+
+std::string Engine::native_wire_status() const { return nativeWireValidator.status_line(); }
+
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
     wait_for_search_finished();
     positions = 0;
