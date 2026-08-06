@@ -19,6 +19,7 @@ must be backed by a reproducible receipt.
 
 - [Chassis decision](adr-0001-official-stockfish-chassis.md)
 - [Rules specification](rules-spec.md)
+- [Implementation status](implementation-status.md)
 - [Legacy implementation audit](legacy-audit.md)
 - [Legacy NNUE compatibility](legacy-nnue-compatibility.md)
 - [Local measurement protocol](measurement.md)

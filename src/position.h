@@ -46,15 +46,15 @@ struct StateInfo {
 
     // Copied when making a move
     Bitboard boardB;
-    Key    materialKey;
-    Key    pawnKey;
-    Key    minorPieceKey;
-    Key    nonPawnKey[COLOR_NB];
-    Value  nonPawnMaterial[COLOR_NB];
-    int    castlingRights;
-    int    rule50;
-    int    pliesFromNull;
-    Square epSquare;
+    Key      materialKey;
+    Key      pawnKey;
+    Key      minorPieceKey;
+    Key      nonPawnKey[COLOR_NB];
+    Value    nonPawnMaterial[COLOR_NB];
+    int      castlingRights;
+    int      rule50;
+    int      pliesFromNull;
+    Square   epSquare;
 
     // Not copied when making a move (will be recomputed anyhow)
     Key        key;
@@ -103,15 +103,15 @@ class Position {
     Bitboard pieces(PieceTypes... pts) const;
     Bitboard pieces(Color c) const;
     template<typename... PieceTypes>
-    Bitboard                            pieces(Color c, PieceTypes... pts) const;
-    Board                               board_of(Square s) const;
-    Bitboard                            occupancy_on(Board b) const;
-    Bitboard                            pieces_on(Board b) const;
+    Bitboard pieces(Color c, PieceTypes... pts) const;
+    Board    board_of(Square s) const;
+    Bitboard occupancy_on(Board b) const;
+    Bitboard pieces_on(Board b) const;
     template<typename... PieceTypes>
     Bitboard pieces_on(Board b, PieceTypes... pts) const;
     Bitboard pieces_on(Board b, Color c) const;
     template<typename... PieceTypes>
-    Bitboard pieces_on(Board b, Color c, PieceTypes... pts) const;
+    Bitboard                            pieces_on(Board b, Color c, PieceTypes... pts) const;
     Piece                               piece_on(Square s) const;
     Piece                               piece_on(Board b, Square s) const;
     const std::array<Piece, SQUARE_NB>& piece_array() const;
@@ -140,7 +140,10 @@ class Position {
     // Attacks to/from a given square
     Bitboard attackers_to(Square s) const;
     Bitboard attackers_to(Square s, Bitboard occupied) const;
+    Bitboard attackers_to(Square s, Board b) const;
+    Bitboard attackers_to(Square s, Board b, Bitboard occupied) const;
     bool     attackers_to_exist(Square s, Bitboard occupied, Color c) const;
+    bool     attackers_to_exist(Square s, Board b, Bitboard occupied, Color c) const;
     void     update_slider_blockers(Color c) const;
     template<PieceType Pt>
     Bitboard attacks_by(Color c) const;
@@ -271,9 +274,7 @@ inline Bitboard Position::pieces_on(Board b, PieceTypes... pts) const {
     return occupancy_on(b) & pieces(pts...);
 }
 
-inline Bitboard Position::pieces_on(Board b, Color c) const {
-    return occupancy_on(b) & pieces(c);
-}
+inline Bitboard Position::pieces_on(Board b, Color c) const { return occupancy_on(b) & pieces(c); }
 
 template<typename... PieceTypes>
 inline Bitboard Position::pieces_on(Board b, Color c, PieceTypes... pts) const {
@@ -466,10 +467,8 @@ inline void Position::move_piece(Square from, Square to, DirtyThreats* const dts
     move_piece(from, to, board_of(from), dts);
 }
 
-inline void Position::move_piece(Square from,
-                                 Square to,
-                                 Board  destination,
-                                 DirtyThreats* const dts) {
+inline void
+Position::move_piece(Square from, Square to, Board destination, DirtyThreats* const dts) {
     Piece    pc     = board[from];
     Bitboard fromTo = from | to;
 

@@ -39,7 +39,6 @@
 #include "position.h"
 #include "search.h"
 #include "shm.h"
-#include "syzygy/tbprobe.h"
 #include "types.h"
 #include "uci.h"
 #include "ucioption.h"
@@ -122,18 +121,6 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
     options.add("UCI_ShowWDL", Option(false));
 
     options.add(  //
-      "SyzygyPath", Option("", [](const Option& o) {
-          Tablebases::init(o);
-          return std::nullopt;
-      }));
-
-    options.add("SyzygyProbeDepth", Option(1, 1, 100));
-
-    options.add("Syzygy50MoveRule", Option(true));
-
-    options.add("SyzygyProbeLimit", Option(7, 0, 7));
-
-    options.add(  //
       "EvalFile", Option(EvalFileDefaultName, [this](const Option& o) {
           load_network(path_from_utf8(std::string(o)));
           return std::nullopt;
@@ -146,8 +133,6 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
 
 std::variant<u64, PositionSetError>
 Engine::perft(const std::string& fen, Depth depth, bool isChess960) {
-    verify_network();
-
     return Benchmark::perft(fen, depth, isChess960);
 }
 
@@ -164,9 +149,6 @@ void Engine::search_clear() {
 
     tt.clear(threads);
     threads.clear();
-
-    // TODO: does not work with multiple instances
-    Tablebases::init(options["SyzygyPath"]);  // Free mapped files
 }
 
 void Engine::set_on_update_no_moves(std::function<void(const Engine::InfoShort&)>&& f) {
@@ -195,22 +177,37 @@ void Engine::wait_for_search_finished() { threads.main_thread()->wait_for_search
 
 std::optional<PositionSetError> Engine::set_position(const std::string&              fen,
                                                      const std::vector<std::string>& moves) {
-    // Drop the old state and create a new one
-    states   = StateListPtr(new std::deque<StateInfo>(1));
-    auto err = pos.set(fen, options["UCI_Chess960"], &states->back());
+    // Validate the complete command on an isolated position. A bad FEN or a bad
+    // move therefore leaves the current game and every StateInfo pointer intact.
+    Position     candidate;
+    StateListPtr candidateStates(new std::deque<StateInfo>(1));
+    auto         err = candidate.set(fen, options["UCI_Chess960"], &candidateStates->back());
     if (err.has_value())
         return err;
 
+    std::vector<Move> resolvedMoves;
+    resolvedMoves.reserve(moves.size());
     for (const auto& move : moves)
     {
-        auto m = UCIEngine::to_move(pos, move);
+        const Move resolved = UCIEngine::to_move(candidate, move);
 
-        if (m == Move::none())
+        if (resolved == Move::none())
             return PositionSetError("Illegal move: " + move);
 
-        states->emplace_back();
-        pos.do_move(m, states->back());
+        resolvedMoves.push_back(resolved);
+        candidateStates->emplace_back();
+        candidate.do_move(resolved, candidateStates->back());
     }
+
+    StateListPtr newStates(new std::deque<StateInfo>(1));
+    err = pos.set(fen, options["UCI_Chess960"], &newStates->back());
+    assert(!err.has_value());
+    for (Move move : resolvedMoves)
+    {
+        newStates->emplace_back();
+        pos.do_move(move, newStates->back());
+    }
+    states = std::move(newStates);
 
     return std::nullopt;
 }

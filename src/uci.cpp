@@ -199,7 +199,7 @@ Search::LimitsType UCIEngine::parse_limits(std::istream& is) {
         if (token == "searchmoves")  // Needs to be the last command on the line
         {
             while (is >> token)
-                limits.searchmoves.push_back(to_lower(token));
+                limits.searchmoves.push_back(token);
             break;
         }
 
@@ -638,13 +638,25 @@ std::string UCIEngine::to_lower(std::string str) {
 }
 
 Move UCIEngine::to_move(const Position& pos, std::string str) {
-    str = to_lower(str);
+    const bool validLength  = str.size() == 4 || str.size() == 5;
+    const bool validSquares = validLength && str[0] >= 'a' && str[0] <= 'h' && str[1] >= '1'
+                           && str[1] <= '8' && str[2] >= 'a' && str[2] <= 'h' && str[3] >= '1'
+                           && str[3] <= '8';
+    const bool validPromotion =
+      str.size() == 4 || (str[4] == 'q' || str[4] == 'r' || str[4] == 'b' || str[4] == 'n');
+    if (!validSquares || !validPromotion)
+        return Move::none();
 
+    Move match = Move::none();
     for (const auto& m : MoveList<LEGAL>(pos))
         if (str == move(m, pos.is_chess960()))
-            return m;
+        {
+            if (match != Move::none())
+                return Move::none();
+            match = m;
+        }
 
-    return Move::none();
+    return match;
 }
 
 void UCIEngine::on_update_no_moves(const Engine::InfoShort& info) {
