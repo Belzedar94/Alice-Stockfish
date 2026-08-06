@@ -111,6 +111,7 @@ class Engine {
     std::string                native_tensor_status() const;
     std::optional<std::string>
     probe_native_parameter(std::string_view tensor, u64 index, std::string& report) const;
+    std::optional<std::string> trace_native_integer(std::string& report);
     std::optional<std::string> verify_legacy_incremental(Depth depth, u64& positions);
 
     const OptionsMap& get_options() const;

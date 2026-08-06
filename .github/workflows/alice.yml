@@ -40,6 +40,7 @@ jobs:
           python3 tests/alice/test_native_features.py --engine src/stockfish
           python3 tests/alice/test_native_quant.py
           python3 tests/alice/test_native_wire.py --engine src/stockfish
+          python3 tests/alice/test_native_integer.py --engine src/stockfish
       - name: Verify closed binary
         run: |
           test "$(stat -c%s src/stockfish)" -lt 10000000
@@ -75,6 +76,7 @@ jobs:
           python tests/alice/test_native_features.py --engine src/stockfish.exe
           python tests/alice/test_native_quant.py
           python tests/alice/test_native_wire.py --engine src/stockfish.exe
+          python tests/alice/test_native_integer.py --engine src/stockfish.exe
           if ((Get-Item src/stockfish.exe).Length -ge 10000000) {
             throw "Alice binary unexpectedly contains a large embedded payload."
           }
@@ -120,3 +122,4 @@ jobs:
           python3 tests/alice/test_native_features.py --engine src/stockfish
           python3 tests/alice/test_native_quant.py
           python3 tests/alice/test_native_wire.py --engine src/stockfish
+          python3 tests/alice/test_native_integer.py --engine src/stockfish

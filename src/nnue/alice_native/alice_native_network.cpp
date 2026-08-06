@@ -24,7 +24,10 @@
 #include <system_error>
 #include <utility>
 
+#include "../../bitboard.h"
 #include "../../misc.h"
+#include "../../position.h"
+#include "alice_native_features.h"
 
 namespace Stockfish::Eval::NNUE::AliceNative {
 
@@ -534,6 +537,32 @@ bool require_bounds(std::string_view          label,
     return true;
 }
 
+template<typename Range>
+void write_integer_array(std::ostream& out, const Range& values) {
+    out << '[';
+    bool first = true;
+    for (const auto value : values)
+    {
+        if (!first)
+            out << ',';
+        first = false;
+        out << i64(value);
+    }
+    out << ']';
+}
+
+template<typename Feature>
+void write_feature_indices(std::ostream& out, const std::vector<Feature>& features) {
+    out << '[';
+    for (usize index = 0; index < features.size(); ++index)
+    {
+        if (index)
+            out << ',';
+        out << features[index].index;
+    }
+    out << ']';
+}
+
 }  // namespace
 
 void WireValidator::reset() {
@@ -1006,6 +1035,233 @@ std::optional<std::string> QualificationNetwork::probe(std::string_view tensor,
     std::ostringstream out;
     out << "alice_native_parameter generation " << active->generation << " tensor " << tensor
         << " index " << index << " value " << value;
+    report = out.str();
+    return std::nullopt;
+}
+
+std::optional<std::string> QualificationNetwork::integer_trace(const Position& position,
+                                                               std::string&    report) const {
+    if (!active)
+        return "Alice native integer trace requires loaded qualification parameters.";
+
+    const usize pieceCount = popcount(position.pieces());
+    if (pieceCount < 2 || pieceCount > 32)
+        return "Alice native integer trace requires between 2 and 32 pieces.";
+
+    const PositionTrace trace = build_trace(position);
+    std::array<std::array<i16, L1>, COLOR_NB> accumulators{};
+    std::array<std::array<i32, PsqtBuckets>, COLOR_NB> psqtAccumulators{};
+
+    for (Color perspective : {WHITE, BLACK})
+    {
+        std::array<i64, L1>          lanes{};
+        std::array<i64, PsqtBuckets> psqt{};
+        for (usize lane = 0; lane < L1; ++lane)
+            lanes[lane] = active->ftBias[lane];
+
+        for (const auto& feature : trace[perspective].pieces)
+        {
+            if (feature.index >= PieceSquareDimensions)
+                return "Alice native piece feature index is outside the loaded tensor.";
+            const u64 row = u64(feature.index) * L1;
+            for (usize lane = 0; lane < L1; ++lane)
+                lanes[lane] += active->pieceSquareWeight[row + lane];
+            const u64 psqtRow = u64(feature.index) * PsqtBuckets;
+            for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
+                psqt[bucket] += active->pieceSquarePsqt[psqtRow + bucket];
+        }
+        for (const auto& feature : trace[perspective].threats)
+        {
+            if (feature.index >= ThreatDimensions)
+                return "Alice native threat feature index is outside the loaded tensor.";
+            const u64 row = u64(feature.index) * L1;
+            for (usize lane = 0; lane < L1; ++lane)
+                lanes[lane] += active->threatWeight[row + lane];
+            const u64 psqtRow = u64(feature.index) * PsqtBuckets;
+            for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
+                psqt[bucket] += active->threatPsqt[psqtRow + bucket];
+        }
+
+        for (usize lane = 0; lane < L1; ++lane)
+        {
+            if (lanes[lane] < std::numeric_limits<i16>::min()
+                || lanes[lane] > std::numeric_limits<i16>::max())
+                return "Alice native feature accumulator exceeds signed i16 at perspective "
+                     + std::to_string(perspective) + " lane " + std::to_string(lane) + ": "
+                     + std::to_string(lanes[lane]);
+            accumulators[perspective][lane] = i16(lanes[lane]);
+        }
+        for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
+        {
+            if (psqt[bucket] < std::numeric_limits<i32>::min()
+                || psqt[bucket] > std::numeric_limits<i32>::max())
+                return "Alice native PSQT accumulator exceeds signed i32 at perspective "
+                     + std::to_string(perspective) + " bucket " + std::to_string(bucket) + ": "
+                     + std::to_string(psqt[bucket]);
+            psqtAccumulators[perspective][bucket] = i32(psqt[bucket]);
+        }
+    }
+
+    std::array<std::array<i32, L1 / 2>, COLOR_NB> transformed{};
+    for (Color perspective : {WHITE, BLACK})
+        for (usize lane = 0; lane < L1 / 2; ++lane)
+        {
+            const i32 left  = std::clamp<i32>(accumulators[perspective][lane], 0, 255);
+            const i32 right =
+              std::clamp<i32>(accumulators[perspective][lane + L1 / 2], 0, 255);
+            transformed[perspective][lane] = left * right / 512;
+        }
+
+    const Color sideToMove = position.side_to_move();
+    std::array<i32, L1> denseInput{};
+    for (usize lane = 0; lane < L1 / 2; ++lane)
+    {
+        denseInput[lane]          = transformed[sideToMove][lane];
+        denseInput[lane + L1 / 2] = transformed[~sideToMove][lane];
+    }
+
+    const usize phase = (pieceCount - 1) / 4;
+    const auto& dense = active->dense[phase];
+    const auto affine = [](const i8*       weights,
+                           const i32*      biases,
+                           usize           outputs,
+                           usize           inputs,
+                           const i32*      values,
+                           i32*            result,
+                           std::string_view label,
+                           bool            requireI16) -> std::optional<std::string> {
+        for (usize output = 0; output < outputs; ++output)
+        {
+            i64 total = biases[output];
+            for (usize input = 0; input < inputs; ++input)
+                total += i64(weights[output * inputs + input]) * values[input];
+            if (total < std::numeric_limits<i32>::min()
+                || total > std::numeric_limits<i32>::max())
+                return std::string(label) + " exceeds signed i32 at row "
+                     + std::to_string(output) + ": " + std::to_string(total);
+            if (requireI16
+                && (total < std::numeric_limits<i16>::min()
+                    || total > std::numeric_limits<i16>::max()))
+                return std::string(label) + " exceeds signed i16 at row "
+                     + std::to_string(output) + ": " + std::to_string(total);
+            result[output] = i32(total);
+        }
+        return std::nullopt;
+    };
+    const auto activate = [](i32 value, int shift, bool square) {
+        const i64 raw = square ? i64(value) * value / (i64(1) << (2 * shift + 7))
+                               : value / (i64(1) << shift);
+        return i32(std::clamp<i64>(raw, 0, 127));
+    };
+
+    std::array<i32, L2> z0{};
+    if (auto error = affine(dense.fc0Weight.data(), dense.fc0Bias.data(), L2, L1,
+                            denseInput.data(), z0.data(), "fc0", true))
+        return error;
+    std::array<i32, L2> s0{};
+    std::array<i32, L2> r0{};
+    std::array<i32, 64> y1{};
+    for (usize output = 0; output < L2; ++output)
+    {
+        s0[output]      = activate(z0[output], 7, true);
+        r0[output]      = activate(z0[output], 7, false);
+        y1[output]      = s0[output];
+        y1[L2 + output] = r0[output];
+    }
+
+    std::array<i32, L3> z1{};
+    if (auto error = affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(),
+                            y1.data(), z1.data(), "fc1", true))
+        return error;
+    std::array<i32, L3>  s1{};
+    std::array<i32, L3>  r1{};
+    std::array<i32, 128> y2{};
+    for (usize output = 0; output < L3; ++output)
+    {
+        s1[output]                = activate(z1[output], 6, true);
+        r1[output]                = activate(z1[output], 6, false);
+        y2[output]                = s0[output];
+        y2[L2 + output]           = r0[output];
+        y2[2 * L2 + output]       = s1[output];
+        y2[2 * L2 + L3 + output] = r1[output];
+    }
+
+    std::array<i32, 1> z2{};
+    if (auto error = affine(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, y2.size(),
+                            y2.data(), z2.data(), "fc2", false))
+        return error;
+    const i64 skip64   = i64(z0[30]) - z0[31];
+    const i64 fwdOut64 = i64(z2[0]) + skip64;
+    if (fwdOut64 < std::numeric_limits<i32>::min()
+        || fwdOut64 > std::numeric_limits<i32>::max())
+        return "fwdOut exceeds signed i32: " + std::to_string(fwdOut64);
+    const i32 skip   = i32(skip64);
+    const i32 fwdOut = i32(fwdOut64);
+
+    const i64 positionalRaw64 = fwdOut64 * 9600 / 16384;
+    const i64 psqtDifference =
+      i64(psqtAccumulators[sideToMove][phase]) - psqtAccumulators[~sideToMove][phase];
+    const i64 psqtRaw64 = psqtDifference / 2;
+    if (positionalRaw64 < std::numeric_limits<i32>::min()
+        || positionalRaw64 > std::numeric_limits<i32>::max())
+        return "positionalRaw16 exceeds signed i32: " + std::to_string(positionalRaw64);
+    if (psqtRaw64 < std::numeric_limits<i32>::min()
+        || psqtRaw64 > std::numeric_limits<i32>::max())
+        return "psqtRaw16 exceeds signed i32: " + std::to_string(psqtRaw64);
+    const i32 positionalRaw16 = i32(positionalRaw64);
+    const i32 psqtRaw16       = i32(psqtRaw64);
+    const i32 positionalValue = positionalRaw16 / 16;
+    const i32 psqtValue       = psqtRaw16 / 16;
+    const i32 nativeValue     = positionalValue + psqtValue;
+
+    std::ostringstream out;
+    out << "{\"architecture\":\"" << ArchitectureId << "\",\"generation\":"
+        << active->generation << ",\"networkSha256\":\"" << active->wire.sha256
+        << "\",\"sideToMove\":" << int(sideToMove) << ",\"pieceCount\":" << pieceCount
+        << ",\"pieceFeatures\":[";
+    for (Color perspective : {WHITE, BLACK})
+    {
+        if (perspective != WHITE)
+            out << ',';
+        write_feature_indices(out, trace[perspective].pieces);
+    }
+    out << "],\"threatFeatures\":[";
+    for (Color perspective : {WHITE, BLACK})
+    {
+        if (perspective != WHITE)
+            out << ',';
+        write_feature_indices(out, trace[perspective].threats);
+    }
+    out << "],\"featureAccumulator\":[";
+    write_integer_array(out, accumulators[WHITE]);
+    out << ',';
+    write_integer_array(out, accumulators[BLACK]);
+    out << "],\"psqtAccumulator\":[";
+    write_integer_array(out, psqtAccumulators[WHITE]);
+    out << ',';
+    write_integer_array(out, psqtAccumulators[BLACK]);
+    out << "],\"transformedByPerspective\":[";
+    write_integer_array(out, transformed[WHITE]);
+    out << ',';
+    write_integer_array(out, transformed[BLACK]);
+    out << "],\"transformedInput\":";
+    write_integer_array(out, denseInput);
+    out << ",\"phase\":" << phase << ",\"fc0Raw\":";
+    write_integer_array(out, z0);
+    out << ",\"fc0Squared\":";
+    write_integer_array(out, s0);
+    out << ",\"fc0Linear\":";
+    write_integer_array(out, r0);
+    out << ",\"fc1Raw\":";
+    write_integer_array(out, z1);
+    out << ",\"fc1Squared\":";
+    write_integer_array(out, s1);
+    out << ",\"fc1Linear\":";
+    write_integer_array(out, r1);
+    out << ",\"fc2Raw\":" << z2[0] << ",\"skip\":" << skip << ",\"fwdOut\":"
+        << fwdOut << ",\"positionalRaw16\":" << positionalRaw16 << ",\"psqtRaw16\":"
+        << psqtRaw16 << ",\"positionalValue\":" << positionalValue << ",\"psqtValue\":"
+        << psqtValue << ",\"nativeNnueValue\":" << nativeValue << '}';
     report = out.str();
     return std::nullopt;
 }

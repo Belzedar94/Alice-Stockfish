@@ -560,6 +560,11 @@ Engine::probe_native_parameter(std::string_view tensor, u64 index, std::string& 
     return nativeQualification.probe(tensor, index, report);
 }
 
+std::optional<std::string> Engine::trace_native_integer(std::string& report) {
+    wait_for_search_finished();
+    return nativeQualification.integer_trace(pos, report);
+}
+
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
     wait_for_search_finished();
     positions = 0;

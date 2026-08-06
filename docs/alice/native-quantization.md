@@ -206,13 +206,14 @@ Read-only qualification commands expose network and tensor identities. A later
 qualification command will expose stage-by-stage integer inference. Neither
 path makes the native backend available to normal search.
 
-The loader, identity status, tensor status, and flat parameter probes are now
-implemented as the first half of this boundary. They verify same-handle SHA-256,
-explicit little-endian decoding, symmetric integer minima, dense arithmetic
-envelopes, canonical runtime traversal, generation increments, and preservation
-of the installed candidate on failure. No search accumulator or evaluation
-route consumes the installed object yet, so stage inference and cache
-invalidation remain closed until their exact-parity qualification lands.
+The loader, identity status, tensor status, flat parameter probes, and
+full-refresh integer trace are now implemented as qualification paths. They
+verify same-handle SHA-256, explicit little-endian decoding, symmetric integer
+minima, dense arithmetic envelopes, canonical runtime traversal, generation
+increments, preservation of the installed candidate on failure, and every
+normative inference stage. No search accumulator or evaluation route consumes
+the installed object yet, so loaded-net incremental equality, SIMD dense
+parity, and cache invalidation remain closed until their qualification lands.
 
 ## 6. Exact acceptance
 

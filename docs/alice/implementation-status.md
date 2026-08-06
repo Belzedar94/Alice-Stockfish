@@ -234,11 +234,24 @@ alice_native_try_load_file <path> <expected-sha256>
 alice_native_load_status
 alice_native_tensor_status
 alice_native_parameter <tensor> <flat-index>
+alice_native_eval_trace
 ```
 
+The read-only full-refresh evaluator now emits every normative integer stage:
+active sparse indices, both feature and PSQT accumulators, product pooling,
+side-to-move ordering, phase, all dense preactivations and branches, skip,
+separately divided positional and PSQT components, and the final value. An
+independent sparse-wire editor and Python evaluator compare every emitted
+element. The corpus covers both sides to move, SAME/OTHER pieces and threats,
+all eight phase stacks and all seven boundaries, negative squared inputs, an
+odd signed PSQT witness, separate final division, and accumulator overflow.
+The companion trainer evaluator and the executable matched 399 complete stage
+comparisons over 21 positions with zero mismatches.
+
 The installed object is not read by normal search, never selects the
-historical evaluator as a fallback, and reports `search=disabled`. Native
-integer stage inference and evaluation routing remain later exact-parity gates.
+historical evaluator as a fallback, and reports `search=disabled`. Loaded-net
+incremental equality, SIMD dense parity, and evaluation routing remain later
+exact-parity gates.
 
 ## Cross-platform verification
 

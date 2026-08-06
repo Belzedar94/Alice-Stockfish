@@ -265,6 +265,13 @@ void UCIEngine::loop() {
                 terminate_on_critical_error(*error);
             sync_cout << report << sync_endl;
         }
+        else if (token == "alice_native_eval_trace")
+        {
+            std::string report;
+            if (auto error = engine.trace_native_integer(report))
+                terminate_on_critical_error(*error);
+            sync_cout << "alice_native_integer_trace " << report << sync_endl;
+        }
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")

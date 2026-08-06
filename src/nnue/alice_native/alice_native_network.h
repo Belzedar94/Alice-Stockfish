@@ -20,6 +20,10 @@
 #include "../../types.h"
 #include "manifest.h"
 
+namespace Stockfish {
+class Position;
+}
+
 namespace Stockfish::Eval::NNUE::AliceNative {
 
 struct WireMetadata {
@@ -76,6 +80,7 @@ class QualificationNetwork {
     std::string        tensor_status_line() const;
     std::optional<std::string>
     probe(std::string_view tensor, u64 index, std::string& report) const;
+    std::optional<std::string> integer_trace(const Position& position, std::string& report) const;
 
    private:
     struct Parameters;
