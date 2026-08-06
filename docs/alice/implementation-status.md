@@ -48,6 +48,24 @@ all versioned fixtures, key relations, canonical FEN transitions, repetition
 checkpoints, and deterministic playout legal sets against the independent
 implementation.
 
+## Deterministic safe-search milestone
+
+The public `go` route now uses a dedicated single-threaded iterative-deepening
+search over the complete Alice legal move set. It provides exact terminal and
+mate-distance scores, deterministic move ordering and principal variations,
+bounded depth, node and time modes, responsive `stop`, and no calls into the
+orthodox evaluator, accumulator, move picker, pruning stack, transposition
+table, or tablebases.
+
+Static evaluation is intentionally fixed at zero. This makes the executable a
+rules and search-control baseline, not a strength release. The `eval` and
+`export_net` commands are closed until the strict historical compatibility
+loader is available, and no `EvalFile` option is advertised.
+
+Executable conformance additionally covers repeated-search determinism, an
+Alice mate in one, terminal mate reporting, prompt interruption with exact
+root-state preservation, and the closed evaluator commands.
+
 ## Deliberately disabled paths
 
 The following orthodox shortcuts remain unavailable until they receive a
@@ -60,7 +78,7 @@ board-aware implementation and dedicated coverage:
 - the current Stockfish accumulator and threat features; and
 - insufficient-material shortcuts.
 
-Normal playing search is not a supported deliverable at this milestone. The
-next acceptance gate is a deterministic safe search path followed by the
-strict legacy-network compatibility loader described in
+Strength-oriented playing search is not a supported deliverable at this
+milestone. The next acceptance gate is the strict legacy-network compatibility
+loader described in
 [`legacy-nnue-compatibility.md`](legacy-nnue-compatibility.md).

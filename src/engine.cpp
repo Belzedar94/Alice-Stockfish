@@ -19,17 +19,21 @@
 #include "engine.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cassert>
-#include <filesystem>
 #include <deque>
+#include <filesystem>
 #include <iosfwd>
 #include <memory>
 #include <ostream>
 #include <sstream>
+#include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
+#include "alice_search.h"
 #include "evaluate.h"
 #include "misc.h"
 #include "nnue/network.h"
@@ -120,29 +124,156 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
 
     options.add("UCI_ShowWDL", Option(false));
 
-    options.add(  //
-      "EvalFile", Option(EvalFileDefaultName, [this](const Option& o) {
-          load_network(path_from_utf8(std::string(o)));
-          return std::nullopt;
-      }));
-
     threads.clear();
     threads.ensure_network_replicated();
     resize_threads();
 }
 
+Engine::~Engine() {
+    stop();
+    wait_for_search_finished();
+}
+
 std::variant<u64, PositionSetError>
 Engine::perft(const std::string& fen, Depth depth, bool isChess960) {
+    wait_for_search_finished();
     return Benchmark::perft(fen, depth, isChess960);
 }
 
 void Engine::go(Search::LimitsType& limits) {
     assert(limits.perft == 0);
-    verify_network();
 
-    threads.start_thinking(options, pos, states, limits);
+    wait_for_search_finished();
+    aliceSearchStop.store(false, std::memory_order_relaxed);
+    alicePondering.store(limits.ponderMode, std::memory_order_relaxed);
+    threads.stop = false;
+
+    std::vector<Move> legalMoves;
+    for (Move move : MoveList<LEGAL>(pos))
+        legalMoves.push_back(move);
+
+    std::vector<Move> rootMoves;
+    for (const std::string& moveText : limits.searchmoves)
+    {
+        const Move move = UCIEngine::to_move(pos, moveText);
+        if (move != Move::none()
+            && std::find(rootMoves.begin(), rootMoves.end(), move) == rootMoves.end())
+            rootMoves.push_back(move);
+    }
+
+    // Match the established UCI behavior: an empty or wholly invalid
+    // searchmoves list falls back to the complete legal root set.
+    if (rootMoves.empty())
+        rootMoves = legalMoves;
+
+    AliceSearch::Limits aliceLimits;
+    if (limits.depth > 0)
+        aliceLimits.depth = std::clamp(limits.depth, 1, MAX_PLY);
+    else if (limits.mate > 0)
+        aliceLimits.depth = std::clamp(2 * limits.mate, 1, MAX_PLY);
+    else if (limits.infinite || limits.ponderMode || limits.nodes || limits.movetime
+             || limits.use_time_management())
+        aliceLimits.depth = MAX_PLY;
+    else
+        aliceLimits.depth = 5;
+
+    aliceLimits.nodes = limits.nodes;
+
+    if (!limits.ponderMode)
+    {
+        const TimePoint overhead = TimePoint(options["Move Overhead"]);
+        TimePoint       budget   = 0;
+
+        if (limits.movetime > 0)
+            budget = std::max(TimePoint(1), limits.movetime - overhead);
+        else if (limits.use_time_management())
+        {
+            const Color     us        = pos.side_to_move();
+            const TimePoint remaining = limits.time[us];
+            const int       moves     = limits.movestogo > 0 ? limits.movestogo : 30;
+            const TimePoint share     = remaining / moves + 3 * limits.inc[us] / 4;
+            budget = std::clamp(share - overhead, TimePoint(1), std::max(TimePoint(1), remaining));
+        }
+
+        if (budget > 0)
+            aliceLimits.deadline = now() + budget;
+    }
+
+    assert(states);
+    const std::string rootFen     = pos.fen();
+    const StateInfo   rootState   = states->back();
+    const bool        isChess960  = pos.is_chess960();
+    const bool        waitForStop = limits.infinite;
+    aliceSearchThread = std::thread([this, rootMoves = std::move(rootMoves), aliceLimits, rootFen,
+                                     rootState, isChess960, waitForStop]() mutable {
+        StateInfo  searchRootState;
+        Position   searchPos;
+        const auto error = searchPos.set(rootFen, isChess960, &searchRootState);
+        assert(!error.has_value());
+        (void) error;
+        searchRootState = rootState;
+
+        const TimePoint started = now();
+
+        if (updateContext.onStart)
+            updateContext.onStart();
+
+        const auto onIteration = [this, started, &searchPos](const AliceSearch::Result& result) {
+            std::string pv;
+            for (Move move : result.pv)
+            {
+                if (!pv.empty())
+                    pv += ' ';
+                pv += UCIEngine::move(move, searchPos.is_chess960());
+            }
+
+            const std::string wdl     = result.score > VALUE_DRAW ? "1000 0 0"
+                                      : result.score < VALUE_DRAW ? "0 0 1000"
+                                                                  : "0 1000 0";
+            const TimePoint   elapsed = std::max(TimePoint(1), now() - started);
+
+            InfoFull info;
+            info.depth    = result.depth;
+            info.selDepth = result.depth;
+            info.multiPV  = 1;
+            info.score    = Score(result.score, searchPos);
+            info.wdl      = wdl;
+            info.bound    = "";
+            info.timeMs   = usize(elapsed);
+            info.nodes    = usize(result.nodes);
+            info.nps      = usize(result.nodes * 1000 / u64(elapsed));
+            info.tbHits   = 0;
+            info.pv       = pv;
+            info.hashfull = 0;
+
+            if (updateContext.onUpdateFull)
+                updateContext.onUpdateFull(info);
+        };
+
+        const AliceSearch::Result result =
+          AliceSearch::search(searchPos, rootMoves, aliceLimits, aliceSearchStop, onIteration);
+
+        if (rootMoves.empty() && updateContext.onUpdateNoMoves)
+            updateContext.onUpdateNoMoves({0, Score(result.score, searchPos)});
+
+        while (!aliceSearchStop.load(std::memory_order_relaxed)
+               && (waitForStop || alicePondering.load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        std::string bestmove = UCIEngine::move(result.bestMove, searchPos.is_chess960());
+        std::string ponder;
+        if (result.pv.size() > 1)
+            ponder = UCIEngine::move(result.pv[1], searchPos.is_chess960());
+
+        if (updateContext.onBestmove)
+            updateContext.onBestmove(bestmove, ponder);
+    });
 }
-void Engine::stop() { threads.stop = true; }
+void Engine::stop() {
+    aliceSearchStop.store(true, std::memory_order_relaxed);
+    alicePondering.store(false, std::memory_order_relaxed);
+    threads.stop = true;
+}
 
 void Engine::search_clear() {
     wait_for_search_finished();
@@ -173,10 +304,16 @@ void Engine::set_on_verify_network(std::function<void(std::string_view)>&& f) {
     onVerifyNetwork = std::move(f);
 }
 
-void Engine::wait_for_search_finished() { threads.main_thread()->wait_for_search_finished(); }
+void Engine::wait_for_search_finished() {
+    if (aliceSearchThread.joinable())
+        aliceSearchThread.join();
+    threads.main_thread()->wait_for_search_finished();
+}
 
 std::optional<PositionSetError> Engine::set_position(const std::string&              fen,
                                                      const std::vector<std::string>& moves) {
+    wait_for_search_finished();
+
     // Validate the complete command on an isolated position. A bad FEN or a bad
     // move therefore leaves the current game and every StateInfo pointer intact.
     Position     candidate;
@@ -257,43 +394,17 @@ void Engine::set_tt_size(usize mb) {
     tt.resize(mb, threads);
 }
 
-void Engine::set_ponderhit(bool b) { threads.main_manager()->ponder = b; }
+void Engine::set_ponderhit(bool b) {
+    if (!b && alicePondering.exchange(false, std::memory_order_relaxed))
+        aliceSearchStop.store(true, std::memory_order_relaxed);
+    threads.main_manager()->ponder = b;
+}
 
 // network related
 
 void Engine::verify_network() const {
-    const auto file = path_from_utf8(std::string(options["EvalFile"]));
-    network->verify(onVerifyNetwork, networkFile, file);
-
-    auto statuses = network.get_status_and_errors();
-    for (usize i = 0; i < statuses.size(); ++i)
-    {
-        const auto [status, error] = statuses[i];
-        std::string message        = "Network replica " + std::to_string(i + 1) + ": ";
-        if (status == SystemWideSharedConstantAllocationStatus::NoAllocation)
-        {
-            message += "No allocation.";
-        }
-        else if (status == SystemWideSharedConstantAllocationStatus::LocalMemory)
-        {
-            message += "Local memory.";
-        }
-        else if (status == SystemWideSharedConstantAllocationStatus::SharedMemory)
-        {
-            message += "Shared memory.";
-        }
-        else
-        {
-            message += "Unknown status.";
-        }
-
-        if (error.has_value())
-        {
-            message += " " + *error;
-        }
-
-        onVerifyNetwork(message);
-    }
+    if (onVerifyNetwork)
+        onVerifyNetwork("No Alice evaluator is loaded; deterministic zero evaluation is active.");
 }
 
 std::unique_ptr<Eval::NNUE::Network> Engine::get_default_network() {
@@ -320,13 +431,8 @@ void Engine::save_network(const std::optional<std::filesystem::path>& file) {
 // utility functions
 
 void Engine::trace_eval() const {
-    StateListPtr trace_states(new std::deque<StateInfo>(1));
-    Position     p;
-    p.set(pos.fen(), options["UCI_Chess960"], &trace_states->back());
-
-    verify_network();
-
-    sync_cout << "\n" << Eval::trace(p, *network) << sync_endl;
+    sync_cout << "info string Evaluation is unavailable until a compatible Alice network is loaded."
+              << sync_endl;
 }
 
 const OptionsMap& Engine::get_options() const { return options; }
@@ -334,7 +440,10 @@ OptionsMap&       Engine::get_options() { return options; }
 
 std::string Engine::fen() const { return pos.fen(); }
 
-std::optional<PositionSetError> Engine::flip() { return pos.flip(); }
+std::optional<PositionSetError> Engine::flip() {
+    wait_for_search_finished();
+    return pos.flip();
+}
 
 std::string Engine::visualize() const {
     std::stringstream ss;

@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import queue
 import random
 import re
 import subprocess
 import sys
+import threading
+import time
 import unittest
 
 from reference import Position
@@ -39,6 +42,67 @@ def run_engine(*commands: str) -> subprocess.CompletedProcess[str]:
         encoding="ascii",
         check=False,
     )
+
+
+class UciSession:
+    """Interactive executable session with bounded output waits."""
+
+    def __init__(self) -> None:
+        self.process = subprocess.Popen(
+            [str(ENGINE_PATH)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="ascii",
+            bufsize=1,
+        )
+        self.lines: list[str] = []
+        self.pending: queue.Queue[str] = queue.Queue()
+        self.reader = threading.Thread(target=self._read_output, daemon=True)
+        self.reader.start()
+
+    def _read_output(self) -> None:
+        assert self.process.stdout is not None
+        for line in self.process.stdout:
+            self.pending.put(line.rstrip("\r\n"))
+
+    def send(self, command: str) -> None:
+        assert self.process.stdin is not None
+        self.process.stdin.write(command + "\n")
+        self.process.stdin.flush()
+
+    def wait_for(self, pattern: str, timeout: float = 10.0) -> str:
+        expression = re.compile(pattern)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                remaining = max(0.0, deadline - time.monotonic())
+                line = self.pending.get(timeout=min(0.1, remaining))
+            except queue.Empty:
+                continue
+            self.lines.append(line)
+            if expression.search(line):
+                return line
+        raise AssertionError(
+            f"Timed out waiting for {pattern!r}. Executable output:\n" + "\n".join(self.lines[-100:])
+        )
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            self.send("quit")
+            self.process.wait(timeout=5)
+        if self.process.stdin is not None:
+            self.process.stdin.close()
+        if self.process.stdout is not None:
+            self.process.stdout.close()
+        self.reader.join(timeout=1)
+
+    def __enter__(self) -> "UciSession":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
 
 def inspected_fen(output: str) -> str:
@@ -210,6 +274,74 @@ class EngineFixtureTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(inspected_fen(result.stdout), position.fen())
                 fen = position.fen()
+
+    def test_safe_search_is_deterministic(self) -> None:
+        searches: list[tuple[str, str]] = []
+        with UciSession() as session:
+            session.send("uci")
+            session.wait_for(r"^uciok$")
+            self.assertFalse(any("option name EvalFile" in line for line in session.lines))
+
+            for _ in range(2):
+                session.send("position startpos")
+                session.send("go depth 3")
+                bestmove = session.wait_for(r"^bestmove ")
+                info = next(
+                    line
+                    for line in reversed(session.lines)
+                    if line.startswith("info depth 3 ")
+                )
+                pv = re.search(r" score (\S+ \S+).* pv (.+)$", info)
+                self.assertIsNotNone(pv, info)
+                searches.append((bestmove, pv.group(2)))
+
+            self.assertEqual(searches[0], searches[1])
+            self.assertEqual(searches[0], ("bestmove a2a3 ponder a7a6", "a2a3 a7a6 b2b3"))
+            self.assertNotIn("NNUE evaluation using", "\n".join(session.lines))
+
+    def test_safe_search_finds_an_alice_mate_in_one(self) -> None:
+        fen = "8/6|Q1/8/8/8/8/k7/2K5 w - - 0 1"
+        with UciSession() as session:
+            session.send(f"position fen {fen}")
+            session.send("go depth 1")
+            bestmove = session.wait_for(r"^bestmove ")
+            self.assertEqual(bestmove, "bestmove g7b2")
+            self.assertTrue(
+                any("info depth 1 " in line and "score mate 1" in line for line in session.lines),
+                "\n".join(session.lines),
+            )
+
+    def test_safe_search_stop_is_prompt_and_preserves_the_position(self) -> None:
+        with UciSession() as session:
+            session.send("position startpos")
+            session.send("go infinite")
+            session.wait_for(r"^info depth 1 ")
+
+            session.send("d")
+            inspected = session.wait_for(r"^Fen: ", timeout=2.0)
+            self.assertEqual(inspected.removeprefix("Fen: "), START_FEN)
+
+            session.send("stop")
+            bestmove = session.wait_for(r"^bestmove ", timeout=2.0)
+            move = bestmove.split()[1]
+            self.assertIn(
+                move,
+                {candidate.uci() for candidate in Position.from_fen(START_FEN).legal_moves()},
+            )
+
+    def test_terminal_mate_and_evaluator_commands_fail_closed(self) -> None:
+        mate = "8/6|Kk/8/8/8/3Q4/8/8 b - - 0 1"
+        with UciSession() as session:
+            session.send(f"position fen {mate}")
+            session.send("go depth 3")
+            bestmove = session.wait_for(r"^bestmove ")
+            self.assertEqual(bestmove, "bestmove (none)")
+            self.assertTrue(any("score mate 0" in line for line in session.lines))
+
+            session.send("eval")
+            session.wait_for(r"Evaluation is unavailable until a compatible Alice network is loaded\.")
+            session.send("export_net")
+            session.wait_for(r"Network export is unavailable until a compatible Alice evaluator is loaded\.")
 
 
 def parse_arguments() -> tuple[argparse.Namespace, list[str]]:

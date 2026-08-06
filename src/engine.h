@@ -19,13 +19,15 @@
 #ifndef ENGINE_H_INCLUDED
 #define ENGINE_H_INCLUDED
 
-#include <functional>
+#include <atomic>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -58,7 +60,7 @@ class Engine {
     Engine& operator=(const Engine&) = delete;
     Engine& operator=(Engine&&)      = delete;
 
-    ~Engine() { wait_for_search_finished(); }
+    ~Engine();
 
     std::variant<u64, PositionSetError> perft(const std::string& fen, Depth depth, bool isChess960);
 
@@ -130,6 +132,10 @@ class Engine {
     Search::SearchManager::UpdateContext  updateContext;
     std::function<void(std::string_view)> onVerifyNetwork;
     std::map<NumaIndex, SharedHistories>  sharedHists;
+
+    std::thread      aliceSearchThread;
+    std::atomic_bool aliceSearchStop{false};
+    std::atomic_bool alicePondering{false};
 };
 
 }  // namespace Stockfish

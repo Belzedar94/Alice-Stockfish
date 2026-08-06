@@ -163,22 +163,15 @@ void UCIEngine::loop() {
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")
-        {
-            std::optional<std::filesystem::path> file;
-            std::string                          filename;
-
-            if (is >> filename)
-                file = path_from_utf8(filename);
-
-            engine.save_network(file);
-        }
+            print_info_string(
+              "Network export is unavailable until a compatible Alice evaluator is loaded.");
         else if (token == "--help" || token == "help" || token == "--license" || token == "license")
             sync_cout
-              << "\nStockfish is a powerful chess engine for playing and analyzing."
+              << "\nAlice-Stockfish is a UCI engine for playing and analyzing Alice Chess."
                  "\nIt is released as free software licensed under the GNU GPLv3 License."
-                 "\nStockfish is normally used with a graphical user interface (GUI) and implements"
+                 "\nIt is normally used with a graphical user interface (GUI) and implements"
                  "\nthe Universal Chess Interface (UCI) protocol to communicate with a GUI, an API, etc."
-                 "\nFor any further information, visit https://github.com/official-stockfish/Stockfish#readme"
+                 "\nFor further information, visit https://github.com/Belzedar94/Alice-Stockfish#readme"
                  "\nor read the corresponding README.md and Copying.txt files distributed along with this program.\n"
               << sync_endl;
         else if (!token.empty() && token[0] != '#')
