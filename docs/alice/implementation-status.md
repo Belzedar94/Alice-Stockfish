@@ -235,6 +235,7 @@ alice_native_load_status
 alice_native_tensor_status
 alice_native_parameter <tensor> <flat-index>
 alice_native_eval_trace
+alice_native_verify_loaded_incremental <depth 0..2>
 ```
 
 The read-only full-refresh evaluator now emits every normative integer stage:
@@ -248,10 +249,20 @@ odd signed PSQT witness, separate final division, and accumulator overflow.
 The companion trainer evaluator and the executable matched 399 complete stage
 comparisons over 21 positions with zero mismatches.
 
+The loaded-network verifier carries the authenticated feature and PSQT
+accumulators through every legal transition. It applies sorted multiset
+differences when a perspective king is unchanged and performs a full refresh
+when that king changes square or board. At every node it compares all 1,024
+feature lanes, all eight PSQT buckets, every later integer stage, and the
+restored parent FEN and key. The depth-two opening tree covers 421 positions
+and 420 transitions; directed depth-one roots add captures, quiet and capture
+promotions, castling on both board layouts, and king transfers. Missing
+parameters and accumulator overflow remain fatal.
+
 The installed object is not read by normal search, never selects the
-historical evaluator as a fallback, and reports `search=disabled`. Loaded-net
-incremental equality, SIMD dense parity, and evaluation routing remain later
-exact-parity gates.
+historical evaluator as a fallback, and reports `search=disabled`. Dense SIMD
+parity, generation-keyed search accumulators, and evaluation routing remain
+later exact-parity gates.
 
 ## Cross-platform verification
 

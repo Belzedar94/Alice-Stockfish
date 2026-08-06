@@ -272,6 +272,19 @@ void UCIEngine::loop() {
                 terminate_on_critical_error(*error);
             sync_cout << "alice_native_integer_trace " << report << sync_endl;
         }
+        else if (token == "alice_native_verify_loaded_incremental")
+        {
+            int requestedDepth = 1;
+            if (is >> requestedDepth; is.fail())
+                terminate_on_critical_error(
+                  "alice_native_verify_loaded_incremental requires an integer depth between 0 and 2.");
+
+            std::string report;
+            if (auto error =
+                  engine.verify_loaded_native_incremental(Depth(requestedDepth), report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")

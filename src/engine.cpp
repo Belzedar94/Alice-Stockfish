@@ -565,6 +565,29 @@ std::optional<std::string> Engine::trace_native_integer(std::string& report) {
     return nativeQualification.integer_trace(pos, report);
 }
 
+std::optional<std::string>
+Engine::verify_loaded_native_incremental(Depth depth, std::string& report) {
+    wait_for_search_finished();
+    Eval::NNUE::AliceNative::LoadedIncrementalVerificationStats stats;
+    if (auto error = nativeQualification.verify_incremental(pos, depth, stats))
+        return error;
+
+    std::ostringstream out;
+    out << "alice_native loaded incremental verified generation "
+        << nativeQualification.generation() << " positions " << stats.positions << " transitions "
+        << stats.transitions << " captures " << stats.captures << " promotions " << stats.promotions
+        << " castlings " << stats.castlings << " king_moves " << stats.kingMoves << " refreshes "
+        << stats.fullRefreshes[WHITE] << ',' << stats.fullRefreshes[BLACK] << " piece_adds "
+        << stats.pieceAdds << " piece_removes " << stats.pieceRemoves << " threat_adds "
+        << stats.threatAdds << " threat_removes " << stats.threatRemoves << " max_piece_events "
+        << stats.maxPieceEvents << " max_threat_events " << stats.maxThreatEvents
+        << " accumulator_comparisons " << stats.accumulatorComparisons
+        << " integer_stage_comparisons " << stats.integerStageComparisons << " undo_checks "
+        << stats.undoChecks << " depth " << depth << " search disabled";
+    report = out.str();
+    return std::nullopt;
+}
+
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
     wait_for_search_finished();
     positions = 0;

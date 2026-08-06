@@ -35,6 +35,25 @@ struct WireMetadata {
     u32         architecture = 0;
 };
 
+struct LoadedIncrementalVerificationStats {
+    u64 positions                 = 0;
+    u64 transitions               = 0;
+    u64 captures                  = 0;
+    u64 promotions                = 0;
+    u64 castlings                 = 0;
+    u64 kingMoves                 = 0;
+    u64 fullRefreshes[COLOR_NB]   = {};
+    u64 pieceAdds                 = 0;
+    u64 pieceRemoves              = 0;
+    u64 threatAdds                = 0;
+    u64 threatRemoves             = 0;
+    u64 maxPieceEvents            = 0;
+    u64 maxThreatEvents           = 0;
+    u64 accumulatorComparisons    = 0;
+    u64 integerStageComparisons   = 0;
+    u64 undoChecks                = 0;
+};
+
 // Validates the complete native integer wire container without exposing it as
 // an evaluator. Parameter allocation and evaluation routing remain separate
 // qualification gates.
@@ -81,6 +100,9 @@ class QualificationNetwork {
     std::optional<std::string>
     probe(std::string_view tensor, u64 index, std::string& report) const;
     std::optional<std::string> integer_trace(const Position& position, std::string& report) const;
+    std::optional<std::string> verify_incremental(Position&                           position,
+                                                  Depth                               depth,
+                                                  LoadedIncrementalVerificationStats& stats) const;
 
    private:
     struct Parameters;

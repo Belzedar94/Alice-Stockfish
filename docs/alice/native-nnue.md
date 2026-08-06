@@ -116,6 +116,15 @@ with fresh extraction, including all 1,024 accumulator elements, eight PSQT
 buckets, and parent restoration after undo. Fixture weights are test data only;
 this command is not a native evaluator.
 
+After authenticated parameter loading,
+`alice_native_verify_loaded_incremental` repeats the transition proof with the
+actual wire integers. Sorted feature-index multiset differences update the
+loaded feature and PSQT accumulators only while the perspective king square and
+board remain unchanged; a king transfer selects a complete refresh. Every node
+is checked against an independent full rebuild through all integer inference
+stages, and every undo must restore the parent FEN and position key. This is a
+qualification command only and is not called by normal search.
+
 ## 2. State and move semantics
 
 Every training and inference position must preserve, losslessly:

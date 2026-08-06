@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -200,6 +201,54 @@ def engine_integer_traces(network: Path, fens: list[str]) -> tuple[list[dict], s
     return traces, network_sha
 
 
+def loaded_incremental_reports(
+    network: Path, cases: list[tuple[str, int]]
+) -> list[dict[str, int]]:
+    network_sha = file_sha256(network)
+    commands = [f"alice_native_load_file {command_path(network)} {network_sha}"]
+    for fen, depth in cases:
+        commands.extend(
+            (f"position fen {fen}", f"alice_native_verify_loaded_incremental {depth}")
+        )
+    commands.extend(("quit", ""))
+    result = subprocess.run(
+        [str(ENGINE_PATH)],
+        input="\n".join(commands),
+        text=True,
+        capture_output=True,
+        encoding="ascii",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stdout + result.stderr)
+
+    pattern = re.compile(
+        r"^alice_native loaded incremental verified generation (?P<generation>\d+) "
+        r"positions (?P<positions>\d+) transitions (?P<transitions>\d+) "
+        r"captures (?P<captures>\d+) promotions (?P<promotions>\d+) "
+        r"castlings (?P<castlings>\d+) king_moves (?P<king_moves>\d+) "
+        r"refreshes (?P<white_refreshes>\d+),(?P<black_refreshes>\d+) "
+        r"piece_adds (?P<piece_adds>\d+) piece_removes (?P<piece_removes>\d+) "
+        r"threat_adds (?P<threat_adds>\d+) threat_removes (?P<threat_removes>\d+) "
+        r"max_piece_events (?P<max_piece_events>\d+) "
+        r"max_threat_events (?P<max_threat_events>\d+) "
+        r"accumulator_comparisons (?P<accumulator_comparisons>\d+) "
+        r"integer_stage_comparisons (?P<integer_stage_comparisons>\d+) "
+        r"undo_checks (?P<undo_checks>\d+) depth (?P<depth>\d+) search disabled$"
+    )
+    reports = [
+        {name: int(value) for name, value in match.groupdict().items()}
+        for line in result.stdout.splitlines()
+        if (match := pattern.match(line))
+    ]
+    if len(reports) != len(cases):
+        raise AssertionError(
+            f"Expected {len(cases)} loaded incremental reports, got {len(reports)}.\n"
+            + result.stdout[-4000:]
+        )
+    return reports
+
+
 class NativeIntegerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -291,6 +340,31 @@ class NativeIntegerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("feature accumulator exceeds signed i16", result.stdout)
 
+            incremental_overflow = subprocess.run(
+                [str(ENGINE_PATH)],
+                input="\n".join(
+                    (
+                        f"alice_native_load_file {command_path(overflow)} {overflow_sha}",
+                        f"position fen {fen}",
+                        "alice_native_verify_loaded_incremental 0",
+                        "quit",
+                        "",
+                    )
+                ),
+                text=True,
+                capture_output=True,
+                encoding="ascii",
+                check=False,
+            )
+            self.assertNotEqual(
+                incremental_overflow.returncode,
+                0,
+                incremental_overflow.stdout + incremental_overflow.stderr,
+            )
+            self.assertIn(
+                "feature accumulator exceeds signed i16", incremental_overflow.stdout
+            )
+
             zero = directory / "zero.nnue"
             write_zero_wire(zero)
             zero_sha = file_sha256(zero)
@@ -313,6 +387,59 @@ class NativeIntegerTests(unittest.TestCase):
             self.assertNotEqual(search.returncode, 0, search.stdout + search.stderr)
             self.assertIn("Legacy Alice evaluation is enabled", search.stdout)
             self.assertNotIn("bestmove", search.stdout)
+
+            missing = subprocess.run(
+                [str(ENGINE_PATH)],
+                input="alice_native_verify_loaded_incremental 0\nquit\n",
+                text=True,
+                capture_output=True,
+                encoding="ascii",
+                check=False,
+            )
+            self.assertNotEqual(missing.returncode, 0, missing.stdout + missing.stderr)
+            self.assertIn("requires qualification parameters", missing.stdout)
+
+    def test_loaded_incremental_matches_full_refresh_after_every_transition(self) -> None:
+        cases = [
+            (START_FEN, 2),
+            ("7k/5p2/8/8/2B5/8/8/7K w - - 0 1", 1),
+            ("7k/P7/8/8/8/8/8/7K w - - 0 1", 1),
+            ("r6k/1P6/8/8/8/8/8/7K w - - 0 1", 1),
+            ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", 1),
+            ("k7/8/8/8/8/8/8/4|K2|R w K - 0 1", 1),
+            ("4r2|k/8/8/8/8/8/8/4K3 w - - 0 1", 1),
+        ]
+        feature_fens = list(self.fixtures.values()) + [fen for fen, _ in cases]
+        with tempfile.TemporaryDirectory(prefix="alice-native-loaded-incremental-") as temporary:
+            network = Path(temporary) / "sparse.nnue"
+            build_sparse_network(network, feature_fens)
+            reports = loaded_incremental_reports(network, cases)
+
+        self.assertTrue(all(report["generation"] == 1 for report in reports))
+        for report in reports:
+            self.assertEqual(
+                report["accumulator_comparisons"], 2 * report["positions"]
+            )
+            self.assertEqual(report["integer_stage_comparisons"], report["positions"])
+            self.assertEqual(report["undo_checks"], report["transitions"])
+
+        opening = reports[0]
+        self.assertEqual(opening["positions"], 421)
+        self.assertEqual(opening["transitions"], 420)
+        self.assertGreater(opening["piece_adds"], 0)
+        self.assertGreater(opening["piece_removes"], 0)
+        self.assertGreater(opening["threat_adds"], 0)
+        self.assertGreater(opening["threat_removes"], 0)
+
+        self.assertGreater(reports[1]["captures"], 0)
+        self.assertGreater(reports[2]["promotions"], 0)
+        self.assertGreater(reports[3]["promotions"], 0)
+        self.assertGreater(reports[3]["captures"], 0)
+        for report in reports[4:6]:
+            self.assertGreater(report["castlings"], 0)
+            self.assertGreater(report["white_refreshes"], 0)
+        self.assertGreater(reports[6]["king_moves"], 0)
+        self.assertGreater(reports[6]["white_refreshes"], 0)
 
 
 def parse_arguments() -> tuple[argparse.Namespace, list[str]]:
