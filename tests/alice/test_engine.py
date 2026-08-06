@@ -280,7 +280,8 @@ class EngineFixtureTests(unittest.TestCase):
         with UciSession() as session:
             session.send("uci")
             session.wait_for(r"^uciok$")
-            self.assertFalse(any("option name EvalFile" in line for line in session.lines))
+            self.assertTrue(any("option name EvalFile" in line for line in session.lines))
+            session.send("setoption name Use NNUE value false")
 
             for _ in range(2):
                 session.send("position startpos")
@@ -302,6 +303,7 @@ class EngineFixtureTests(unittest.TestCase):
     def test_safe_search_finds_an_alice_mate_in_one(self) -> None:
         fen = "8/6|Q1/8/8/8/8/k7/2K5 w - - 0 1"
         with UciSession() as session:
+            session.send("setoption name Use NNUE value false")
             session.send(f"position fen {fen}")
             session.send("go depth 1")
             bestmove = session.wait_for(r"^bestmove ")
@@ -313,6 +315,7 @@ class EngineFixtureTests(unittest.TestCase):
 
     def test_safe_search_stop_is_prompt_and_preserves_the_position(self) -> None:
         with UciSession() as session:
+            session.send("setoption name Use NNUE value false")
             session.send("position startpos")
             session.send("go infinite")
             session.wait_for(r"^info depth 1 ")
@@ -329,9 +332,10 @@ class EngineFixtureTests(unittest.TestCase):
                 {candidate.uci() for candidate in Position.from_fen(START_FEN).legal_moves()},
             )
 
-    def test_terminal_mate_and_evaluator_commands_fail_closed(self) -> None:
+    def test_terminal_mate_and_zero_diagnostic_mode(self) -> None:
         mate = "8/6|Kk/8/8/8/3Q4/8/8 b - - 0 1"
         with UciSession() as session:
+            session.send("setoption name Use NNUE value false")
             session.send(f"position fen {mate}")
             session.send("go depth 3")
             bestmove = session.wait_for(r"^bestmove ")
@@ -339,9 +343,13 @@ class EngineFixtureTests(unittest.TestCase):
             self.assertTrue(any("score mate 0" in line for line in session.lines))
 
             session.send("eval")
-            session.wait_for(r"Evaluation is unavailable until a compatible Alice network is loaded\.")
-            session.send("export_net")
-            session.wait_for(r"Network export is unavailable until a compatible Alice evaluator is loaded\.")
+            session.wait_for(r"^legacy_nnue raw 0 adjusted 0$")
+
+    def test_normal_search_without_a_network_fails_closed(self) -> None:
+        result = run_engine("position startpos", "go depth 1")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("no compatible network is loaded", result.stdout)
+        self.assertIn("CRITICAL ERROR", result.stdout)
 
 
 def parse_arguments() -> tuple[argparse.Namespace, list[str]]:

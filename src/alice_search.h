@@ -45,10 +45,12 @@ struct Result {
 };
 
 using IterationCallback = std::function<void(const Result&)>;
+using StaticEvaluator   = std::function<Value(const Position&)>;
 
 Result search(Position&                pos,
               const std::vector<Move>& rootMoves,
               const Limits&            limits,
+              const StaticEvaluator&   evaluator,
               std::atomic_bool&        stop,
               const IterationCallback& onIteration = {});
 

@@ -34,6 +34,7 @@
 
 #include "misc.h"
 #include "history.h"
+#include "legacy_alice_nnue.h"
 #include "nnue/network.h"
 #include "nnue/nnue_misc.h"
 #include "numa.h"
@@ -65,7 +66,7 @@ class Engine {
     std::variant<u64, PositionSetError> perft(const std::string& fen, Depth depth, bool isChess960);
 
     // non blocking call to start searching
-    void go(Search::LimitsType&);
+    std::optional<std::string> go(Search::LimitsType&);
     // non blocking call to stop searching
     void stop();
 
@@ -99,7 +100,7 @@ class Engine {
 
     // utility functions
 
-    void trace_eval() const;
+    std::optional<std::string> trace_eval() const;
 
     const OptionsMap& get_options() const;
     OptionsMap&       get_options();
@@ -128,6 +129,7 @@ class Engine {
     TranspositionTable                                tt;
     Eval::NNUE::EvalFile                              networkFile;
     LazyNumaReplicatedSystemWide<Eval::NNUE::Network> network;
+    LegacyAliceExact                                  legacyEvaluator;
 
     Search::SearchManager::UpdateContext  updateContext;
     std::function<void(std::string_view)> onVerifyNetwork;
@@ -136,6 +138,8 @@ class Engine {
     std::thread      aliceSearchThread;
     std::atomic_bool aliceSearchStop{false};
     std::atomic_bool alicePondering{false};
+
+    std::optional<std::string> configure_legacy_network(const std::filesystem::path&);
 };
 
 }  // namespace Stockfish

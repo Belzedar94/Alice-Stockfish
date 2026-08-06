@@ -118,6 +118,24 @@ rules. Positions affected by the known legacy hashing, SEE, pinning, or
 legality defects must be labeled and adjudicated by the independent Alice
 rules implementation.
 
+## Implemented bridge status
+
+The current `LegacyAliceExact` bridge implements the frozen-baseline and
+explicit format-compatible policies above. It is intentionally scalar and
+full-refresh-only: no current Stockfish accumulator, dirty-piece update, or
+orthodox evaluation route is reachable from it. `Use NNUE` is enabled by
+default, so normal `eval` and `go` commands require a successfully loaded
+network. The only zero-evaluation path requires the explicit diagnostic
+setting `Use NNUE false` and identifies itself in UCI output.
+
+The versioned public fixture records seven exact raw and adjusted evaluation
+vectors. Differential validation against a minimally instrumented build of the
+frozen source also matched both values on 80 deterministic random legal
+positions. Negative probes cover structural, identity, integrity, and file
+errors, and verify that a failed replacement cannot retain a previously loaded
+evaluator. These results establish the full-refresh bridge; they do not claim
+incremental support or native layer awareness.
+
 ## Public provenance
 
 The engine source and the historical NNUE trainer named by the file are public:

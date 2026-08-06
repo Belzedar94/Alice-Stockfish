@@ -29,10 +29,12 @@ class Searcher {
     Searcher(Position&                position,
              const std::vector<Move>& allowedRootMoves,
              const Limits&            searchLimits,
+             const StaticEvaluator&   staticEvaluator,
              std::atomic_bool&        stopFlag) :
         pos(position),
         rootMoves(allowedRootMoves),
         limits(searchLimits),
+        evaluator(staticEvaluator),
         stop(stopFlag) {}
 
     Result iterative_deepening(const IterationCallback& onIteration) {
@@ -92,7 +94,7 @@ class Searcher {
         if (moves.size() == 0)
             return pos.checkers() ? mated_in(ply) : VALUE_DRAW;
         if (depth == 0)
-            return VALUE_ZERO;
+            return evaluator ? evaluator(pos) : VALUE_ZERO;
 
         Value best = -VALUE_INFINITE;
         for (Move move : moves)
@@ -157,6 +159,7 @@ class Searcher {
     Position&                pos;
     const std::vector<Move>& rootMoves;
     const Limits&            limits;
+    const StaticEvaluator&   evaluator;
     std::atomic_bool&        stop;
     u64                      nodes   = 0;
     bool                     aborted = false;
@@ -167,9 +170,10 @@ class Searcher {
 Result search(Position&                pos,
               const std::vector<Move>& rootMoves,
               const Limits&            limits,
+              const StaticEvaluator&   evaluator,
               std::atomic_bool&        stop,
               const IterationCallback& onIteration) {
-    Searcher searcher(pos, rootMoves, limits, stop);
+    Searcher searcher(pos, rootMoves, limits, evaluator, stop);
     return searcher.iterative_deepening(onIteration);
 }
 

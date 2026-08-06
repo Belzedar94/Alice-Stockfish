@@ -159,7 +159,10 @@ void UCIEngine::loop() {
         else if (token == "d")
             sync_cout << engine.visualize() << sync_endl;
         else if (token == "eval")
-            engine.trace_eval();
+        {
+            if (auto error = engine.trace_eval())
+                terminate_on_critical_error(*error);
+        }
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")
@@ -234,8 +237,8 @@ void UCIEngine::go(std::istringstream& is) {
 
     if (limits.perft)
         perft(limits);
-    else
-        engine.go(limits);
+    else if (auto error = engine.go(limits))
+        terminate_on_critical_error(*error);
 }
 
 void UCIEngine::bench(std::istream& args) {
@@ -273,7 +276,8 @@ void UCIEngine::bench(std::istream& args) {
                     nodesSearched = perft(limits);
                 else
                 {
-                    engine.go(limits);
+                    if (auto error = engine.go(limits))
+                        terminate_on_critical_error(*error);
                     engine.wait_for_search_finished();
                 }
 
@@ -281,7 +285,10 @@ void UCIEngine::bench(std::istream& args) {
                 nodesSearched = 0;
             }
             else
-                engine.trace_eval();
+            {
+                if (auto error = engine.trace_eval())
+                    terminate_on_critical_error(*error);
+            }
         }
         else if (token == "setoption")
             setoption(is);
@@ -348,7 +355,8 @@ void UCIEngine::benchmark(std::istream& args) {
             Search::LimitsType limits = parse_limits(is);
 
             // Run with silenced network verification
-            engine.go(limits);
+            if (auto error = engine.go(limits))
+                terminate_on_critical_error(*error);
             engine.wait_for_search_finished();
         }
         else if (token == "position")
@@ -416,7 +424,8 @@ void UCIEngine::benchmark(std::istream& args) {
             Search::LimitsType limits = parse_limits(is);
 
             // Run with silenced network verification
-            engine.go(limits);
+            if (auto error = engine.go(limits))
+                terminate_on_critical_error(*error);
             engine.wait_for_search_finished();
 
             updateHashfullReadings();

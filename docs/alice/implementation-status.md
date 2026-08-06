@@ -57,14 +57,55 @@ bounded depth, node and time modes, responsive `stop`, and no calls into the
 orthodox evaluator, accumulator, move picker, pruning stack, transposition
 table, or tablebases.
 
-Static evaluation is intentionally fixed at zero. This makes the executable a
-rules and search-control baseline, not a strength release. The `eval` and
-`export_net` commands are closed until the strict historical compatibility
-loader is available, and no `EvalFile` option is advertised.
+Static leaves are supplied through a narrow evaluator contract. They never
+enter the orthodox Stockfish evaluator or its accumulator. Normal search now
+requires the strict historical Alice evaluator described below. Explicitly
+setting `Use NNUE` to `false` selects a reported zero-evaluation diagnostic
+mode; that mode is not a compatibility or strength result. `export_net`
+remains closed.
 
 Executable conformance additionally covers repeated-search determinism, an
 Alice mate in one, terminal mate reporting, prompt interruption with exact
-root-state preservation, and the closed evaluator commands.
+root-state preservation, the explicit diagnostic mode, and fail-closed search
+without a network.
+
+## Historical NNUE compatibility milestone
+
+`LegacyAliceExact` is an engine-owned, full-refresh-only evaluator for the
+frozen historical Alice architecture. Its default policy accepts only the
+exact file name, serialization version, composite architecture hash, internal
+transformer and layer-stack hashes, structural length, end of file, and frozen
+SHA-256. The loader hashes the bytes it actually opens and reports the
+normalized path, policy mode, SHA-256, version, and architecture through UCI.
+
+`Alice_Frozen_Network` defaults to `true`. Setting it explicitly to `false`
+permits a structurally exact but non-baseline file as
+`format-compatible`; the different checksum remains visible. A rejected or
+empty `EvalFile` clears any previously loaded evaluator. With `Use NNUE`
+enabled, `eval` and `go` then terminate with a non-zero outcome instead of
+using zero evaluation, an embedded chess network, or stale weights.
+
+The scalar full-refresh implementation reproduces the historical feature
+transformer, PSQT bucket, `16 -> 32 -> 1` stack, integer clipping and scaling,
+and adjusted-evaluation weighting. Its board blindness is intentional and
+limited to this compatibility class.
+
+Verified compatibility evidence consists of:
+
+- seven fixed vectors covering the start position, a transferred pawn,
+  tactical positions, both layers, and an expected layer collision;
+- exact raw and adjusted equality on 80 deterministic random legal positions;
+- an exact network-backed depth-one root result; and
+- non-zero rejection probes for a missing file, wrong basename, version,
+  architecture, transformer or layer-stack hash, frozen checksum, truncation,
+  and trailing data, including invalidation after a valid load.
+
+The public executable checks are:
+
+```text
+python tests/alice/test_legacy_nnue.py --engine src/stockfish.exe \
+  --network <path-to-alice_run2rl_e40_l09.nnue>
+```
 
 ## Deliberately disabled paths
 
@@ -78,7 +119,7 @@ board-aware implementation and dedicated coverage:
 - the current Stockfish accumulator and threat features; and
 - insufficient-material shortcuts.
 
-Strength-oriented playing search is not a supported deliverable at this
-milestone. The next acceptance gate is the strict legacy-network compatibility
-loader described in
-[`legacy-nnue-compatibility.md`](legacy-nnue-compatibility.md).
+The historical bridge makes the safe search playable, but it does not turn the
+current route into a strength release. Remaining gates include cross-platform
+sanitizer coverage, a board-aware strength search, and the native Alice NNUE
+defined in [`native-nnue.md`](native-nnue.md).

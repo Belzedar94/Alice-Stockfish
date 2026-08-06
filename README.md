@@ -10,7 +10,8 @@ and measurement protocol are collected in the
 
 The historical Fairy-Stockfish Alice branch is retained as a compatibility
 reference. It is not merged into this codebase and is not treated as an
-independent rules authority.
+independent rules authority. The current correctness-first search can use its
+frozen Alice network through a strict, full-refresh-only compatibility bridge.
 
 ---
 
