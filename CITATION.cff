@@ -2,21 +2,21 @@
 # Visit https://bit.ly/cffinit to generate yours today!
 
 cff-version: 1.2.0
-title: Stockfish
+title: Alice-Stockfish
 message: >-
   Please cite this software using the metadata from this
   file.
 type: software
 authors:
+  - name: Belzedar94
   - name: The Stockfish developers (see AUTHORS file)
-repository-code: 'https://github.com/official-stockfish/Stockfish'
-url: 'https://stockfishchess.org/'
-repository-artifact: 'https://stockfishchess.org/download/'
-abstract: Stockfish is a free and strong UCI chess engine.
+repository-code: 'https://github.com/Belzedar94/Alice-Stockfish'
+url: 'https://github.com/Belzedar94/Alice-Stockfish'
+abstract: Alice-Stockfish is a UCI engine for Alice Chess.
 keywords:
   - chess
-  - artificial intelligence (AI)
-  - tree search
+  - Alice Chess
+  - game-tree search
   - alpha-beta search
   - neural networks (NN)
   - efficiently updatable neural networks (NNUE)

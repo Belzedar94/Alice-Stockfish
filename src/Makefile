@@ -81,6 +81,7 @@ SRCS = alice_search.cpp legacy_alice_nnue.cpp attacks.cpp benchmark.cpp bitboard
 	search.cpp thread.cpp timeman.cpp tt.cpp uci.cpp ucioption.cpp tune.cpp syzygy/tbprobe.cpp \
 	nnue/nnue_accumulator.cpp nnue/nnue_misc.cpp nnue/network.cpp \
 	nnue/features/half_ka_v2_hm.cpp nnue/features/full_threats.cpp nnue/features/pp_3wide.cpp \
+	nnue/alice_native/alice_native_features.cpp \
 	engine.cpp score.cpp memory.cpp
 
 OTHER_SRCS = universal/entry_x86.cpp universal/entry_arm64.cpp universal/entry_riscv64.cpp universal/nnue_embed.cpp
@@ -88,6 +89,7 @@ OTHER_SRCS = universal/entry_x86.cpp universal/entry_arm64.cpp universal/entry_r
 HEADERS = alice_search.h legacy_alice_nnue.h attacks.h benchmark.h bitboard.h evaluate.h misc.h movegen.h movepick.h history.h \
 		nnue/nnue_misc.h nnue/features/half_ka_v2_hm.h nnue/features/full_threats.h \
 		nnue/features/pp_3wide.h nnue/layers/affine_transform.h nnue/layers/affine_transform_sparse_input.h \
+		nnue/alice_native/manifest.h nnue/alice_native/alice_native_features.h \
 		nnue/layers/clipped_relu.h nnue/layers/sqr_clipped_relu.h nnue/nnue_accumulator.h \
 		nnue/nnue_architecture.h nnue/nnue_common.h nnue/nnue_feature_transformer.h nnue/simd.h \
 		nnue/nnz_helper.h position.h search.h syzygy/tbprobe.h thread.h thread_native.h timeman.h \
@@ -95,7 +97,7 @@ HEADERS = alice_search.h legacy_alice_nnue.h attacks.h benchmark.h bitboard.h ev
 
 OBJS = $(notdir $(SRCS:.cpp=.o))
 
-VPATH = syzygy:nnue:nnue/features
+VPATH = syzygy:nnue:nnue/features:nnue/alice_native
 
 ### ==========================================================================
 ### Section 2. High-level Configuration

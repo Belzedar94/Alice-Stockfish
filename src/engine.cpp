@@ -37,6 +37,7 @@
 #include "alice_search.h"
 #include "evaluate.h"
 #include "misc.h"
+#include "nnue/alice_native/alice_native_features.h"
 #include "nnue/network.h"
 #include "nnue/nnue_common.h"
 #include "numa.h"
@@ -500,6 +501,11 @@ std::optional<std::string> Engine::trace_eval() const {
     sync_cout << "info string " << legacyEvaluator.status_line() << "\n"
               << "legacy_nnue raw " << *raw << " adjusted " << *adjusted << sync_endl;
     return std::nullopt;
+}
+
+std::string Engine::trace_native_features() {
+    wait_for_search_finished();
+    return Eval::NNUE::AliceNative::trace_json(pos);
 }
 
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {

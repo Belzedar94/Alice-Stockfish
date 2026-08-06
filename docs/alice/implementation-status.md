@@ -153,6 +153,26 @@ network suite proves that the embedded list and fixture produce the same node
 count, and repeated fresh processes produce the same signature. This is a
 build-admission identity, not a strength measurement.
 
+## Native NNUE N0/N1 milestone
+
+The native v1 manifest, identifiers, dimensions, relation order, component
+hashes, tensor order, and wire version are frozen in the public contract. A
+separate scalar inspection path now extracts full `SAME/OTHER` piece-square
+and board-local threat traces for both king perspectives. It uses explicit
+board-aware position queries and 32-bit threat indices, omits `PP_3Wide`, and
+does not connect native features to evaluation or to the historical
+accumulator.
+
+The machine-readable trace command is:
+
+```text
+alice_native_trace
+```
+
+This milestone is limited to manifest and feature observation. Native sparse
+updates, accumulator weights, serialization, loading, and evaluation remain
+closed until their exact parity gates land.
+
 ## Cross-platform verification
 
 The repository verification workflow builds BMI2 and AVX2 binaries on Linux

@@ -176,6 +176,8 @@ void UCIEngine::loop() {
             sync_cout << "legacy_nnue incremental verified positions " << positions << " depth "
                       << requestedDepth << sync_endl;
         }
+        else if (token == "alice_native_trace")
+            sync_cout << "alice_native_trace " << engine.trace_native_features() << sync_endl;
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")

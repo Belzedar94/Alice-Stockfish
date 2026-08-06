@@ -27,6 +27,68 @@ feature index must be a documented pure function of:
 The feature-set identifier, index order, dimensions, and board-relation bit are
 part of the file-format contract and cannot change without a new version.
 
+### Native v1 identity
+
+Native v1 freezes the following runtime identity. The canonical machine-readable
+manifest is [`native-nnue-v1-manifest.json`](native-nnue-v1-manifest.json).
+
+| Component | Identifier | Dimensions | Hash |
+| --- | --- | ---: | --- |
+| Piece-square | `AliceHalfKAv2_hm_Rel-v1` | 45,056 | `5280C41E` |
+| Threats | `AliceFullThreats_Rel-v1` | 119,616 | `6EE7B82C` |
+| Pair feature | `None` | 0 | not present |
+| Feature transformer | threats, then piece-square | 164,672 logical inputs | `8F4FBC46` |
+| Dense body | `1024 -> 32 -> 32 -> 1`, eight stacks | — | `63337116` |
+| Composite | `AliceNative-v1` | — | `EC7CCD50` |
+
+The wire version is `A11CE001`. This version is deliberately incompatible in
+both directions with the historical `7AF32F20/3C103E72` format.
+
+### Piece-square index
+
+The eleven planes are own pawn, opposing pawn, own knight, opposing knight,
+own bishop, opposing bishop, own rook, opposing rook, own queen, opposing
+queen, and either king. For perspective `p`, piece `x`, piece square `s`, and
+perspective king square `k`:
+
+```text
+plane = 10                                             if x is a king
+        2 * (piece_type(x) - pawn) + (color(x) != p)  otherwise
+
+vertical_flip = 56 * p
+horizontal_mirror = 7 if file(k) is a, b, c, or d; 0 otherwise
+oriented_square = s XOR vertical_flip XOR horizontal_mirror
+relation = board(s) XOR board(k)        # SAME=0, OTHER=1
+
+index = oriented_square
+      + 64 * plane
+      + 704 * relation
+      + 1408 * king_bucket(k XOR vertical_flip)
+```
+
+The king bucket table is the pinned 32-bucket horizontally mirrored
+`HalfKAv2_hm` table. Indices span `0..45055`. As sealed golden examples, a
+white pawn on `A:e2` with its king on `A:e1` has index `43660`; after transfer
+to `B:e4`, it has index `44380`.
+
+### Threat index
+
+Threat discovery runs independently on each physical board with that board's
+occupancy, attackers, and targets. Cross-board edges do not exist. For every
+valid edge, the pinned 59,808-entry `FullThreats` base index is extended as:
+
+```text
+index = base + 59808 * (edge_board XOR perspective_king_board)
+```
+
+Threat indices are 32-bit and span `0..119615`. The orthodox `PP_3Wide`
+feature is not part of native v1. Adding any pair feature requires a new native
+feature version.
+
+The read-only `alice_native_trace` inspection command emits sorted semantic
+piece and threat tuples for both perspectives. It does not load weights, route
+evaluation, or modify the historical compatibility backend.
+
 ## 2. State and move semantics
 
 Every training and inference position must preserve, losslessly:

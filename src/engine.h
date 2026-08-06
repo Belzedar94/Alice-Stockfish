@@ -98,6 +98,7 @@ class Engine {
     // utility functions
 
     std::optional<std::string> trace_eval() const;
+    std::string                trace_native_features();
     std::optional<std::string> verify_legacy_incremental(Depth depth, u64& positions);
 
     const OptionsMap& get_options() const;

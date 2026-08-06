@@ -37,6 +37,7 @@ jobs:
         run: |
           python3 tests/alice/test_reference.py
           python3 tests/alice/test_engine.py --engine src/stockfish
+          python3 tests/alice/test_native_features.py --engine src/stockfish
       - name: Verify closed binary
         run: |
           test "$(stat -c%s src/stockfish)" -lt 10000000
@@ -69,6 +70,7 @@ jobs:
         run: |
           python tests/alice/test_reference.py
           python tests/alice/test_engine.py --engine src/stockfish.exe
+          python tests/alice/test_native_features.py --engine src/stockfish.exe
           if ((Get-Item src/stockfish.exe).Length -ge 10000000) {
             throw "Alice binary unexpectedly contains a large embedded payload."
           }
@@ -111,3 +113,4 @@ jobs:
         run: |
           python3 tests/alice/test_reference.py
           python3 tests/alice/test_engine.py --engine src/stockfish
+          python3 tests/alice/test_native_features.py --engine src/stockfish
