@@ -538,6 +538,28 @@ Engine::validate_native_wire(const std::filesystem::path&      file,
 
 std::string Engine::native_wire_status() const { return nativeWireValidator.status_line(); }
 
+std::optional<std::string>
+Engine::load_native_qualification(const std::filesystem::path& file,
+                                  std::string_view             expectedSha256) {
+    wait_for_search_finished();
+    if (auto error = nativeQualification.load(file, expectedSha256))
+        return "Alice native qualification load rejected: " + *error;
+    return std::nullopt;
+}
+
+std::string Engine::native_qualification_status() const {
+    return nativeQualification.status_line();
+}
+
+std::string Engine::native_tensor_status() const {
+    return nativeQualification.tensor_status_line();
+}
+
+std::optional<std::string>
+Engine::probe_native_parameter(std::string_view tensor, u64 index, std::string& report) const {
+    return nativeQualification.probe(tensor, index, report);
+}
+
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
     wait_for_search_finished();
     positions = 0;

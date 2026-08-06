@@ -12,8 +12,10 @@
 #define NNUE_ALICE_NATIVE_NETWORK_H_INCLUDED
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "../../types.h"
 #include "manifest.h"
@@ -48,6 +50,38 @@ class WireValidator {
     bool         ready = false;
     WireMetadata current;
     std::string  lastError;
+};
+
+// Owns one fully parsed but qualification-only native parameter set. Loading
+// requires a caller-trusted SHA-256 and commits with one pointer swap only
+// after same-handle authentication, parsing, and canonical traversal checks.
+// Normal search never reads this object in N7.
+class QualificationNetwork {
+   public:
+    QualificationNetwork();
+    ~QualificationNetwork();
+
+    QualificationNetwork(const QualificationNetwork&)            = delete;
+    QualificationNetwork(QualificationNetwork&&)                  = delete;
+    QualificationNetwork& operator=(const QualificationNetwork&) = delete;
+    QualificationNetwork& operator=(QualificationNetwork&&)      = delete;
+
+    std::optional<std::string> load(const std::filesystem::path& file,
+                                    std::string_view             expectedSha256);
+
+    bool               loaded() const;
+    u64                generation() const;
+    const std::string& last_error() const;
+    std::string        status_line() const;
+    std::string        tensor_status_line() const;
+    std::optional<std::string>
+    probe(std::string_view tensor, u64 index, std::string& report) const;
+
+   private:
+    struct Parameters;
+
+    std::unique_ptr<Parameters> active;
+    std::string                 lastError;
 };
 
 }  // namespace Stockfish::Eval::NNUE::AliceNative

@@ -224,6 +224,47 @@ void UCIEngine::loop() {
         }
         else if (token == "alice_native_wire_status")
             sync_cout << engine.native_wire_status() << sync_endl;
+        else if (token == "alice_native_load_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file) >> expectedSha256))
+                terminate_on_critical_error(
+                  "alice_native_load_file requires a path and an expected SHA-256.");
+            if (auto error = engine.load_native_qualification(path_from_utf8(file), expectedSha256))
+                terminate_on_critical_error(*error);
+            sync_cout << engine.native_qualification_status() << sync_endl;
+        }
+        else if (token == "alice_native_try_load_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file) >> expectedSha256))
+                sync_cout
+                  << "Alice native qualification load rejected: alice_native_try_load_file requires a path and an expected SHA-256."
+                  << sync_endl;
+            else if (auto error =
+                       engine.load_native_qualification(path_from_utf8(file), expectedSha256))
+                sync_cout << *error << sync_endl;
+            else
+                sync_cout << engine.native_qualification_status() << sync_endl;
+        }
+        else if (token == "alice_native_load_status")
+            sync_cout << engine.native_qualification_status() << sync_endl;
+        else if (token == "alice_native_tensor_status")
+            sync_cout << engine.native_tensor_status() << sync_endl;
+        else if (token == "alice_native_parameter")
+        {
+            std::string tensor;
+            u64         index = 0;
+            if (!(is >> tensor >> index))
+                terminate_on_critical_error(
+                  "alice_native_parameter requires a tensor name and a nonnegative flat index.");
+            std::string report;
+            if (auto error = engine.probe_native_parameter(tensor, index, report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")

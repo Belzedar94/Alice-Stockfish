@@ -153,7 +153,7 @@ network suite proves that the embedded list and fixture produce the same node
 count, and repeated fresh processes produce the same signature. This is a
 build-admission identity, not a strength measurement.
 
-## Native NNUE N0-N6 qualification milestone
+## Native NNUE N0-N7 qualification milestone
 
 The native v1 manifest, identifiers, dimensions, relation order, component
 hashes, tensor order, and wire version are frozen in the public contract. A
@@ -210,8 +210,35 @@ alice_native_wire_status
 ```
 
 Wire validation deliberately does not allocate parameters or make the file an
-evaluator. Real checkpoint quantization, parameter loading, and evaluation
-routing remain separate gates.
+evaluator. It remains a diagnostic N6 path with state-clearing replacement
+semantics.
+
+The separate N7 qualification loader requires a caller-trusted whole-file
+SHA-256. It obtains the exact size, structure, whole-file digest, tensor
+digests, and parameter bytes from one open handle without reopening the path.
+All 220,315,747 bytes are decoded explicitly from little endian into a complete
+candidate. Forbidden signed minima and dense `fc0`/`fc1` i16 envelopes are
+rejected. A second traversal of the runtime object must reproduce every
+canonical tensor digest before one pointer swap can install the candidate.
+
+A successful load increments the parameter generation. A failed replacement
+preserves the active pointer, generation, whole-file identity, tensor
+identities, and parameter probes. The zero and axis-sentinel fixtures prove
+successful replacement; wrong SHA, wrong version, `-32768`, dense-envelope
+overflow, and missing-SHA cases prove fail-closed preservation. The
+qualification-only commands are:
+
+```text
+alice_native_load_file <path> <expected-sha256>
+alice_native_try_load_file <path> <expected-sha256>
+alice_native_load_status
+alice_native_tensor_status
+alice_native_parameter <tensor> <flat-index>
+```
+
+The installed object is not read by normal search, never selects the
+historical evaluator as a fallback, and reports `search=disabled`. Native
+integer stage inference and evaluation routing remain later exact-parity gates.
 
 ## Cross-platform verification
 

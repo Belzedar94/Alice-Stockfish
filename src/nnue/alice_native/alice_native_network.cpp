@@ -16,18 +16,86 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <limits>
+#include <memory>
+#include <new>
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 #include "../../misc.h"
 
 namespace Stockfish::Eval::NNUE::AliceNative {
 
+struct QualificationNetwork::Parameters {
+    struct DenseStack {
+        std::array<i32, Fc0BiasElementsPerStack>   fc0Bias{};
+        std::array<i8, Fc0WeightElementsPerStack>  fc0Weight{};
+        std::array<i32, Fc1BiasElementsPerStack>   fc1Bias{};
+        std::array<i8, Fc1WeightElementsPerStack>  fc1Weight{};
+        std::array<i32, Fc2BiasElementsPerStack>   fc2Bias{};
+        std::array<i8, Fc2WeightElementsPerStack>  fc2Weight{};
+    };
+
+    bool allocate_features() {
+        threatWeight.reset(new (std::nothrow) i8[ThreatWeightElements]);
+        threatPsqt.reset(new (std::nothrow) i32[ThreatPsqtElements]);
+        pieceSquareWeight.reset(new (std::nothrow) i16[PieceSquareWeightElements]);
+        pieceSquarePsqt.reset(new (std::nothrow) i32[PieceSquarePsqtElements]);
+        return threatWeight && threatPsqt && pieceSquareWeight && pieceSquarePsqt;
+    }
+
+    std::array<i16, FtBiasElements> ftBias{};
+    std::unique_ptr<i8[]>           threatWeight;
+    std::unique_ptr<i32[]>          threatPsqt;
+    std::unique_ptr<i16[]>          pieceSquareWeight;
+    std::unique_ptr<i32[]>          pieceSquarePsqt;
+    std::array<DenseStack, LayerStacks> dense{};
+
+    WireMetadata                                wire;
+    u64                                         generation = 0;
+    std::array<std::array<u8, 32>, TensorCount> tensorDigests{};
+};
+
 namespace {
 
 constexpr u32 LegacyWireVersion    = 0x7AF32F20u;
 constexpr u64 MaximumManifestBytes = 65536;
+
+enum TensorIndex : usize {
+    FtBias,
+    ThreatWeight,
+    ThreatPsqt,
+    PieceSquareWeight,
+    PieceSquarePsqt,
+    Fc0Bias,
+    Fc0Weight,
+    Fc1Bias,
+    Fc1Weight,
+    Fc2Bias,
+    Fc2Weight,
+};
+
+constexpr std::array<std::string_view, TensorCount> TensorNames = {
+  "ft.bias",          "threat.weight",    "threat.psqt",     "pieceSquare.weight",
+  "pieceSquare.psqt", "stack.fc0.bias",   "stack.fc0.weight", "stack.fc1.bias",
+  "stack.fc1.weight", "stack.fc2.bias",   "stack.fc2.weight",
+};
+
+constexpr std::array<u64, TensorCount> TensorBytes = {
+  FtBiasElements * 2,
+  ThreatWeightElements,
+  ThreatPsqtElements * 4,
+  PieceSquareWeightElements * 2,
+  PieceSquarePsqtElements * 4,
+  u64(LayerStacks) * Fc0BiasElementsPerStack * 4,
+  u64(LayerStacks) * Fc0WeightElementsPerStack,
+  u64(LayerStacks) * Fc1BiasElementsPerStack * 4,
+  u64(LayerStacks) * Fc1WeightElementsPerStack,
+  u64(LayerStacks) * Fc2BiasElementsPerStack * 4,
+  u64(LayerStacks) * Fc2WeightElementsPerStack,
+};
 
 u32 rotate_right(u32 value, unsigned shift) { return (value >> shift) | (value << (32 - shift)); }
 
@@ -143,6 +211,40 @@ class Sha256 {
     u64                totalBytes = 0;
 };
 
+class AuthenticatingReader {
+   public:
+    explicit AuthenticatingReader(std::istream& source) : input(source) {}
+
+    bool read(void* destination, usize bytes, Sha256* tensorHash = nullptr) {
+        input.read(static_cast<char*>(destination), std::streamsize(bytes));
+        if (input.gcount() != std::streamsize(bytes))
+            return false;
+        const auto* data = static_cast<const u8*>(destination);
+        wholeHash.update(data, bytes);
+        if (tensorHash)
+            tensorHash->update(data, bytes);
+        consumed += bytes;
+        return true;
+    }
+
+    bool read_u32(u32& value) {
+        std::array<u8, 4> bytes{};
+        if (!read(bytes.data(), bytes.size()))
+            return false;
+        value = u32(bytes[0]) | (u32(bytes[1]) << 8) | (u32(bytes[2]) << 16)
+              | (u32(bytes[3]) << 24);
+        return true;
+    }
+
+    u64                    bytes_consumed() const { return consumed; }
+    std::array<u8, 32> finish() { return wholeHash.finish(); }
+
+   private:
+    std::istream& input;
+    Sha256       wholeHash;
+    u64          consumed = 0;
+};
+
 std::string digest_string(const std::array<u8, 32>& digest) {
     std::ostringstream out;
     out << std::hex << std::uppercase << std::setfill('0');
@@ -228,6 +330,208 @@ std::optional<std::string> normalized_expected_sha(const std::optional<std::stri
         character = char(std::toupper(value));
     }
     return std::nullopt;
+}
+
+std::optional<std::string> normalized_required_sha(std::string_view expected,
+                                                   std::string&    normalized) {
+    if (expected.empty())
+        return "expected SHA-256 is mandatory for native parameter loading";
+    return normalized_expected_sha(std::string(expected), normalized);
+}
+
+bool read_i8_tensor(AuthenticatingReader& reader,
+                    i8*                   destination,
+                    u64                   elements,
+                    Sha256&               tensorHash,
+                    std::string_view      name,
+                    u64                   flatBase,
+                    std::string&          error) {
+    constexpr usize ChunkElements = 65536;
+    u64             completed     = 0;
+    while (completed < elements)
+    {
+        const usize take = usize(std::min<u64>(ChunkElements, elements - completed));
+        if (!reader.read(destination + completed, take, &tensorHash))
+        {
+            error = std::string(name) + " is truncated at flat index "
+                  + std::to_string(flatBase + completed);
+            return false;
+        }
+        for (usize index = 0; index < take; ++index)
+            if (destination[completed + index] == std::numeric_limits<i8>::min())
+            {
+                error = std::string(name) + " contains forbidden -128 at flat index "
+                      + std::to_string(flatBase + completed + index);
+                return false;
+            }
+        completed += take;
+    }
+    return true;
+}
+
+bool read_i16_tensor(AuthenticatingReader& reader,
+                     i16*                  destination,
+                     u64                   elements,
+                     Sha256&               tensorHash,
+                     std::string_view      name,
+                     u64                   flatBase,
+                     std::string&          error) {
+    std::array<u8, 65536> buffer{};
+    u64                   completed = 0;
+    while (completed < elements)
+    {
+        const usize take = usize(std::min<u64>(buffer.size() / 2, elements - completed));
+        if (!reader.read(buffer.data(), take * 2, &tensorHash))
+        {
+            error = std::string(name) + " is truncated at flat index "
+                  + std::to_string(flatBase + completed);
+            return false;
+        }
+        for (usize index = 0; index < take; ++index)
+        {
+            const u16 raw = u16(buffer[2 * index]) | (u16(buffer[2 * index + 1]) << 8);
+            i16       value;
+            std::memcpy(&value, &raw, sizeof(value));
+            if (value == std::numeric_limits<i16>::min())
+            {
+                error = std::string(name) + " contains forbidden -32768 at flat index "
+                      + std::to_string(flatBase + completed + index);
+                return false;
+            }
+            destination[completed + index] = value;
+        }
+        completed += take;
+    }
+    return true;
+}
+
+bool read_i32_tensor(AuthenticatingReader& reader,
+                     i32*                  destination,
+                     u64                   elements,
+                     Sha256&               tensorHash,
+                     std::string_view      name,
+                     u64                   flatBase,
+                     std::string&          error) {
+    std::array<u8, 65536> buffer{};
+    u64                   completed = 0;
+    while (completed < elements)
+    {
+        const usize take = usize(std::min<u64>(buffer.size() / 4, elements - completed));
+        if (!reader.read(buffer.data(), take * 4, &tensorHash))
+        {
+            error = std::string(name) + " is truncated at flat index "
+                  + std::to_string(flatBase + completed);
+            return false;
+        }
+        for (usize index = 0; index < take; ++index)
+        {
+            const u32 raw = u32(buffer[4 * index]) | (u32(buffer[4 * index + 1]) << 8)
+                          | (u32(buffer[4 * index + 2]) << 16)
+                          | (u32(buffer[4 * index + 3]) << 24);
+            i32 value;
+            std::memcpy(&value, &raw, sizeof(value));
+            if (value == std::numeric_limits<i32>::min())
+            {
+                error = std::string(name) + " contains forbidden INT32_MIN at flat index "
+                      + std::to_string(flatBase + completed + index);
+                return false;
+            }
+            destination[completed + index] = value;
+        }
+        completed += take;
+    }
+    return true;
+}
+
+void update_i8_digest(Sha256& hash, const i8* source, u64 elements) {
+    constexpr u64 ChunkElements = 1 << 20;
+    u64           completed     = 0;
+    while (completed < elements)
+    {
+        const usize take = usize(std::min<u64>(ChunkElements, elements - completed));
+        hash.update(reinterpret_cast<const u8*>(source + completed), take);
+        completed += take;
+    }
+}
+
+void update_i16_digest(Sha256& hash, const i16* source, u64 elements) {
+    std::array<u8, 65536> buffer{};
+    u64                   completed = 0;
+    while (completed < elements)
+    {
+        const usize take = usize(std::min<u64>(buffer.size() / 2, elements - completed));
+        for (usize index = 0; index < take; ++index)
+        {
+            u16 raw;
+            std::memcpy(&raw, source + completed + index, sizeof(raw));
+            buffer[2 * index]     = u8(raw);
+            buffer[2 * index + 1] = u8(raw >> 8);
+        }
+        hash.update(buffer.data(), take * 2);
+        completed += take;
+    }
+}
+
+void update_i32_digest(Sha256& hash, const i32* source, u64 elements) {
+    std::array<u8, 65536> buffer{};
+    u64                   completed = 0;
+    while (completed < elements)
+    {
+        const usize take = usize(std::min<u64>(buffer.size() / 4, elements - completed));
+        for (usize index = 0; index < take; ++index)
+        {
+            u32 raw;
+            std::memcpy(&raw, source + completed + index, sizeof(raw));
+            buffer[4 * index]     = u8(raw);
+            buffer[4 * index + 1] = u8(raw >> 8);
+            buffer[4 * index + 2] = u8(raw >> 16);
+            buffer[4 * index + 3] = u8(raw >> 24);
+        }
+        hash.update(buffer.data(), take * 4);
+        completed += take;
+    }
+}
+
+void affine_bounds(const i8*              weights,
+                   const i32*             biases,
+                   usize                  outputs,
+                   usize                  inputs,
+                   std::array<i64, L2>& lower,
+                   std::array<i64, L2>& upper) {
+    for (usize output = 0; output < outputs; ++output)
+    {
+        i64 minimum = biases[output];
+        i64 maximum = biases[output];
+        for (usize input = 0; input < inputs; ++input)
+        {
+            const i8 weight = weights[output * inputs + input];
+            if (weight < 0)
+                minimum += i64(weight) * 127;
+            else
+                maximum += i64(weight) * 127;
+        }
+        lower[output] = minimum;
+        upper[output] = maximum;
+    }
+}
+
+bool require_bounds(std::string_view          label,
+                    const std::array<i64, L2>& lower,
+                    const std::array<i64, L2>& upper,
+                    usize                      outputs,
+                    i64                        minimum,
+                    i64                        maximum,
+                    std::string_view           domain,
+                    std::string&               error) {
+    for (usize output = 0; output < outputs; ++output)
+        if (lower[output] < minimum || upper[output] > maximum)
+        {
+            error = std::string(label) + " affine envelope exceeds " + std::string(domain)
+                  + " at row " + std::to_string(output) + ": [" + std::to_string(lower[output])
+                  + ", " + std::to_string(upper[output]) + "]";
+            return false;
+        }
+    return true;
 }
 
 }  // namespace
@@ -360,6 +664,350 @@ std::string WireValidator::status_line() const {
         << " manifest_sha256=" << current.manifestSha256 << " version=" << hex32(current.version)
         << " architecture=" << hex32(current.architecture);
     return out.str();
+}
+
+QualificationNetwork::QualificationNetwork()  = default;
+QualificationNetwork::~QualificationNetwork() = default;
+
+std::optional<std::string> QualificationNetwork::load(const std::filesystem::path& file,
+                                                      std::string_view expectedSha256) {
+    const auto reject = [&](std::string reason) -> std::optional<std::string> {
+        lastError = std::move(reason);
+        return lastError;
+    };
+
+    std::string expected;
+    if (auto error = normalized_required_sha(expectedSha256, expected))
+        return reject(*error);
+    if (active && active->generation == std::numeric_limits<u64>::max())
+        return reject("native parameter generation is exhausted");
+
+    std::ifstream input(file, std::ios::binary);
+    if (!input)
+        return reject("native parameter file could not be opened: " + normalized_path(file));
+
+    input.seekg(0, std::ios::end);
+    const std::streampos end = input.tellg();
+    if (end == std::streampos(-1))
+        return reject("native parameter size could not be derived from the open handle");
+    const u64 fileSize = u64(end);
+    if (fileSize < NativeWireBytes)
+        return reject("native parameter file is truncated: expected "
+                      + std::to_string(NativeWireBytes) + " bytes, got "
+                      + std::to_string(fileSize));
+    if (fileSize > NativeWireBytes)
+        return reject("native parameter file has trailing data: expected "
+                      + std::to_string(NativeWireBytes) + " bytes, got "
+                      + std::to_string(fileSize));
+    input.seekg(0, std::ios::beg);
+    if (!input)
+        return reject("native parameter handle could not seek to its beginning");
+
+    AuthenticatingReader reader(input);
+    u32                  version        = 0;
+    u32                  architecture   = 0;
+    u32                  manifestLength = 0;
+    if (!reader.read_u32(version) || !reader.read_u32(architecture)
+        || !reader.read_u32(manifestLength))
+        return reject("native parameter header is truncated");
+    if (version == LegacyWireVersion)
+        return reject("legacy 0x7AF32F20 files are not native Alice parameters");
+    if (version != WireVersion)
+        return reject("native parameter version mismatch: expected " + hex32(WireVersion) + ", got "
+                      + hex32(version));
+    if (architecture != CompositeArchitectureHash)
+        return reject("native parameter architecture mismatch: expected "
+                      + hex32(CompositeArchitectureHash) + ", got " + hex32(architecture));
+    if (manifestLength > MaximumManifestBytes)
+        return reject("native parameter manifest length exceeds the 65536-byte limit");
+    if (manifestLength != CanonicalManifestBytes)
+        return reject("native parameter manifest length mismatch: expected "
+                      + std::to_string(CanonicalManifestBytes) + ", got "
+                      + std::to_string(manifestLength));
+
+    std::string manifest(manifestLength, '\0');
+    if (!reader.read(manifest.data(), manifest.size()))
+        return reject("native parameter manifest is truncated");
+    const std::string manifestDigest = sha256(manifest);
+    if (manifestDigest != ManifestSha256)
+        return reject("native parameter manifest SHA-256 mismatch: expected "
+                      + std::string(ManifestSha256) + ", got " + manifestDigest);
+
+    u32 transformerHash = 0;
+    if (!reader.read_u32(transformerHash))
+        return reject("native parameter feature-transformer hash is truncated");
+    if (transformerHash != FeatureTransformerHash)
+        return reject("native parameter feature-transformer hash mismatch: expected "
+                      + hex32(FeatureTransformerHash) + ", got " + hex32(transformerHash));
+
+    std::unique_ptr<Parameters> candidate(new (std::nothrow) Parameters());
+    if (!candidate)
+        return reject("native parameter candidate allocation failed");
+    if (!candidate->allocate_features())
+        return reject("native parameter feature allocation failed");
+
+    std::array<Sha256, TensorCount> wireTensorHashes;
+    std::string                     parseError;
+    if (!read_i16_tensor(reader, candidate->ftBias.data(), FtBiasElements,
+                         wireTensorHashes[FtBias], TensorNames[FtBias], 0, parseError)
+        || !read_i8_tensor(reader, candidate->threatWeight.get(), ThreatWeightElements,
+                           wireTensorHashes[ThreatWeight], TensorNames[ThreatWeight], 0, parseError)
+        || !read_i32_tensor(reader, candidate->threatPsqt.get(), ThreatPsqtElements,
+                            wireTensorHashes[ThreatPsqt], TensorNames[ThreatPsqt], 0, parseError)
+        || !read_i16_tensor(reader, candidate->pieceSquareWeight.get(),
+                            PieceSquareWeightElements, wireTensorHashes[PieceSquareWeight],
+                            TensorNames[PieceSquareWeight], 0, parseError)
+        || !read_i32_tensor(reader, candidate->pieceSquarePsqt.get(), PieceSquarePsqtElements,
+                            wireTensorHashes[PieceSquarePsqt], TensorNames[PieceSquarePsqt], 0,
+                            parseError))
+        return reject(parseError);
+
+    for (usize stack = 0; stack < LayerStacks; ++stack)
+    {
+        u32 denseHash = 0;
+        if (!reader.read_u32(denseHash))
+            return reject("native parameter dense hash is truncated at stack "
+                          + std::to_string(stack));
+        if (denseHash != DenseArchitectureHash)
+            return reject("native parameter dense hash mismatch at stack " + std::to_string(stack)
+                          + ": expected " + hex32(DenseArchitectureHash) + ", got "
+                          + hex32(denseHash));
+
+        auto& dense = candidate->dense[stack];
+        if (!read_i32_tensor(reader, dense.fc0Bias.data(), Fc0BiasElementsPerStack,
+                             wireTensorHashes[Fc0Bias], TensorNames[Fc0Bias],
+                             stack * Fc0BiasElementsPerStack, parseError)
+            || !read_i8_tensor(reader, dense.fc0Weight.data(), Fc0WeightElementsPerStack,
+                               wireTensorHashes[Fc0Weight], TensorNames[Fc0Weight],
+                               stack * Fc0WeightElementsPerStack, parseError)
+            || !read_i32_tensor(reader, dense.fc1Bias.data(), Fc1BiasElementsPerStack,
+                                wireTensorHashes[Fc1Bias], TensorNames[Fc1Bias],
+                                stack * Fc1BiasElementsPerStack, parseError)
+            || !read_i8_tensor(reader, dense.fc1Weight.data(), Fc1WeightElementsPerStack,
+                               wireTensorHashes[Fc1Weight], TensorNames[Fc1Weight],
+                               stack * Fc1WeightElementsPerStack, parseError)
+            || !read_i32_tensor(reader, dense.fc2Bias.data(), Fc2BiasElementsPerStack,
+                                wireTensorHashes[Fc2Bias], TensorNames[Fc2Bias],
+                                stack * Fc2BiasElementsPerStack, parseError)
+            || !read_i8_tensor(reader, dense.fc2Weight.data(), Fc2WeightElementsPerStack,
+                               wireTensorHashes[Fc2Weight], TensorNames[Fc2Weight],
+                               stack * Fc2WeightElementsPerStack, parseError))
+            return reject(parseError);
+    }
+
+    if (reader.bytes_consumed() != NativeWireBytes || reader.bytes_consumed() != fileSize)
+        return reject("native parameter parser did not consume the exact open-handle size");
+    if (input.peek() != std::char_traits<char>::eof())
+        return reject("native parameter handle contains trailing data");
+
+    const std::string fileDigest = digest_string(reader.finish());
+    if (fileDigest != expected)
+        return reject("native parameter SHA-256 mismatch: expected " + expected + ", got "
+                      + fileDigest);
+
+    std::array<Sha256, TensorCount> runtimeTensorHashes;
+    update_i16_digest(runtimeTensorHashes[FtBias], candidate->ftBias.data(), FtBiasElements);
+    update_i8_digest(runtimeTensorHashes[ThreatWeight], candidate->threatWeight.get(),
+                     ThreatWeightElements);
+    update_i32_digest(runtimeTensorHashes[ThreatPsqt], candidate->threatPsqt.get(),
+                      ThreatPsqtElements);
+    update_i16_digest(runtimeTensorHashes[PieceSquareWeight], candidate->pieceSquareWeight.get(),
+                      PieceSquareWeightElements);
+    update_i32_digest(runtimeTensorHashes[PieceSquarePsqt], candidate->pieceSquarePsqt.get(),
+                      PieceSquarePsqtElements);
+    for (const auto& dense : candidate->dense)
+    {
+        update_i32_digest(runtimeTensorHashes[Fc0Bias], dense.fc0Bias.data(),
+                          Fc0BiasElementsPerStack);
+        update_i8_digest(runtimeTensorHashes[Fc0Weight], dense.fc0Weight.data(),
+                         Fc0WeightElementsPerStack);
+        update_i32_digest(runtimeTensorHashes[Fc1Bias], dense.fc1Bias.data(),
+                          Fc1BiasElementsPerStack);
+        update_i8_digest(runtimeTensorHashes[Fc1Weight], dense.fc1Weight.data(),
+                         Fc1WeightElementsPerStack);
+        update_i32_digest(runtimeTensorHashes[Fc2Bias], dense.fc2Bias.data(),
+                          Fc2BiasElementsPerStack);
+        update_i8_digest(runtimeTensorHashes[Fc2Weight], dense.fc2Weight.data(),
+                         Fc2WeightElementsPerStack);
+    }
+    for (usize tensor = 0; tensor < TensorCount; ++tensor)
+    {
+        const std::array<u8, 32> wireDigest    = wireTensorHashes[tensor].finish();
+        const std::array<u8, 32> runtimeDigest = runtimeTensorHashes[tensor].finish();
+        if (runtimeDigest != wireDigest)
+            return reject("native runtime traversal digest mismatch for "
+                          + std::string(TensorNames[tensor]));
+        candidate->tensorDigests[tensor] = wireDigest;
+    }
+
+    for (usize stack = 0; stack < LayerStacks; ++stack)
+    {
+        const auto&          dense = candidate->dense[stack];
+        std::array<i64, L2> lower{};
+        std::array<i64, L2> upper{};
+
+        affine_bounds(dense.fc0Weight.data(), dense.fc0Bias.data(), L2, L1, lower, upper);
+        if (!require_bounds("stack[" + std::to_string(stack) + "].fc0", lower, upper, L2,
+                            std::numeric_limits<i16>::min(), std::numeric_limits<i16>::max(),
+                            "signed i16", parseError))
+            return reject(parseError);
+        const auto fc0Lower = lower;
+        const auto fc0Upper = upper;
+
+        affine_bounds(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, 64, lower, upper);
+        if (!require_bounds("stack[" + std::to_string(stack) + "].fc1", lower, upper, L3,
+                            std::numeric_limits<i16>::min(), std::numeric_limits<i16>::max(),
+                            "signed i16", parseError))
+            return reject(parseError);
+
+        affine_bounds(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, 128, lower, upper);
+        if (!require_bounds("stack[" + std::to_string(stack) + "].fc2", lower, upper, 1,
+                            std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max(),
+                            "signed i32", parseError))
+            return reject(parseError);
+        const i64 fwdLower = lower[0] + fc0Lower[30] - fc0Upper[31];
+        const i64 fwdUpper = upper[0] + fc0Upper[30] - fc0Lower[31];
+        lower[0]           = fwdLower;
+        upper[0]           = fwdUpper;
+        if (!require_bounds("stack[" + std::to_string(stack) + "].fwdOut", lower, upper, 1,
+                            std::numeric_limits<i32>::min(), std::numeric_limits<i32>::max(),
+                            "signed i32", parseError))
+            return reject(parseError);
+    }
+
+    candidate->wire.normalizedPath = normalized_path(file);
+    candidate->wire.bytes          = fileSize;
+    candidate->wire.sha256         = fileDigest;
+    candidate->wire.manifestSha256 = manifestDigest;
+    candidate->wire.version        = version;
+    candidate->wire.architecture   = architecture;
+    candidate->generation          = active ? active->generation + 1 : 1;
+
+    active.swap(candidate);
+    lastError.clear();
+    return std::nullopt;
+}
+
+bool QualificationNetwork::loaded() const { return bool(active); }
+
+u64 QualificationNetwork::generation() const { return active ? active->generation : 0; }
+
+const std::string& QualificationNetwork::last_error() const { return lastError; }
+
+std::string QualificationNetwork::status_line() const {
+    if (!active)
+        return "Alice native qualification parameters are not loaded"
+             + (lastError.empty() ? std::string(".") : ": " + lastError);
+
+    std::ostringstream out;
+    out << "Alice native qualification parameters loaded generation=" << active->generation
+        << " path=\"" << active->wire.normalizedPath << "\" bytes=" << active->wire.bytes
+        << " sha256=" << active->wire.sha256
+        << " manifest_sha256=" << active->wire.manifestSha256
+        << " version=" << hex32(active->wire.version)
+        << " architecture=" << hex32(active->wire.architecture)
+        << " search=disabled";
+    return out.str();
+}
+
+std::string QualificationNetwork::tensor_status_line() const {
+    if (!active)
+        return "Alice native qualification tensor identities are unavailable.";
+
+    std::ostringstream out;
+    out << "Alice native qualification tensors generation=" << active->generation;
+    for (usize tensor = 0; tensor < TensorCount; ++tensor)
+        out << ' ' << TensorNames[tensor] << "_bytes=" << TensorBytes[tensor] << ' '
+            << TensorNames[tensor] << "_sha256=" << digest_string(active->tensorDigests[tensor]);
+    return out.str();
+}
+
+std::optional<std::string> QualificationNetwork::probe(std::string_view tensor,
+                                                       u64              index,
+                                                       std::string&     report) const {
+    if (!active)
+        return "Alice native qualification parameters are not loaded.";
+
+    i64 value = 0;
+    if (tensor == TensorNames[FtBias])
+    {
+        if (index >= FtBiasElements)
+            return "ft.bias probe index is out of range";
+        value = active->ftBias[index];
+    }
+    else if (tensor == TensorNames[ThreatWeight])
+    {
+        if (index >= ThreatWeightElements)
+            return "threat.weight probe index is out of range";
+        value = active->threatWeight[index];
+    }
+    else if (tensor == TensorNames[ThreatPsqt])
+    {
+        if (index >= ThreatPsqtElements)
+            return "threat.psqt probe index is out of range";
+        value = active->threatPsqt[index];
+    }
+    else if (tensor == TensorNames[PieceSquareWeight])
+    {
+        if (index >= PieceSquareWeightElements)
+            return "pieceSquare.weight probe index is out of range";
+        value = active->pieceSquareWeight[index];
+    }
+    else if (tensor == TensorNames[PieceSquarePsqt])
+    {
+        if (index >= PieceSquarePsqtElements)
+            return "pieceSquare.psqt probe index is out of range";
+        value = active->pieceSquarePsqt[index];
+    }
+    else
+    {
+        usize tensorIndex = TensorCount;
+        for (usize candidate = Fc0Bias; candidate < TensorCount; ++candidate)
+            if (tensor == TensorNames[candidate])
+                tensorIndex = candidate;
+        if (tensorIndex == TensorCount)
+            return "unknown Alice native qualification tensor: " + std::string(tensor);
+
+        const std::array<u64, 6> elementsPerStack = {
+          Fc0BiasElementsPerStack, Fc0WeightElementsPerStack, Fc1BiasElementsPerStack,
+          Fc1WeightElementsPerStack, Fc2BiasElementsPerStack, Fc2WeightElementsPerStack,
+        };
+        const u64 perStack = elementsPerStack[tensorIndex - Fc0Bias];
+        if (index >= u64(LayerStacks) * perStack)
+            return std::string(tensor) + " probe index is out of range";
+        const usize stack = usize(index / perStack);
+        const usize local = usize(index % perStack);
+        const auto& dense = active->dense[stack];
+        switch (tensorIndex)
+        {
+        case Fc0Bias:
+            value = dense.fc0Bias[local];
+            break;
+        case Fc0Weight:
+            value = dense.fc0Weight[local];
+            break;
+        case Fc1Bias:
+            value = dense.fc1Bias[local];
+            break;
+        case Fc1Weight:
+            value = dense.fc1Weight[local];
+            break;
+        case Fc2Bias:
+            value = dense.fc2Bias[local];
+            break;
+        case Fc2Weight:
+            value = dense.fc2Weight[local];
+            break;
+        default:
+            return "internal Alice native probe mapping failure";
+        }
+    }
+
+    std::ostringstream out;
+    out << "alice_native_parameter generation " << active->generation << " tensor " << tensor
+        << " index " << index << " value " << value;
+    report = out.str();
+    return std::nullopt;
 }
 
 }  // namespace Stockfish::Eval::NNUE::AliceNative

@@ -202,9 +202,17 @@ outputs. A successful replacement increments the generation and invalidates
 all native accumulators and caches from the previous generation. Failure never
 selects the historical evaluator or another fallback.
 
-Read-only qualification commands expose network and tensor identities and
-stage-by-stage integer inference. They do not make the native backend available
-to normal search.
+Read-only qualification commands expose network and tensor identities. A later
+qualification command will expose stage-by-stage integer inference. Neither
+path makes the native backend available to normal search.
+
+The loader, identity status, tensor status, and flat parameter probes are now
+implemented as the first half of this boundary. They verify same-handle SHA-256,
+explicit little-endian decoding, symmetric integer minima, dense arithmetic
+envelopes, canonical runtime traversal, generation increments, and preservation
+of the installed candidate on failure. No search accumulator or evaluation
+route consumes the installed object yet, so stage inference and cache
+invalidation remain closed until their exact-parity qualification lands.
 
 ## 6. Exact acceptance
 

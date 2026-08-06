@@ -51,12 +51,27 @@ constexpr IndexType L2          = 32;
 constexpr IndexType L3          = 32;
 constexpr IndexType PsqtBuckets = 8;
 constexpr IndexType LayerStacks = 8;
+constexpr IndexType TensorCount = 11;
+
+constexpr u64 FtBiasElements            = L1;
+constexpr u64 ThreatWeightElements      = u64(ThreatDimensions) * L1;
+constexpr u64 ThreatPsqtElements        = u64(ThreatDimensions) * PsqtBuckets;
+constexpr u64 PieceSquareWeightElements = u64(PieceSquareDimensions) * L1;
+constexpr u64 PieceSquarePsqtElements   = u64(PieceSquareDimensions) * PsqtBuckets;
+constexpr u64 Fc0BiasElementsPerStack   = L2;
+constexpr u64 Fc0WeightElementsPerStack = u64(L2) * L1;
+constexpr u64 Fc1BiasElementsPerStack   = L3;
+constexpr u64 Fc1WeightElementsPerStack = u64(L3) * 64;
+constexpr u64 Fc2BiasElementsPerStack   = 1;
+constexpr u64 Fc2WeightElementsPerStack = 128;
 
 constexpr u64 CanonicalManifestBytes = 1043;
 constexpr u64 FeatureTensorBytes =
-  2 * u64(L1) + u64(ThreatDimensions) * L1 + u64(ThreatDimensions) * PsqtBuckets * 4
-  + u64(PieceSquareDimensions) * L1 * 2 + u64(PieceSquareDimensions) * PsqtBuckets * 4;
-constexpr u64 DenseStackTensorBytes = 32 * 4 + 32 * u64(L1) + 32 * 4 + 32 * 64 + 4 + 128;
+  FtBiasElements * 2 + ThreatWeightElements + ThreatPsqtElements * 4
+  + PieceSquareWeightElements * 2 + PieceSquarePsqtElements * 4;
+constexpr u64 DenseStackTensorBytes =
+  Fc0BiasElementsPerStack * 4 + Fc0WeightElementsPerStack + Fc1BiasElementsPerStack * 4
+  + Fc1WeightElementsPerStack + Fc2BiasElementsPerStack * 4 + Fc2WeightElementsPerStack;
 constexpr u64 NativeWireBytes       = 12 + CanonicalManifestBytes + 4 + FeatureTensorBytes
                               + u64(LayerStacks) * (4 + DenseStackTensorBytes);
 

@@ -105,6 +105,12 @@ class Engine {
                                validate_native_wire(const std::filesystem::path&      file,
                                                     const std::optional<std::string>& expectedSha256 = {});
     std::string                native_wire_status() const;
+    std::optional<std::string> load_native_qualification(const std::filesystem::path& file,
+                                                         std::string_view expectedSha256);
+    std::string                native_qualification_status() const;
+    std::string                native_tensor_status() const;
+    std::optional<std::string>
+    probe_native_parameter(std::string_view tensor, u64 index, std::string& report) const;
     std::optional<std::string> verify_legacy_incremental(Depth depth, u64& positions);
 
     const OptionsMap& get_options() const;
@@ -133,6 +139,7 @@ class Engine {
     LazyNumaReplicatedSystemWide<Eval::NNUE::Network> network;
     LegacyAliceExact                                  legacyEvaluator;
     Eval::NNUE::AliceNative::WireValidator            nativeWireValidator;
+    Eval::NNUE::AliceNative::QualificationNetwork     nativeQualification;
 
     Search::SearchManager::UpdateContext  updateContext;
     std::function<void(std::string_view)> onVerifyNetwork;

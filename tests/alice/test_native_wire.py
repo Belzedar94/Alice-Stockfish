@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import struct
@@ -14,6 +15,7 @@ import unittest
 from native_wire import (
     ARCHITECTURE_HASH,
     DENSE_ARCHITECTURE_HASH,
+    FEATURE_TENSOR_BYTES,
     FEATURE_TRANSFORMER_HASH,
     LEGACY_WIRE_VERSION,
     MANIFEST,
@@ -57,6 +59,36 @@ def run_engine(*commands: str) -> subprocess.CompletedProcess[str]:
 def validate(path: Path, expected_sha256: str | None = None) -> subprocess.CompletedProcess[str]:
     expected = f" {expected_sha256}" if expected_sha256 else ""
     return run_engine(f"alice_native_validate_file {command_path(path)}{expected}")
+
+
+def tensor_offset() -> int:
+    return 12 + len(MANIFEST) + 4
+
+
+def mutate_i16(path: Path, byte_offset: int, value: int) -> None:
+    with path.open("r+b") as output:
+        output.seek(byte_offset)
+        output.write(struct.pack("<h", value))
+
+
+def mutate_i32(path: Path, byte_offset: int, value: int) -> None:
+    with path.open("r+b") as output:
+        output.seek(byte_offset)
+        output.write(struct.pack("<i", value))
+
+
+def section_sha256(path: Path, byte_offset: int, byte_count: int) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        source.seek(byte_offset)
+        remaining = byte_count
+        while remaining:
+            chunk = source.read(min(1 << 20, remaining))
+            if not chunk:
+                raise AssertionError("Tensor section is truncated.")
+            digest.update(chunk)
+            remaining -= len(chunk)
+    return digest.hexdigest().upper()
 
 
 class NativeWireTests(unittest.TestCase):
@@ -184,6 +216,107 @@ class NativeWireTests(unittest.TestCase):
             self.assertIn("is not validated", lines[-1])
             self.assertNotIn(valid_sha, lines[-1])
 
+    def test_qualification_loader_commits_once_and_preserves_active_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="alice-native-load-") as temporary:
+            directory = Path(temporary)
+            zero = directory / "zero.nnue"
+            sentinel = directory / "sentinel.nnue"
+            invalid = directory / "invalid.nnue"
+            write_zero_wire(zero)
+            write_zero_wire(sentinel)
+            mutate_i16(sentinel, tensor_offset(), 52)
+            write_zero_wire(invalid, version=WIRE_VERSION ^ 1)
+
+            zero_sha = file_sha256(zero)
+            sentinel_sha = file_sha256(sentinel)
+            invalid_sha = file_sha256(invalid)
+            sentinel_ft_sha = section_sha256(sentinel, tensor_offset(), 2 * 1_024)
+
+            result = run_engine(
+                f"alice_native_try_load_file {command_path(zero)} {zero_sha}",
+                "alice_native_load_status",
+                "alice_native_parameter ft.bias 0",
+                f"alice_native_try_load_file {command_path(sentinel)} {sentinel_sha}",
+                "alice_native_load_status",
+                "alice_native_tensor_status",
+                "alice_native_parameter ft.bias 0",
+                f"alice_native_try_load_file {command_path(invalid)} {invalid_sha}",
+                "alice_native_load_status",
+                "alice_native_tensor_status",
+                "alice_native_parameter ft.bias 0",
+                f"alice_native_try_load_file {command_path(sentinel)}",
+                "alice_native_load_status",
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            statuses = [
+                line
+                for line in result.stdout.splitlines()
+                if line.startswith("Alice native qualification parameters loaded")
+            ]
+            self.assertEqual(len(statuses), 6, result.stdout)
+            self.assertIn("generation=1", statuses[0])
+            self.assertEqual(statuses[0], statuses[1])
+            self.assertIn("generation=2", statuses[2])
+            self.assertEqual(statuses[2], statuses[3])
+            self.assertEqual(statuses[2], statuses[4])
+            self.assertEqual(statuses[2], statuses[5])
+            self.assertIn(f"sha256={sentinel_sha}", statuses[2])
+            self.assertIn("search=disabled", statuses[2])
+
+            tensor_statuses = [
+                line
+                for line in result.stdout.splitlines()
+                if line.startswith("Alice native qualification tensors")
+            ]
+            self.assertEqual(len(tensor_statuses), 2, result.stdout)
+            self.assertEqual(tensor_statuses[0], tensor_statuses[1])
+            self.assertIn(f"ft.bias_sha256={sentinel_ft_sha}", tensor_statuses[0])
+
+            probes = [
+                line for line in result.stdout.splitlines() if line.startswith("alice_native_parameter")
+            ]
+            self.assertEqual(len(probes), 3, result.stdout)
+            self.assertTrue(probes[0].endswith("value 0"), probes[0])
+            self.assertTrue(probes[1].endswith("value 52"), probes[1])
+            self.assertEqual(probes[1], probes[2])
+
+            self.assertIn("version mismatch", result.stdout)
+            self.assertIn("requires a path and an expected SHA-256", result.stdout)
+
+    def test_qualification_loader_rejects_hash_ranges_and_dense_envelopes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="alice-native-load-negative-") as temporary:
+            directory = Path(temporary)
+            valid = directory / "valid.nnue"
+            forbidden_i16 = directory / "forbidden-i16.nnue"
+            dense_i16_overflow = directory / "dense-i16-overflow.nnue"
+            write_zero_wire(valid)
+            write_zero_wire(forbidden_i16)
+            mutate_i16(forbidden_i16, tensor_offset(), -32_768)
+            write_zero_wire(dense_i16_overflow)
+            first_dense_fc0_bias = tensor_offset() + FEATURE_TENSOR_BYTES + 4
+            mutate_i32(dense_i16_overflow, first_dense_fc0_bias, 32_768)
+
+            result = run_engine(
+                f"alice_native_try_load_file {command_path(valid)} {'0' * 64}",
+                "alice_native_load_status",
+                f"alice_native_try_load_file {command_path(forbidden_i16)} {file_sha256(forbidden_i16)}",
+                "alice_native_load_status",
+                f"alice_native_try_load_file {command_path(dense_i16_overflow)} {file_sha256(dense_i16_overflow)}",
+                "alice_native_load_status",
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("SHA-256 mismatch", result.stdout)
+            self.assertIn("forbidden -32768", result.stdout)
+            self.assertIn("fc0 affine envelope exceeds signed i16", result.stdout)
+            not_loaded = [
+                line
+                for line in result.stdout.splitlines()
+                if line.startswith("Alice native qualification parameters are not loaded")
+            ]
+            self.assertEqual(len(not_loaded), 3, result.stdout)
+            self.assertNotIn("parameters loaded generation=", result.stdout)
+
 
 def parse_arguments() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
@@ -195,4 +328,3 @@ if __name__ == "__main__":
     arguments, unittest_arguments = parse_arguments()
     ENGINE_PATH = arguments.engine.resolve()
     unittest.main(argv=[sys.argv[0], *unittest_arguments], verbosity=2)
-
