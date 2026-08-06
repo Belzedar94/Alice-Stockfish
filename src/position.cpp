@@ -149,6 +149,16 @@ std::optional<PositionSetError> parse_compact_rank(std::string_view             
 
         if (token == '|')
         {
+            // The frozen opening book has one historical start-position rank
+            // ending in a redundant layer marker. The legacy parser ignored
+            // it after the rank had already expanded to all eight files. Keep
+            // that input compatibility without accepting a marker in place of
+            // a missing coordinate or before any other non-piece token.
+            if (file == FILE_NB && index + 1 == rank.size())
+            {
+                ++index;
+                continue;
+            }
             if (boardB || index + 1 >= rank.size()
                 || PieceToChar.find(rank[index + 1]) == std::string_view::npos
                 || rank[index + 1] == ' ')

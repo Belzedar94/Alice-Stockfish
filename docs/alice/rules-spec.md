@@ -163,7 +163,15 @@ Each rank describes the eight shared coordinates once:
 - `|` does not consume a coordinate;
 - digits count empty shared coordinates using ordinary FEN run-length rules;
 - empty-square runs use canonical decimal notation without leading zeros;
-- `|` before a digit, slash, another `|`, or end of placement is invalid.
+- `|` before a digit, slash, another `|`, or end of an incomplete rank is
+  invalid.
+
+Input compatibility has one narrow exception for the frozen historical
+opening book. Its first position contains a redundant `|` after a rank has
+already expanded to all eight coordinates. A parser accepts and discards that
+single terminal marker. Canonical output never emits it. This preserves the
+published book byte-for-byte while keeping incomplete or doubled markers
+invalid.
 
 Example: a black king on `A:e8`, a white pawn on `B:e4`, and a white king on
 `A:e1`:

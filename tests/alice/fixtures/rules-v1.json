@@ -54,6 +54,12 @@
       "variant": "alice",
       "role": "Differential witness for legacy-compatible move and FEN behavior, not for corrected state identity."
     },
+    "frozen-book-bcd89d9f": {
+      "type": "opening-book",
+      "sha256": "BCD89D9FC3EA81FEB95932EB64D6B6F15AD25CC04CDCC9E0440F097CFFB8CCF6",
+      "uniquePositions": 38348,
+      "role": "Published OpenBench opening corpus and historical FEN compatibility witness."
+    },
     "pychess-alice-rules": {
       "type": "external-rules-reference",
       "url": "https://www.pychess.org/variants/alice"
@@ -409,6 +415,34 @@
         "accepted": true,
         "canonicalFen": "4k3/8/8/8/4|P3/8/8/4K3 w - - 0 1",
         "pieces": ["A:e8=black king", "B:e4=white pawn", "A:e1=white king"]
+      }
+    },
+    {
+      "id": "frozen-book-start-position-trailing-marker-normalizes",
+      "kind": "fen-normalization",
+      "description": "The frozen book's first rank carries one redundant terminal layer marker accepted by the historical parser.",
+      "inputFen": "|r|n|b|q|k|b|n|r|/|p|p|p|p|p|p|p|p/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"},
+        {"id": "frozen-book-bcd89d9f", "status": "diagnostic"}
+      ],
+      "expected": {
+        "accepted": true,
+        "canonicalFen": "|r|n|b|q|k|b|n|r/|p|p|p|p|p|p|p|p/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+      }
+    },
+    {
+      "id": "incomplete-rank-trailing-marker-is-rejected",
+      "kind": "fen-validation",
+      "description": "The frozen-book exception applies only after all eight coordinates have already been encoded.",
+      "inputFen": "7k/8/8/8/8/8/8/4K2| w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "A layer marker cannot replace a missing coordinate."
       }
     },
     {

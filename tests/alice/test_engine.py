@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import queue
@@ -30,6 +31,9 @@ def default_engine_path() -> Path:
 
 
 ENGINE_PATH = default_engine_path()
+BOOK_PATH: Path | None = None
+BOOK_SHA256 = "BCD89D9FC3EA81FEB95932EB64D6B6F15AD25CC04CDCC9E0440F097CFFB8CCF6"
+BOOK_UNIQUE_POSITIONS = 38348
 
 
 def run_engine(*commands: str) -> subprocess.CompletedProcess[str]:
@@ -182,10 +186,33 @@ class EngineFixtureTests(unittest.TestCase):
                 self.assertIn("CRITICAL ERROR", result.stdout)
 
     def test_legacy_sixteen_wide_input_is_canonicalized(self) -> None:
-        case = next(case for case in self.cases if case["kind"] == "fen-normalization")
+        case = next(
+            case
+            for case in self.cases
+            if case["id"] == "sixteen-wide-input-normalizes-to-compact-fen"
+        )
         result = run_engine(f"position fen {case['inputFen']}", "d")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(inspected_fen(result.stdout), case["expected"]["canonicalFen"])
+
+    def test_frozen_opening_book_is_exact_and_fully_parseable(self) -> None:
+        if BOOK_PATH is None:
+            self.skipTest("Pass --book to validate the frozen OpenBench opening corpus.")
+        assert BOOK_PATH is not None
+
+        payload = BOOK_PATH.read_bytes()
+        self.assertEqual(hashlib.sha256(payload).hexdigest().upper(), BOOK_SHA256)
+        fens = [
+            line.split(";", 1)[0].strip()
+            for line in payload.decode("utf-8-sig").splitlines()
+            if line.split(";", 1)[0].strip()
+        ]
+        self.assertEqual(len(fens), BOOK_UNIQUE_POSITIONS)
+        self.assertEqual(len(set(fens)), BOOK_UNIQUE_POSITIONS)
+
+        result = run_engine(*(f"position fen {fen}" for fen in fens), "d")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(inspected_fen(result.stdout), Position.from_fen(fens[-1]).fen())
 
     def test_normative_moves(self) -> None:
         for case in self.cases:
@@ -355,10 +382,12 @@ class EngineFixtureTests(unittest.TestCase):
 def parse_arguments() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--engine", type=Path, default=default_engine_path())
+    parser.add_argument("--book", type=Path)
     return parser.parse_known_args()
 
 
 if __name__ == "__main__":
     arguments, unittest_arguments = parse_arguments()
     ENGINE_PATH = arguments.engine.resolve()
+    BOOK_PATH = arguments.book.resolve() if arguments.book else None
     unittest.main(argv=[sys.argv[0], *unittest_arguments], verbosity=2)

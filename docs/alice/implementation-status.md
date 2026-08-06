@@ -30,6 +30,8 @@ The independent reference and executable conformance suites are:
 ```text
 python tests/alice/test_reference.py
 python tests/alice/test_engine.py --engine src/stockfish.exe
+python tests/alice/test_engine.py --engine src/stockfish.exe \
+  --book <path-to-alice.epd>
 ```
 
 The start-position perft agreement is:
@@ -47,6 +49,12 @@ assertions enabled produced the same value. The executable suite also checks
 all versioned fixtures, key relations, canonical FEN transitions, repetition
 checkpoints, and deterministic playout legal sets against the independent
 implementation.
+
+When the optional frozen book is supplied, the executable suite first verifies
+its SHA-256 and its 38,348 unique-position contract, then parses every position
+in one engine session. This includes the redundant terminal layer marker in the
+book's first rank; input accepts that historical quirk and canonical output
+removes it.
 
 ## Deterministic safe-search milestone
 

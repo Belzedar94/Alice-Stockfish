@@ -97,6 +97,12 @@ def _expand_compact_rank(text: str) -> list[Piece | None]:
     while index < len(text):
         token = text[index]
         if token == "|":
+            # The frozen book's first position contains one redundant marker
+            # after a rank that is already complete. The historical parser
+            # ignored it and canonical output never emits it.
+            if len(cells) == 8 and index + 1 == len(text):
+                index += 1
+                continue
             if layer_b or index + 1 >= len(text) or text[index + 1] not in PIECE_LETTERS:
                 raise FenError("The compact layer marker must immediately precede a piece.")
             layer_b = True
