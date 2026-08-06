@@ -255,7 +255,7 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
           (void) error;
           searchRootState = rootState;
 
-          AliceSearch::Evaluator evaluator;
+          AliceSearch::Evaluator                         evaluator;
           std::unique_ptr<LegacyAliceExact::Accumulator> legacyAccumulator;
           if (useLegacyEvaluation)
           {
@@ -270,7 +270,7 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
                   return *value;
               };
               evaluator.push = [this, &legacyAccumulator](const Position& position,
-                                                           const Dirties&  dirties) {
+                                                          const Dirties&  dirties) {
                   legacyEvaluator.push(*legacyAccumulator, position, dirties);
               };
               evaluator.pop = [this, &legacyAccumulator]() {
@@ -508,6 +508,23 @@ std::string Engine::trace_native_features() {
     return Eval::NNUE::AliceNative::trace_json(pos);
 }
 
+std::optional<std::string> Engine::verify_native_incremental(Depth depth, std::string& report) {
+    wait_for_search_finished();
+    Eval::NNUE::AliceNative::IncrementalVerificationStats stats;
+    if (auto error = Eval::NNUE::AliceNative::verify_incremental(pos, depth, stats))
+        return error;
+
+    std::ostringstream out;
+    out << "alice_native incremental verified positions " << stats.positions << " transitions "
+        << stats.transitions << " captures " << stats.captures << " promotions " << stats.promotions
+        << " castlings " << stats.castlings << " king_moves " << stats.kingMoves << " refreshes "
+        << stats.fullRefreshes[WHITE] << ',' << stats.fullRefreshes[BLACK] << " max_piece_events "
+        << stats.maxPieceEvents << " max_threat_events " << stats.maxThreatEvents << " depth "
+        << depth;
+    report = out.str();
+    return std::nullopt;
+}
+
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
     wait_for_search_finished();
     positions = 0;
@@ -521,13 +538,13 @@ std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& p
     if (!accumulator)
         return "Legacy Alice incremental accumulator initialization failed.";
 
-    const std::string rootFen = pos.fen();
-    const Key         rootKey = pos.key();
+    const std::string                                rootFen = pos.fen();
+    const Key                                        rootKey = pos.key();
     std::function<std::optional<std::string>(Depth)> visit;
     visit = [&](Depth remaining) -> std::optional<std::string> {
-        const auto fullRaw      = legacyEvaluator.evaluate(pos, false);
-        const auto fullAdjusted = legacyEvaluator.evaluate(pos, true);
-        const auto incrementalRaw = legacyEvaluator.evaluate(pos, *accumulator, false);
+        const auto fullRaw             = legacyEvaluator.evaluate(pos, false);
+        const auto fullAdjusted        = legacyEvaluator.evaluate(pos, true);
+        const auto incrementalRaw      = legacyEvaluator.evaluate(pos, *accumulator, false);
         const auto incrementalAdjusted = legacyEvaluator.evaluate(pos, *accumulator, true);
 
         if (!fullRaw || !fullAdjusted || !incrementalRaw || !incrementalAdjusted)
@@ -535,9 +552,10 @@ std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& p
         if (*fullRaw != *incrementalRaw || *fullAdjusted != *incrementalAdjusted)
         {
             std::ostringstream error;
-            error << "Legacy Alice incremental mismatch at " << pos.fen() << ": full raw="
-                  << *fullRaw << " adjusted=" << *fullAdjusted << ", incremental raw="
-                  << *incrementalRaw << " adjusted=" << *incrementalAdjusted << ".";
+            error << "Legacy Alice incremental mismatch at " << pos.fen()
+                  << ": full raw=" << *fullRaw << " adjusted=" << *fullAdjusted
+                  << ", incremental raw=" << *incrementalRaw << " adjusted=" << *incrementalAdjusted
+                  << ".";
             return error.str();
         }
 

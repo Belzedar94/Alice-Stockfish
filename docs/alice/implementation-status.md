@@ -153,7 +153,7 @@ network suite proves that the embedded list and fixture produce the same node
 count, and repeated fresh processes produce the same signature. This is a
 build-admission identity, not a strength measurement.
 
-## Native NNUE N0/N1 milestone
+## Native NNUE N0-N4 milestone
 
 The native v1 manifest, identifiers, dimensions, relation order, component
 hashes, tensor order, and wire version are frozen in the public contract. A
@@ -163,15 +163,25 @@ board-aware position queries and 32-bit threat indices, omits `PP_3Wide`, and
 does not connect native features to evaluation or to the historical
 accumulator.
 
+Board-tagged piece and threat events are derived from complete semantic states.
+For an unchanged perspective king, the verification path applies those sparse
+events to both sorted feature multisets and a deterministic 1,024-element
+scalar integer accumulator with eight PSQT buckets. A transferred perspective
+king always rebuilds both feature groups. Every child is compared element by
+element with a fresh extraction, and every undo must restore the parent FEN and
+position key.
+
 The machine-readable trace command is:
 
 ```text
 alice_native_trace
+alice_native_verify_incremental <depth 0..2>
 ```
 
-This milestone is limited to manifest and feature observation. Native sparse
-updates, accumulator weights, serialization, loading, and evaluation remain
-closed until their exact parity gates land.
+The accumulator weights in this verification route are bounded deterministic
+fixtures; they are not a trained network and are not used by evaluation.
+Native cache/SIMD optimization, serialized parameters, loading, checkpoint
+export, and evaluation remain closed until their exact parity gates land.
 
 ## Cross-platform verification
 

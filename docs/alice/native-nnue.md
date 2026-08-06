@@ -89,6 +89,15 @@ The read-only `alice_native_trace` inspection command emits sorted semantic
 piece and threat tuples for both perspectives. It does not load weights, route
 evaluation, or modify the historical compatibility backend.
 
+The `alice_native_verify_incremental` command derives explicit board-tagged
+piece and threat events from every legal pre/post transition. For an unchanged
+perspective king, it applies those events to the sparse index multisets and to
+a deterministic scalar fixture accumulator. For a transferred perspective
+king, it performs the required full refresh. Every result is compared exactly
+with fresh extraction, including all 1,024 accumulator elements, eight PSQT
+buckets, and parent restoration after undo. Fixture weights are test data only;
+this command is not a native evaluator.
+
 ## 2. State and move semantics
 
 Every training and inference position must preserve, losslessly:

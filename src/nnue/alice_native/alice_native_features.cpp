@@ -11,11 +11,16 @@
 #include "alice_native_features.h"
 
 #include <algorithm>
+#include <array>
+#include <functional>
+#include <limits>
 #include <sstream>
 #include <tuple>
+#include <vector>
 
 #include "../../attacks.h"
 #include "../../bitboard.h"
+#include "../../movegen.h"
 #include "../../position.h"
 #include "../features/full_threats.h"
 
@@ -38,6 +43,333 @@ IndexType ThreatFeatures::make_index(Color  perspective,
 }
 
 namespace {
+
+struct SemanticPiece {
+    Piece  piece;
+    Square square;
+    Board  board;
+};
+
+struct SemanticThreat {
+    Piece  attacker;
+    Square from;
+    Piece  attacked;
+    Square to;
+    Board  board;
+};
+
+struct SemanticState {
+    std::vector<SemanticPiece>  pieces;
+    std::vector<SemanticThreat> threats;
+};
+
+bool semantic_piece_less(const SemanticPiece& left, const SemanticPiece& right) {
+    return std::tie(left.piece, left.square, left.board)
+         < std::tie(right.piece, right.square, right.board);
+}
+
+bool semantic_threat_less(const SemanticThreat& left, const SemanticThreat& right) {
+    return std::tie(left.attacker, left.from, left.attacked, left.to, left.board)
+         < std::tie(right.attacker, right.from, right.attacked, right.to, right.board);
+}
+
+SemanticState collect_semantic_state(const Position& position) {
+    SemanticState state;
+
+    for (Square square = SQ_A1; square <= SQ_H8; ++square)
+    {
+        const Piece piece = position.piece_on(square);
+        if (piece != NO_PIECE)
+            state.pieces.push_back({piece, square, position.board_of(square)});
+    }
+
+    for (Board board : {BOARD_A, BOARD_B})
+    {
+        const Bitboard occupied           = position.occupancy_on(board);
+        const Bitboard pawnTargets        = position.pieces_on(board, KNIGHT, ROOK);
+        const Bitboard minorSliderTargets = position.pieces_on(board, PAWN, KNIGHT, BISHOP, ROOK);
+        const Bitboard queenTargets = position.pieces_on(board, PAWN, KNIGHT, BISHOP, ROOK, QUEEN);
+
+        for (Color color : {WHITE, BLACK})
+        {
+            {
+                const Piece    attacker             = make_piece(color, PAWN);
+                const Bitboard pawns                = position.pieces_on(board, color, PAWN);
+                auto           process_pawn_attacks = [&](Bitboard attacks, Direction direction) {
+                    while (attacks)
+                    {
+                        const Square to = pop_lsb(attacks);
+                        state.threats.push_back(
+                          {attacker, to - direction, position.piece_on(board, to), to, board});
+                    }
+                };
+
+                if (color == WHITE)
+                {
+                    process_pawn_attacks(shift<NORTH_EAST>(pawns) & pawnTargets, NORTH_EAST);
+                    process_pawn_attacks(shift<NORTH_WEST>(pawns) & pawnTargets, NORTH_WEST);
+                }
+                else
+                {
+                    process_pawn_attacks(shift<SOUTH_WEST>(pawns) & pawnTargets, SOUTH_WEST);
+                    process_pawn_attacks(shift<SOUTH_EAST>(pawns) & pawnTargets, SOUTH_EAST);
+                }
+            }
+
+            for (PieceType type = KNIGHT; type < KING; ++type)
+            {
+                const Piece    attacker  = make_piece(color, type);
+                Bitboard       attackers = position.pieces_on(board, color, type);
+                const Bitboard targets =
+                  type == KNIGHT || type == QUEEN ? queenTargets : minorSliderTargets;
+
+                while (attackers)
+                {
+                    const Square from    = pop_lsb(attackers);
+                    Bitboard     attacks = Attacks::attacks_bb(type, from, occupied) & targets;
+                    while (attacks)
+                    {
+                        const Square to = pop_lsb(attacks);
+                        state.threats.push_back(
+                          {attacker, from, position.piece_on(board, to), to, board});
+                    }
+                }
+            }
+        }
+    }
+
+    std::sort(state.pieces.begin(), state.pieces.end(), semantic_piece_less);
+    std::sort(state.threats.begin(), state.threats.end(), semantic_threat_less);
+    return state;
+}
+
+NativeFeatureDelta derive_delta(const SemanticState& before, const SemanticState& after) {
+    NativeFeatureDelta delta;
+
+    usize beforeIndex = 0;
+    usize afterIndex  = 0;
+    while (beforeIndex < before.pieces.size() || afterIndex < after.pieces.size())
+    {
+        if (afterIndex == after.pieces.size()
+            || (beforeIndex < before.pieces.size()
+                && semantic_piece_less(before.pieces[beforeIndex], after.pieces[afterIndex])))
+        {
+            const auto& piece = before.pieces[beforeIndex++];
+            delta.pieces.push_back(
+              {DeltaOperation::REMOVE, piece.piece, piece.square, piece.board});
+        }
+        else if (beforeIndex == before.pieces.size()
+                 || semantic_piece_less(after.pieces[afterIndex], before.pieces[beforeIndex]))
+        {
+            const auto& piece = after.pieces[afterIndex++];
+            delta.pieces.push_back({DeltaOperation::ADD, piece.piece, piece.square, piece.board});
+        }
+        else
+        {
+            ++beforeIndex;
+            ++afterIndex;
+        }
+    }
+
+    beforeIndex = 0;
+    afterIndex  = 0;
+    while (beforeIndex < before.threats.size() || afterIndex < after.threats.size())
+    {
+        if (afterIndex == after.threats.size()
+            || (beforeIndex < before.threats.size()
+                && semantic_threat_less(before.threats[beforeIndex], after.threats[afterIndex])))
+        {
+            const auto& threat = before.threats[beforeIndex++];
+            delta.threats.push_back({DeltaOperation::REMOVE, threat.attacker, threat.from,
+                                     threat.attacked, threat.to, threat.board});
+        }
+        else if (beforeIndex == before.threats.size()
+                 || semantic_threat_less(after.threats[afterIndex], before.threats[beforeIndex]))
+        {
+            const auto& threat = after.threats[afterIndex++];
+            delta.threats.push_back({DeltaOperation::ADD, threat.attacker, threat.from,
+                                     threat.attacked, threat.to, threat.board});
+        }
+        else
+        {
+            ++beforeIndex;
+            ++afterIndex;
+        }
+    }
+
+    return delta;
+}
+
+u32 mix_fixture(u32 value) {
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    value *= 0x846CA68Bu;
+    return value ^ (value >> 16);
+}
+
+i32 fixture_value(u32 tag, IndexType index, IndexType lane, i32 radius) {
+    const u32 mixed = mix_fixture(tag ^ (index * 0x9E3779B9u) ^ (lane * 0x85EBCA6Bu));
+    return i32(mixed % u32(2 * radius + 1)) - radius;
+}
+
+i32 fixture_bias(IndexType lane) { return fixture_value(0xA11CE101u, 0, lane, 31); }
+
+i32 fixture_piece_weight(IndexType index, IndexType lane) {
+    return fixture_value(0xA11CE201u, index, lane, 15);
+}
+
+i32 fixture_threat_weight(IndexType index, IndexType lane) {
+    return fixture_value(0xA11CE301u, index, lane, 7);
+}
+
+i32 fixture_piece_psqt(IndexType index, IndexType bucket) {
+    return fixture_value(0xA11CE401u, index, bucket, 127);
+}
+
+i32 fixture_threat_psqt(IndexType index, IndexType bucket) {
+    return fixture_value(0xA11CE501u, index, bucket, 63);
+}
+
+struct FixtureAccumulator {
+    std::array<i32, L1>          values{};
+    std::array<i64, PsqtBuckets> psqt{};
+};
+
+void update_fixture_piece(FixtureAccumulator& accumulator, IndexType index, i32 sign) {
+    for (IndexType lane = 0; lane < L1; ++lane)
+        accumulator.values[lane] += sign * fixture_piece_weight(index, lane);
+    for (IndexType bucket = 0; bucket < PsqtBuckets; ++bucket)
+        accumulator.psqt[bucket] += sign * fixture_piece_psqt(index, bucket);
+}
+
+void update_fixture_threat(FixtureAccumulator& accumulator, IndexType index, i32 sign) {
+    for (IndexType lane = 0; lane < L1; ++lane)
+        accumulator.values[lane] += sign * fixture_threat_weight(index, lane);
+    for (IndexType bucket = 0; bucket < PsqtBuckets; ++bucket)
+        accumulator.psqt[bucket] += sign * fixture_threat_psqt(index, bucket);
+}
+
+FixtureAccumulator build_fixture_accumulator(const PerspectiveTrace& trace) {
+    FixtureAccumulator accumulator;
+    for (IndexType lane = 0; lane < L1; ++lane)
+        accumulator.values[lane] = fixture_bias(lane);
+    for (const auto& feature : trace.pieces)
+        update_fixture_piece(accumulator, feature.index, 1);
+    for (const auto& feature : trace.threats)
+        update_fixture_threat(accumulator, feature.index, 1);
+    return accumulator;
+}
+
+bool erase_index(std::vector<IndexType>& indices, IndexType index) {
+    const auto found = std::find(indices.begin(), indices.end(), index);
+    if (found == indices.end())
+        return false;
+    indices.erase(found);
+    return true;
+}
+
+std::vector<IndexType> piece_indices(const PerspectiveTrace& trace) {
+    std::vector<IndexType> result;
+    result.reserve(trace.pieces.size());
+    for (const auto& feature : trace.pieces)
+        result.push_back(feature.index);
+    return result;
+}
+
+std::vector<IndexType> threat_indices(const PerspectiveTrace& trace) {
+    std::vector<IndexType> result;
+    result.reserve(trace.threats.size());
+    for (const auto& feature : trace.threats)
+        result.push_back(feature.index);
+    return result;
+}
+
+std::optional<std::string> verify_transition(const NativeFeatureDelta&     delta,
+                                             const PositionTrace&          before,
+                                             const PositionTrace&          after,
+                                             const std::string&            resultingFen,
+                                             IncrementalVerificationStats& stats) {
+    if (delta.pieces.size() > 8)
+        return "Alice native piece delta exceeded eight events at " + resultingFen + ".";
+    if (delta.threats.size() > 512)
+        return "Alice native threat delta exceeded 512 events at " + resultingFen + ".";
+
+    stats.maxPieceEvents  = std::max<u64>(stats.maxPieceEvents, delta.pieces.size());
+    stats.maxThreatEvents = std::max<u64>(stats.maxThreatEvents, delta.threats.size());
+
+    for (Color perspective : {WHITE, BLACK})
+    {
+        const auto& oldTrace = before[perspective];
+        const auto& newTrace = after[perspective];
+        const bool  ownKingTransferred =
+          oldTrace.kingSquare != newTrace.kingSquare || oldTrace.kingBoard != newTrace.kingBoard;
+
+        FixtureAccumulator incremental = build_fixture_accumulator(oldTrace);
+        if (ownKingTransferred)
+        {
+            ++stats.fullRefreshes[perspective];
+            incremental = build_fixture_accumulator(newTrace);
+        }
+        else
+        {
+            std::vector<IndexType> incrementalPieces  = piece_indices(oldTrace);
+            std::vector<IndexType> incrementalThreats = threat_indices(oldTrace);
+
+            for (const auto& event : delta.pieces)
+            {
+                const IndexType index = PieceSquareFeatures::make_index(
+                  perspective, event.square, event.piece, event.board, oldTrace.kingSquare,
+                  oldTrace.kingBoard);
+                const i32 sign = event.operation == DeltaOperation::ADD ? 1 : -1;
+                if (sign < 0)
+                {
+                    if (!erase_index(incrementalPieces, index))
+                        return "Alice native piece removal was absent for "
+                             + std::string(perspective == WHITE ? "white" : "black") + " at "
+                             + resultingFen + ".";
+                }
+                else
+                    incrementalPieces.push_back(index);
+                update_fixture_piece(incremental, index, sign);
+            }
+
+            for (const auto& event : delta.threats)
+            {
+                const IndexType index = ThreatFeatures::make_index(
+                  perspective, event.attacker, event.from, event.to, event.attacked, event.board,
+                  oldTrace.kingSquare, oldTrace.kingBoard);
+                if (index >= ThreatDimensions)
+                    continue;
+
+                const i32 sign = event.operation == DeltaOperation::ADD ? 1 : -1;
+                if (sign < 0)
+                {
+                    if (!erase_index(incrementalThreats, index))
+                        return "Alice native threat removal was absent for "
+                             + std::string(perspective == WHITE ? "white" : "black") + " at "
+                             + resultingFen + ".";
+                }
+                else
+                    incrementalThreats.push_back(index);
+                update_fixture_threat(incremental, index, sign);
+            }
+
+            std::sort(incrementalPieces.begin(), incrementalPieces.end());
+            std::sort(incrementalThreats.begin(), incrementalThreats.end());
+            if (incrementalPieces != piece_indices(newTrace))
+                return "Alice native incremental piece trace mismatch at " + resultingFen + ".";
+            if (incrementalThreats != threat_indices(newTrace))
+                return "Alice native incremental threat trace mismatch at " + resultingFen + ".";
+        }
+
+        const FixtureAccumulator refreshed = build_fixture_accumulator(newTrace);
+        if (incremental.values != refreshed.values || incremental.psqt != refreshed.psqt)
+            return "Alice native scalar accumulator mismatch at " + resultingFen + ".";
+    }
+
+    return std::nullopt;
+}
 
 void append_piece_features(const Position& position, PerspectiveTrace& trace) {
     for (Square square = SQ_A1; square <= SQ_H8; ++square)
@@ -233,6 +565,66 @@ std::string trace_json(const Position& position) {
         << PieceSquareFeatureId << "\",\"threatDimensions\":" << ThreatDimensions
         << ",\"threatFeature\":\"" << ThreatFeatureId << "\",\"wireVersion\":\"A11CE001\"}";
     return out.str();
+}
+
+std::optional<std::string>
+verify_incremental(Position& position, Depth depth, IncrementalVerificationStats& stats) {
+    stats = {};
+    if (depth < 0 || depth > 2)
+        return "Alice native incremental verification depth must be between 0 and 2.";
+
+    const std::string rootFen = position.fen();
+    const Key         rootKey = position.key();
+
+    std::function<std::optional<std::string>(Depth)> visit;
+    visit = [&](Depth remaining) -> std::optional<std::string> {
+        ++stats.positions;
+        if (remaining == 0)
+            return std::nullopt;
+
+        const std::string   nodeFen  = position.fen();
+        const Key           nodeKey  = position.key();
+        const SemanticState before   = collect_semantic_state(position);
+        const PositionTrace oldTrace = build_trace(position);
+        std::vector<Move>   legalMoves;
+        for (Move move : MoveList<LEGAL>(position))
+            legalMoves.push_back(move);
+
+        for (Move move : legalMoves)
+        {
+            const Piece moved = position.moved_piece(move);
+            stats.captures += position.capture(move);
+            stats.promotions += move.type_of() == PROMOTION;
+            stats.castlings += move.type_of() == CASTLING;
+            stats.kingMoves += type_of(moved) == KING;
+
+            StateInfo state;
+            Dirties   dirties;
+            position.do_move(move, state, position.gives_check(move), dirties, nullptr, nullptr);
+
+            const SemanticState      after    = collect_semantic_state(position);
+            const PositionTrace      newTrace = build_trace(position);
+            const NativeFeatureDelta delta    = derive_delta(before, after);
+            ++stats.transitions;
+
+            auto error = verify_transition(delta, oldTrace, newTrace, position.fen(), stats);
+            if (!error)
+                error = visit(remaining - 1);
+
+            position.undo_move(move);
+            if (position.fen() != nodeFen || position.key() != nodeKey)
+                return "Alice native incremental verification did not restore a parent position.";
+            if (error)
+                return error;
+        }
+
+        return std::nullopt;
+    };
+
+    auto error = visit(depth);
+    if (position.fen() != rootFen || position.key() != rootKey)
+        return "Alice native incremental verification did not restore the root position.";
+    return error;
 }
 
 }  // namespace Stockfish::Eval::NNUE::AliceNative

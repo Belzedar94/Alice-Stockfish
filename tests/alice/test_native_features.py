@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import re
 import subprocess
 import sys
 import unittest
@@ -60,6 +61,44 @@ def engine_traces(fens: list[str]) -> list[dict]:
             f"Expected {len(fens)} native traces, received {len(traces)}.\n{result.stdout[-4000:]}"
         )
     return traces
+
+
+def incremental_reports(cases: list[tuple[str, int]]) -> list[dict[str, int]]:
+    commands: list[str] = []
+    for fen, depth in cases:
+        commands.extend((f"position fen {fen}", f"alice_native_verify_incremental {depth}"))
+    commands.extend(("quit", ""))
+
+    result = subprocess.run(
+        [str(ENGINE_PATH)],
+        input="\n".join(commands),
+        text=True,
+        capture_output=True,
+        encoding="ascii",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stdout + result.stderr)
+
+    pattern = re.compile(
+        r"^alice_native incremental verified positions (?P<positions>\d+) "
+        r"transitions (?P<transitions>\d+) captures (?P<captures>\d+) "
+        r"promotions (?P<promotions>\d+) castlings (?P<castlings>\d+) "
+        r"king_moves (?P<king_moves>\d+) refreshes (?P<white_refreshes>\d+),"
+        r"(?P<black_refreshes>\d+) max_piece_events (?P<max_piece_events>\d+) "
+        r"max_threat_events (?P<max_threat_events>\d+) depth (?P<depth>\d+)$"
+    )
+    reports = [
+        {name: int(value) for name, value in match.groupdict().items()}
+        for line in result.stdout.splitlines()
+        if (match := pattern.match(line))
+    ]
+    if len(reports) != len(cases):
+        raise AssertionError(
+            f"Expected {len(cases)} incremental reports, received {len(reports)}.\n"
+            + result.stdout[-4000:]
+        )
+    return reports
 
 
 def find_piece(perspective: dict, piece: str, square: str) -> dict:
@@ -214,6 +253,38 @@ class NativeFeatureTests(unittest.TestCase):
         )
         self.assertEqual(self.fixtures["threatRelationStride"], BASE_THREAT_DIMENSIONS)
         self.assertGreater(other_edge["index"], 65_535)
+
+    def test_sparse_updates_and_scalar_accumulators_match_full_refresh(self) -> None:
+        cases = [
+            (START_FEN, 2),
+            ("7k/5p2/8/8/2B5/8/8/7K w - - 0 1", 1),
+            ("7k/P7/8/8/8/8/8/7K w - - 0 1", 1),
+            ("r6k/1P6/8/8/8/8/8/7K w - - 0 1", 1),
+            ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", 1),
+            ("k7/8/8/8/8/8/8/4|K2|R w K - 0 1", 1),
+            ("4r2|k/8/8/8/8/8/8/4K3 w - - 0 1", 1),
+        ]
+        reports = incremental_reports(cases)
+
+        self.assertEqual(reports[0]["positions"], 421)
+        self.assertEqual(reports[0]["transitions"], 420)
+        self.assertEqual(reports[0]["max_piece_events"], 2)
+
+        self.assertGreater(reports[1]["captures"], 0)
+        self.assertGreaterEqual(reports[1]["max_piece_events"], 3)
+        self.assertGreater(reports[2]["promotions"], 0)
+        self.assertGreater(reports[3]["promotions"], 0)
+        self.assertGreater(reports[3]["captures"], 0)
+        self.assertGreaterEqual(reports[3]["max_piece_events"], 3)
+
+        for report in reports[4:6]:
+            self.assertGreater(report["castlings"], 0)
+            self.assertEqual(report["max_piece_events"], 4)
+            self.assertGreater(report["white_refreshes"], 0)
+
+        self.assertGreater(reports[6]["king_moves"], 0)
+        self.assertGreater(reports[6]["white_refreshes"], 0)
+        self.assertTrue(all(report["max_threat_events"] <= 512 for report in reports))
 
 
 def parse_arguments() -> tuple[argparse.Namespace, list[str]]:

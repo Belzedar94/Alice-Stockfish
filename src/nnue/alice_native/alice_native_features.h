@@ -12,6 +12,7 @@
 #define NNUE_ALICE_NATIVE_FEATURES_H_INCLUDED
 
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -114,6 +115,44 @@ struct ThreatFeatureTrace {
     Relation  relation;
 };
 
+enum class DeltaOperation : u8 {
+    REMOVE,
+    ADD
+};
+
+struct AlicePieceDelta {
+    DeltaOperation operation;
+    Piece          piece;
+    Square         square;
+    Board          board;
+};
+
+struct AliceThreatDelta {
+    DeltaOperation operation;
+    Piece          attacker;
+    Square         from;
+    Piece          attacked;
+    Square         to;
+    Board          board;
+};
+
+struct NativeFeatureDelta {
+    std::vector<AlicePieceDelta>  pieces;
+    std::vector<AliceThreatDelta> threats;
+};
+
+struct IncrementalVerificationStats {
+    u64 positions               = 0;
+    u64 transitions             = 0;
+    u64 captures                = 0;
+    u64 promotions              = 0;
+    u64 castlings               = 0;
+    u64 kingMoves               = 0;
+    u64 fullRefreshes[COLOR_NB] = {};
+    u64 maxPieceEvents          = 0;
+    u64 maxThreatEvents         = 0;
+};
+
 struct PerspectiveTrace {
     Color                           perspective;
     Square                          kingSquare;
@@ -126,6 +165,8 @@ using PositionTrace = std::array<PerspectiveTrace, COLOR_NB>;
 
 PositionTrace build_trace(const Position& position);
 std::string   trace_json(const Position& position);
+std::optional<std::string>
+verify_incremental(Position& position, Depth depth, IncrementalVerificationStats& stats);
 
 }  // namespace Stockfish::Eval::NNUE::AliceNative
 
