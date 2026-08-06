@@ -1534,3 +1534,26 @@ $(UNIVERSAL_EXE): $(UNIVERSAL_ENTRY_OBJ) $(NNUE_EMBED_OBJ) $(ARCH_OBJS)
 	@echo "Universal binary built: $@"
 
 endif  # UNIVERSAL_BUILD
+
+### ========================================================================
+### Section 12. OpenBench build contract
+### ========================================================================
+# Public workers invoke a bare `make -j EXE=<output> [CC=<compiler>]
+# [EVALFILE=<network>]`. The default goal therefore builds a native binary,
+# and an assigned historical network path becomes the strict EvalFile default.
+
+ifdef EVALFILE
+    CXXFLAGS += -DALICE_EVALFILE_DEFAULT='"$(EVALFILE)"'
+endif
+
+ifeq ($(OS),Windows_NT)
+    OPENBENCH_COMP = mingw
+else
+    OPENBENCH_COMP = gcc
+endif
+
+.PHONY: openbench
+openbench:
+	+$(MAKE) build COMP=$(OPENBENCH_COMP)
+
+.DEFAULT_GOAL := openbench

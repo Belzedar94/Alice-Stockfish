@@ -53,6 +53,12 @@ namespace Stockfish {
 constexpr int MaxHashMB  = Is64Bit ? 33554432 : 2048;
 int           MaxThreads = std::max(1024, 4 * int(get_hardware_concurrency()));
 
+#ifdef ALICE_EVALFILE_DEFAULT
+constexpr const char* DefaultLegacyEvalFile = ALICE_EVALFILE_DEFAULT;
+#else
+constexpr const char* DefaultLegacyEvalFile = "";
+#endif
+
 // The default configuration will attempt to group L3 domains up to 32 threads.
 // This size was found to be a good balance between the Elo gain of increased
 // history sharing and the speed loss from more cross-cache accesses (see
@@ -142,13 +148,16 @@ Engine::Engine(std::optional<std::filesystem::path>) :
       }));
 
     options.add(  //
-      "EvalFile", Option("", [this](const Option& o) {
+      "EvalFile", Option(DefaultLegacyEvalFile, [this](const Option& o) {
           return configure_legacy_network(path_from_utf8(std::string(o)));
       }));
 
     threads.clear();
     threads.ensure_network_replicated();
     resize_threads();
+
+    if (DefaultLegacyEvalFile[0] != '\0')
+        configure_legacy_network(path_from_utf8(DefaultLegacyEvalFile));
 }
 
 Engine::~Engine() {

@@ -113,6 +113,42 @@ python tests/alice/test_legacy_nnue.py --engine src/stockfish.exe \
   --network <path-to-alice_run2rl_e40_l09.nnue>
 ```
 
+## Deterministic build and bench contract
+
+The source tree accepts the OpenBench worker build shape directly:
+
+```text
+make -j EXE=<output> EVALFILE=<path-to-alice_run2rl_e40_l09.nnue>
+```
+
+The default goal selects the native architecture and the platform compiler.
+`EVALFILE` becomes the strict startup default only in that worker artifact;
+ordinary release builds retain an empty default and therefore fail closed until
+the network is selected explicitly. A worker artifact reports the same
+normalized path, checksum, serialization version, and architecture as an
+interactive load. It contains no orthodox embedded network.
+
+Bare `bench` uses eight versioned Alice positions, one thread, 16 MiB of hash,
+and depth 3. Its canonical signature is:
+
+```text
+Nodes searched  : 162582
+```
+
+The positions are mirrored in `tests/alice/fixtures/bench-v1.epd`. The legacy
+network suite proves that the embedded list and fixture produce the same node
+count, and repeated fresh processes produce the same signature. This is a
+build-admission identity, not a strength measurement.
+
+## Cross-platform verification
+
+The repository verification workflow builds BMI2 and AVX2 binaries on Linux
+and Windows. Linux instrumented jobs cover standard-library assertions,
+AddressSanitizer plus UndefinedBehaviorSanitizer, and ThreadSanitizer. Every
+job runs the independent rules suite and executable conformance suite; network
+parity remains a separate artifact-backed gate because the frozen network is
+not stored in the repository.
+
 ## Deliberately disabled paths
 
 The following orthodox shortcuts remain unavailable until they receive a
@@ -126,6 +162,7 @@ board-aware implementation and dedicated coverage:
 - insufficient-material shortcuts.
 
 The historical bridge makes the safe search playable, but it does not turn the
-current route into a strength release. Remaining gates include cross-platform
-sanitizer coverage, a board-aware strength search, and the native Alice NNUE
-defined in [`native-nnue.md`](native-nnue.md).
+current route into a strength release. Remaining gates include completion of
+the cross-platform workflow on every release revision, a board-aware strength
+search, and the native Alice NNUE defined in
+[`native-nnue.md`](native-nnue.md).

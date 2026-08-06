@@ -17,6 +17,7 @@ import unittest
 
 TEST_DIRECTORY = Path(__file__).resolve().parent
 FIXTURE_PATH = TEST_DIRECTORY / "fixtures" / "legacy-nnue-v1.json"
+REPOSITORY = TEST_DIRECTORY.parent.parent
 
 
 def default_engine_path() -> Path:
@@ -33,6 +34,7 @@ class UciSession:
     def __init__(self) -> None:
         self.process = subprocess.Popen(
             [str(ENGINE_PATH)],
+            cwd=REPOSITORY,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -99,6 +101,7 @@ def fatal_probe(network: Path, *extra_commands: str) -> subprocess.CompletedProc
     ]
     return subprocess.run(
         [str(ENGINE_PATH)],
+        cwd=REPOSITORY,
         input="\n".join(commands),
         text=True,
         capture_output=True,
@@ -156,6 +159,22 @@ class LegacyNetworkTests(unittest.TestCase):
                 any(line.startswith("info depth 1 ") and "score cp 0" not in line for line in session.lines),
                 "\n".join(session.lines),
             )
+
+    def test_canonical_bench_is_deterministic_and_matches_its_fixture(self) -> None:
+        assert NETWORK_PATH is not None
+        with UciSession() as session:
+            session.send(f"setoption name EvalFile value {NETWORK_PATH}")
+            session.wait_for(r"LegacyAliceExact loaded", timeout=60)
+
+            session.send("bench")
+            default_line = session.wait_for(r"^Nodes searched\s+:\s+\d+$", timeout=90)
+            default_nodes = int(default_line.rsplit(maxsplit=1)[1])
+            self.assertEqual(default_nodes, 162582)
+
+            session.send("bench 16 1 3 tests/alice/fixtures/bench-v1.epd depth")
+            fixture_line = session.wait_for(r"^Nodes searched\s+:\s+\d+$", timeout=90)
+            fixture_nodes = int(fixture_line.rsplit(maxsplit=1)[1])
+            self.assertEqual(fixture_nodes, default_nodes)
 
     def test_rejections_clear_the_previous_evaluator_and_exit_nonzero(self) -> None:
         assert NETWORK_PATH is not None
