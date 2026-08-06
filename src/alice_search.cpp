@@ -29,7 +29,7 @@ class Searcher {
     Searcher(Position&                position,
              const std::vector<Move>& allowedRootMoves,
              const Limits&            searchLimits,
-             const StaticEvaluator&   staticEvaluator,
+             const Evaluator&         staticEvaluator,
              std::atomic_bool&        stopFlag) :
         pos(position),
         rootMoves(allowedRootMoves),
@@ -94,15 +94,20 @@ class Searcher {
         if (moves.size() == 0)
             return pos.checkers() ? mated_in(ply) : VALUE_DRAW;
         if (depth == 0)
-            return evaluator ? evaluator(pos) : VALUE_ZERO;
+            return evaluator.value ? evaluator.value(pos) : VALUE_ZERO;
 
         Value best = -VALUE_INFINITE;
         for (Move move : moves)
         {
             StateInfo       state;
+            Dirties         dirties;
             Search::PVMoves childPv;
-            pos.do_move(move, state);
+            pos.do_move(move, state, pos.gives_check(move), dirties, nullptr, nullptr);
+            if (evaluator.push)
+                evaluator.push(pos, dirties);
             const Value score = -negamax(depth - 1, ply + 1, -beta, -alpha, childPv);
+            if (evaluator.pop)
+                evaluator.pop();
             pos.undo_move(move);
 
             if (aborted)
@@ -134,12 +139,17 @@ class Searcher {
             }
 
             StateInfo       state;
+            Dirties         dirties;
             Search::PVMoves childPv;
-            pos.do_move(move, state);
+            pos.do_move(move, state, pos.gives_check(move), dirties, nullptr, nullptr);
+            if (evaluator.push)
+                evaluator.push(pos, dirties);
             // Every root move receives an exact score. The temporary safe
             // search deliberately gives up aspiration and PVS shortcuts until
             // they have Alice-specific validation.
             const Value score = -negamax(depth - 1, 1, -VALUE_INFINITE, VALUE_INFINITE, childPv);
+            if (evaluator.pop)
+                evaluator.pop();
             pos.undo_move(move);
 
             if (aborted)
@@ -159,7 +169,7 @@ class Searcher {
     Position&                pos;
     const std::vector<Move>& rootMoves;
     const Limits&            limits;
-    const StaticEvaluator&   evaluator;
+    const Evaluator&         evaluator;
     std::atomic_bool&        stop;
     u64                      nodes   = 0;
     bool                     aborted = false;
@@ -170,7 +180,7 @@ class Searcher {
 Result search(Position&                pos,
               const std::vector<Move>& rootMoves,
               const Limits&            limits,
-              const StaticEvaluator&   evaluator,
+              const Evaluator&         evaluator,
               std::atomic_bool&        stop,
               const IterationCallback& onIteration) {
     Searcher searcher(pos, rootMoves, limits, evaluator, stop);

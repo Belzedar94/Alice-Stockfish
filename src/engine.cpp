@@ -244,26 +244,40 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
     const bool        isChess960  = pos.is_chess960();
     const bool        waitForStop = limits.infinite;
 
-    AliceSearch::StaticEvaluator evaluator;
-    if (useLegacyEvaluation)
-        evaluator = [this](const Position& position) {
-            const auto value = legacyEvaluator.evaluate(position, true);
-            if (!value)
-                std::abort();
-            return *value;
-        };
-    else
-        evaluator = [](const Position&) { return VALUE_ZERO; };
-
     aliceSearchThread =
       std::thread([this, rootMoves = std::move(rootMoves), aliceLimits, rootFen, rootState,
-                   isChess960, waitForStop, evaluator = std::move(evaluator)]() mutable {
+                   isChess960, waitForStop, useLegacyEvaluation]() mutable {
           StateInfo  searchRootState;
           Position   searchPos;
           const auto error = searchPos.set(rootFen, isChess960, &searchRootState);
           assert(!error.has_value());
           (void) error;
           searchRootState = rootState;
+
+          AliceSearch::Evaluator evaluator;
+          std::unique_ptr<LegacyAliceExact::Accumulator> legacyAccumulator;
+          if (useLegacyEvaluation)
+          {
+              legacyAccumulator = legacyEvaluator.make_accumulator(searchPos);
+              if (!legacyAccumulator)
+                  std::abort();
+
+              evaluator.value = [this, &legacyAccumulator](const Position& position) {
+                  const auto value = legacyEvaluator.evaluate(position, *legacyAccumulator, true);
+                  if (!value)
+                      std::abort();
+                  return *value;
+              };
+              evaluator.push = [this, &legacyAccumulator](const Position& position,
+                                                           const Dirties&  dirties) {
+                  legacyEvaluator.push(*legacyAccumulator, position, dirties);
+              };
+              evaluator.pop = [this, &legacyAccumulator]() {
+                  legacyEvaluator.pop(*legacyAccumulator);
+              };
+          }
+          else
+              evaluator.value = [](const Position&) { return VALUE_ZERO; };
 
           const TimePoint started = now();
 
@@ -486,6 +500,68 @@ std::optional<std::string> Engine::trace_eval() const {
     sync_cout << "info string " << legacyEvaluator.status_line() << "\n"
               << "legacy_nnue raw " << *raw << " adjusted " << *adjusted << sync_endl;
     return std::nullopt;
+}
+
+std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
+    wait_for_search_finished();
+    positions = 0;
+
+    if (!legacyEvaluator.loaded())
+        return "Legacy Alice incremental verification requires a compatible loaded network.";
+    if (depth < 0 || depth > 4)
+        return "Legacy Alice incremental verification depth must be between 0 and 4.";
+
+    auto accumulator = legacyEvaluator.make_accumulator(pos);
+    if (!accumulator)
+        return "Legacy Alice incremental accumulator initialization failed.";
+
+    const std::string rootFen = pos.fen();
+    const Key         rootKey = pos.key();
+    std::function<std::optional<std::string>(Depth)> visit;
+    visit = [&](Depth remaining) -> std::optional<std::string> {
+        const auto fullRaw      = legacyEvaluator.evaluate(pos, false);
+        const auto fullAdjusted = legacyEvaluator.evaluate(pos, true);
+        const auto incrementalRaw = legacyEvaluator.evaluate(pos, *accumulator, false);
+        const auto incrementalAdjusted = legacyEvaluator.evaluate(pos, *accumulator, true);
+
+        if (!fullRaw || !fullAdjusted || !incrementalRaw || !incrementalAdjusted)
+            return "Legacy Alice evaluator became unavailable during incremental verification.";
+        if (*fullRaw != *incrementalRaw || *fullAdjusted != *incrementalAdjusted)
+        {
+            std::ostringstream error;
+            error << "Legacy Alice incremental mismatch at " << pos.fen() << ": full raw="
+                  << *fullRaw << " adjusted=" << *fullAdjusted << ", incremental raw="
+                  << *incrementalRaw << " adjusted=" << *incrementalAdjusted << ".";
+            return error.str();
+        }
+
+        ++positions;
+        if (remaining == 0)
+            return std::nullopt;
+
+        std::vector<Move> moves;
+        for (Move move : MoveList<LEGAL>(pos))
+            moves.push_back(move);
+
+        for (Move move : moves)
+        {
+            StateInfo state;
+            Dirties   dirties;
+            pos.do_move(move, state, pos.gives_check(move), dirties, nullptr, nullptr);
+            legacyEvaluator.push(*accumulator, pos, dirties);
+            auto error = visit(remaining - 1);
+            legacyEvaluator.pop(*accumulator);
+            pos.undo_move(move);
+            if (error)
+                return error;
+        }
+        return std::nullopt;
+    };
+
+    auto error = visit(depth);
+    if (pos.fen() != rootFen || pos.key() != rootKey)
+        return "Legacy Alice incremental verification did not restore the root position.";
+    return error;
 }
 
 std::optional<std::string> Engine::configure_legacy_network(const std::filesystem::path& file) {

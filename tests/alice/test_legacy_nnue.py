@@ -160,6 +160,29 @@ class LegacyNetworkTests(unittest.TestCase):
                 "\n".join(session.lines),
             )
 
+    def test_incremental_evaluation_matches_full_refresh(self) -> None:
+        assert NETWORK_PATH is not None
+        cases = (
+            ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 2),
+            ("7k/P7/8/8/8/8/8/7K w - - 0 1", 1),
+            ("7k/8/8/8/8/|p7/R7/7K w - - 0 1", 1),
+            ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", 1),
+            ("8/8/8/8/8/8/2k5/4K3 w - - 0 1", 2),
+        )
+        with UciSession() as session:
+            session.send(f"setoption name EvalFile value {NETWORK_PATH}")
+            session.wait_for(r"LegacyAliceExact loaded", timeout=60)
+            for fen, depth in cases:
+                with self.subTest(fen=fen, depth=depth):
+                    session.send(f"position fen {fen}")
+                    session.send(f"alice_verify_incremental {depth}")
+                    line = session.wait_for(
+                        rf"^legacy_nnue incremental verified positions \d+ depth {depth}$",
+                        timeout=60,
+                    )
+                    positions = int(line.split()[4])
+                    self.assertGreater(positions, 1)
+
     def test_canonical_bench_is_deterministic_and_matches_its_fixture(self) -> None:
         assert NETWORK_PATH is not None
         with UciSession() as session:

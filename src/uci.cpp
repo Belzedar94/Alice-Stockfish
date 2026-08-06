@@ -163,6 +163,19 @@ void UCIEngine::loop() {
             if (auto error = engine.trace_eval())
                 terminate_on_critical_error(*error);
         }
+        else if (token == "alice_verify_incremental")
+        {
+            int requestedDepth = 2;
+            if (is >> requestedDepth; is.fail())
+                terminate_on_critical_error(
+                  "alice_verify_incremental requires an integer depth between 0 and 4.");
+
+            u64 positions = 0;
+            if (auto error = engine.verify_legacy_incremental(Depth(requestedDepth), positions))
+                terminate_on_critical_error(*error);
+            sync_cout << "legacy_nnue incremental verified positions " << positions << " depth "
+                      << requestedDepth << sync_endl;
+        }
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")

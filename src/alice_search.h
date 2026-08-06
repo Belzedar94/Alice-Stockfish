@@ -47,10 +47,16 @@ struct Result {
 using IterationCallback = std::function<void(const Result&)>;
 using StaticEvaluator   = std::function<Value(const Position&)>;
 
+struct Evaluator {
+    StaticEvaluator                             value;
+    std::function<void(const Position&, const Dirties&)> push;
+    std::function<void()>                       pop;
+};
+
 Result search(Position&                pos,
               const std::vector<Move>& rootMoves,
               const Limits&            limits,
-              const StaticEvaluator&   evaluator,
+              const Evaluator&         evaluator,
               std::atomic_bool&        stop,
               const IterationCallback& onIteration = {});
 

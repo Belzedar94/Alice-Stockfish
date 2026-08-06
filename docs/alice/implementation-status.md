@@ -71,8 +71,8 @@ without a network.
 
 ## Historical NNUE compatibility milestone
 
-`LegacyAliceExact` is an engine-owned, full-refresh-only evaluator for the
-frozen historical Alice architecture. Its default policy accepts only the
+`LegacyAliceExact` is an engine-owned evaluator for the frozen historical
+Alice architecture. Its default policy accepts only the
 exact file name, serialization version, composite architecture hash, internal
 transformer and layer-stack hashes, structural length, end of file, and frozen
 SHA-256. The loader hashes the bytes it actually opens and reports the
@@ -91,9 +91,12 @@ needed by the retained thread-pool type. The `Engine` exposes no orthodox
 network load or save route. Historical Alice weights exist only in the
 separate strict compatibility backend.
 
-The scalar full-refresh implementation reproduces the historical feature
-transformer, PSQT bucket, `16 -> 32 -> 1` stack, integer clipping and scaling,
-and adjusted-evaluation weighting. Its board blindness is intentional and
+The scalar implementation reproduces the historical feature transformer,
+PSQT bucket, `16 -> 32 -> 1` stack, integer clipping and scaling, and
+adjusted-evaluation weighting. Search starts from an independently rebuilt
+accumulator, applies exact dirty-piece deltas after ordinary moves, captures,
+promotions, and castling, rebuilds the affected perspective after a king move,
+and pops the accumulator on undo. Its board blindness is intentional and
 limited to this compatibility class.
 
 Verified compatibility evidence consists of:
@@ -101,6 +104,8 @@ Verified compatibility evidence consists of:
 - seven fixed vectors covering the start position, a transferred pawn,
   tactical positions, both layers, and an expected layer collision;
 - exact raw and adjusted equality on 80 deterministic random legal positions;
+- exact full-refresh versus incremental equality over exhaustive subtrees that
+  include captures, promotions, castling, king moves, and undo restoration;
 - an exact network-backed depth-one root result; and
 - non-zero rejection probes for a missing file, wrong basename, version,
   architecture, transformer or layer-stack hash, frozen checksum, truncation,

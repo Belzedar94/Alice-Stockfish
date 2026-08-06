@@ -240,6 +240,13 @@ i16 add_wrapped(i16 left, i16 right) {
     return result;
 }
 
+i16 subtract_wrapped(i16 left, i16 right) {
+    const u16 raw = u16(u16(left) - u16(right));
+    i16       result;
+    std::memcpy(&result, &raw, sizeof(result));
+    return result;
+}
+
 int truncate_division(int value, int divisor) { return value / divisor; }
 
 usize piece_feature_offset(Color perspective, Piece piece) {
@@ -298,7 +305,109 @@ std::array<u8, Size> clipped_relu(const std::array<i32, Size>& input) {
     return output;
 }
 
+struct LegacyAccumulatorState {
+    std::array<std::array<i16, TransformedHalf>, COLOR_NB> accumulation{};
+    std::array<std::array<i32, PsqtBuckets>, COLOR_NB>     psqt{};
+    std::array<Square, COLOR_NB>                           kingSquares{SQ_NONE, SQ_NONE};
+};
+
+void apply_feature(LegacyAccumulatorState& state,
+                   Color                   perspective,
+                   Piece                   piece,
+                   Square                  square,
+                   bool                    add,
+                   const std::vector<i16>& weights,
+                   const std::vector<i32>& psqtWeights) {
+    assert(piece != NO_PIECE && is_ok(square));
+    const Square orientedSquare = relative_square(perspective, square);
+    const usize  feature = usize(state.kingSquares[perspective]) * PieceFeatureStride
+                        + piece_feature_offset(perspective, piece) + usize(orientedSquare);
+    assert(feature < FeatureDimensions);
+
+    const usize weightOffset = feature * TransformedHalf;
+    for (usize i = 0; i < TransformedHalf; ++i)
+        state.accumulation[perspective][i] =
+          add ? add_wrapped(state.accumulation[perspective][i], weights[weightOffset + i])
+              : subtract_wrapped(state.accumulation[perspective][i], weights[weightOffset + i]);
+
+    const usize psqtOffset = feature * PsqtBuckets;
+    for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
+        state.psqt[perspective][bucket] +=
+          add ? psqtWeights[psqtOffset + bucket] : -psqtWeights[psqtOffset + bucket];
+}
+
+void refresh_perspective(LegacyAccumulatorState&             state,
+                         Color                               perspective,
+                         const Position&                     pos,
+                         const std::array<i16, TransformedHalf>& biases,
+                         const std::vector<i16>&              weights,
+                         const std::vector<i32>&              psqtWeights) {
+    state.accumulation[perspective] = biases;
+    state.psqt[perspective].fill(0);
+    state.kingSquares[perspective] =
+      relative_square(perspective, pos.square<KING>(perspective));
+
+    Bitboard occupied = pos.pieces();
+    while (occupied)
+    {
+        const Square square = pop_lsb(occupied);
+        apply_feature(state, perspective, pos.piece_on(square), square, true, weights, psqtWeights);
+    }
+}
+
+void refresh_state(LegacyAccumulatorState&                  state,
+                   const Position&                          pos,
+                   const std::array<i16, TransformedHalf>& biases,
+                   const std::vector<i16>&                  weights,
+                   const std::vector<i32>&                  psqtWeights) {
+    refresh_perspective(state, WHITE, pos, biases, weights, psqtWeights);
+    refresh_perspective(state, BLACK, pos, biases, weights, psqtWeights);
+}
+
+template<typename Stack>
+Value evaluate_state(const Position&                     pos,
+                     const LegacyAccumulatorState&       state,
+                     const std::array<Stack, LayerStacks>& stacks,
+                     bool                                adjusted) {
+    std::array<u8, TransformedInput> transformed{};
+    const std::array<Color, 2>       perspectives = {pos.side_to_move(), ~pos.side_to_move()};
+    for (usize p = 0; p < perspectives.size(); ++p)
+        for (usize i = 0; i < TransformedHalf; ++i)
+            transformed[p * TransformedHalf + i] =
+              u8(std::clamp(int(state.accumulation[perspectives[p]][i]), 0, 127));
+
+    const usize pieceCount = popcount(pos.pieces());
+    assert(pieceCount > 0);
+    const usize bucket = std::min((pieceCount - 1) * 8 / 32, usize(7));
+    const i32   material =
+      truncate_division(state.psqt[perspectives[0]][bucket]
+                          - state.psqt[perspectives[1]][bucket],
+                        2);
+
+    const Stack& stack = stacks[bucket];
+    const auto hidden1 = clipped_relu(affine<16>(transformed.data(), transformed.size(), 1024,
+                                                  stack.bias1.data(), stack.weight1.data()));
+    const auto hidden2 = clipped_relu(
+      affine<32>(hidden1.data(), hidden1.size(), 32, stack.bias2.data(), stack.weight2.data()));
+    const i32 positional =
+      affine<1>(hidden2.data(), hidden2.size(), 32, &stack.bias3, stack.weight3.data())[0];
+
+    const int delta         = std::abs(pos.non_pawn_material(WHITE) - pos.non_pawn_material(BLACK));
+    const int entertainment = adjusted && delta <= BishopValue - KnightValue ? 7 : 0;
+    const int sum =
+      ((128 - entertainment) * material + (128 + entertainment) * positional) / 128;
+    return Value(sum / 16);
+}
+
 }  // namespace
+
+struct LegacyAliceExact::Accumulator::Impl {
+    std::vector<LegacyAccumulatorState> states;
+};
+
+LegacyAliceExact::Accumulator::Accumulator() :
+    impl(std::make_unique<Impl>()) {}
+LegacyAliceExact::Accumulator::~Accumulator() = default;
 
 struct LegacyAliceExact::Impl {
     struct Stack {
@@ -457,59 +566,67 @@ std::optional<Value> LegacyAliceExact::evaluate(const Position& pos, bool adjust
     if (!impl->ready)
         return std::nullopt;
 
-    std::array<std::array<i16, TransformedHalf>, COLOR_NB> accumulation{};
-    std::array<std::array<i32, PsqtBuckets>, COLOR_NB>     psqt{};
+    LegacyAccumulatorState state;
+    refresh_state(state, pos, impl->biases, impl->weights, impl->psqtWeights);
+    return evaluate_state(pos, state, impl->stacks, adjusted);
+}
+
+std::unique_ptr<LegacyAliceExact::Accumulator>
+LegacyAliceExact::make_accumulator(const Position& pos) const {
+    if (!impl->ready)
+        return nullptr;
+
+    auto accumulator = std::unique_ptr<Accumulator>(new Accumulator());
+    accumulator->impl->states.emplace_back();
+    refresh_state(accumulator->impl->states.back(), pos, impl->biases, impl->weights,
+                  impl->psqtWeights);
+    return accumulator;
+}
+
+std::optional<Value> LegacyAliceExact::evaluate(const Position&    pos,
+                                                const Accumulator& accumulator,
+                                                bool               adjusted) const {
+    if (!impl->ready || accumulator.impl->states.empty())
+        return std::nullopt;
+    return evaluate_state(pos, accumulator.impl->states.back(), impl->stacks, adjusted);
+}
+
+void LegacyAliceExact::push(Accumulator& accumulator,
+                            const Position& pos,
+                            const Dirties&  dirties) const {
+    assert(impl->ready && !accumulator.impl->states.empty());
+    LegacyAccumulatorState next = accumulator.impl->states.back();
+    accumulator.impl->states.push_back(std::move(next));
+    LegacyAccumulatorState& state = accumulator.impl->states.back();
 
     for (Color perspective : {WHITE, BLACK})
     {
-        accumulation[perspective] = impl->biases;
-        const Square kingSquare   = relative_square(perspective, pos.square<KING>(perspective));
-
-        Bitboard occupied = pos.pieces();
-        while (occupied)
+        const Square kingSquare = relative_square(perspective, pos.square<KING>(perspective));
+        if (kingSquare != state.kingSquares[perspective])
         {
-            const Square square         = pop_lsb(occupied);
-            const Piece  piece          = pos.piece_on(square);
-            const Square orientedSquare = relative_square(perspective, square);
-            const usize  feature        = usize(kingSquare) * PieceFeatureStride
-                                + piece_feature_offset(perspective, piece) + usize(orientedSquare);
-            assert(feature < FeatureDimensions);
-
-            const usize weightOffset = feature * TransformedHalf;
-            for (usize i = 0; i < TransformedHalf; ++i)
-                accumulation[perspective][i] =
-                  add_wrapped(accumulation[perspective][i], impl->weights[weightOffset + i]);
-
-            const usize psqtOffset = feature * PsqtBuckets;
-            for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-                psqt[perspective][bucket] += impl->psqtWeights[psqtOffset + bucket];
+            refresh_perspective(state, perspective, pos, impl->biases, impl->weights,
+                                impl->psqtWeights);
+            continue;
         }
+
+        const DirtyPiece& dirty = dirties.dirtyPiece;
+        apply_feature(state, perspective, dirty.pc, dirty.from, false, impl->weights,
+                      impl->psqtWeights);
+        if (dirty.to != SQ_NONE)
+            apply_feature(state, perspective, dirty.pc, dirty.to, true, impl->weights,
+                          impl->psqtWeights);
+        if (dirty.remove_sq != SQ_NONE)
+            apply_feature(state, perspective, dirty.remove_pc, dirty.remove_sq, false,
+                          impl->weights, impl->psqtWeights);
+        if (dirty.add_sq != SQ_NONE)
+            apply_feature(state, perspective, dirty.add_pc, dirty.add_sq, true, impl->weights,
+                          impl->psqtWeights);
     }
+}
 
-    std::array<u8, TransformedInput> transformed{};
-    const std::array<Color, 2>       perspectives = {pos.side_to_move(), ~pos.side_to_move()};
-    for (usize p = 0; p < perspectives.size(); ++p)
-        for (usize i = 0; i < TransformedHalf; ++i)
-            transformed[p * TransformedHalf + i] =
-              u8(std::clamp(int(accumulation[perspectives[p]][i]), 0, 127));
-
-    const usize pieceCount = popcount(pos.pieces());
-    const usize bucket     = std::min((pieceCount - 1) * 8 / 32, usize(7));
-    const i32   material =
-      truncate_division(psqt[perspectives[0]][bucket] - psqt[perspectives[1]][bucket], 2);
-
-    const Impl::Stack& stack = impl->stacks[bucket];
-    const auto hidden1       = clipped_relu(affine<16>(transformed.data(), transformed.size(), 1024,
-                                                       stack.bias1.data(), stack.weight1.data()));
-    const auto hidden2       = clipped_relu(
-      affine<32>(hidden1.data(), hidden1.size(), 32, stack.bias2.data(), stack.weight2.data()));
-    const i32 positional =
-      affine<1>(hidden2.data(), hidden2.size(), 32, &stack.bias3, stack.weight3.data())[0];
-
-    const int delta         = std::abs(pos.non_pawn_material(WHITE) - pos.non_pawn_material(BLACK));
-    const int entertainment = adjusted && delta <= BishopValue - KnightValue ? 7 : 0;
-    const int sum = ((128 - entertainment) * material + (128 + entertainment) * positional) / 128;
-    return Value(sum / 16);
+void LegacyAliceExact::pop(Accumulator& accumulator) const {
+    assert(accumulator.impl->states.size() > 1);
+    accumulator.impl->states.pop_back();
 }
 
 const LegacyAliceExact::Metadata& LegacyAliceExact::metadata() const { return impl->metadata; }

@@ -44,6 +44,24 @@ class LegacyAliceExact {
         bool        frozen       = false;
     };
 
+    class Accumulator {
+       public:
+        ~Accumulator();
+
+        Accumulator(const Accumulator&)            = delete;
+        Accumulator(Accumulator&&)                 = delete;
+        Accumulator& operator=(const Accumulator&) = delete;
+        Accumulator& operator=(Accumulator&&)      = delete;
+
+       private:
+        Accumulator();
+
+        struct Impl;
+        std::unique_ptr<Impl> impl;
+
+        friend class LegacyAliceExact;
+    };
+
     LegacyAliceExact();
     ~LegacyAliceExact();
 
@@ -57,6 +75,10 @@ class LegacyAliceExact {
 
     bool                 loaded() const;
     std::optional<Value> evaluate(const Position&, bool adjusted) const;
+    std::unique_ptr<Accumulator> make_accumulator(const Position&) const;
+    std::optional<Value> evaluate(const Position&, const Accumulator&, bool adjusted) const;
+    void                 push(Accumulator&, const Position&, const Dirties&) const;
+    void                 pop(Accumulator&) const;
     const Metadata&      metadata() const;
     const std::string&   last_error() const;
     std::string          status_line() const;

@@ -102,9 +102,8 @@ The bridge is accepted only after all of the following pass on a fixed corpus:
 1. The new full-refresh feature extraction matches the legacy executable's
    output exactly for positions the legacy representation can express.
 2. Every enabled incremental evaluation path equals a fresh rebuild after
-   every move, capture, promotion, castling move, undo, and reachable null
-   move. A declared full-refresh-only bridge is permitted, but it MUST NOT
-   claim or exercise incremental support.
+   every move, capture, promotion, castling move, and undo. Null-move search is
+   disabled in the correctness-first Alice search and is not an enabled path.
 3. The loaded path and SHA-256 remain stable across `ucinewgame`, position
    changes, thread-count changes, and repeated searches.
 4. Missing, corrupt, wrong-version, wrong-architecture, wrong-prefix, and
@@ -122,19 +121,23 @@ rules implementation.
 
 The current `LegacyAliceExact` bridge implements the frozen-baseline and
 explicit format-compatible policies above. It is intentionally scalar and
-full-refresh-only: no current Stockfish accumulator, dirty-piece update, or
-orthodox evaluation route is reachable from it. `Use NNUE` is enabled by
-default, so normal `eval` and `go` commands require a successfully loaded
-network. The only zero-evaluation path requires the explicit diagnostic
-setting `Use NNUE false` and identifies itself in UCI output.
+owns a dedicated accumulator stack; no orthodox Stockfish accumulator or
+evaluation route is reachable from it. The stack applies historical
+piece-square deltas, refreshes a perspective when its king moves, and restores
+the parent accumulator on undo. `Use NNUE` is enabled by default, so normal
+`eval` and `go` commands require a successfully loaded network. The only
+zero-evaluation path requires the explicit diagnostic setting `Use NNUE false`
+and identifies itself in UCI output.
 
 The versioned public fixture records seven exact raw and adjusted evaluation
 vectors. Differential validation against a minimally instrumented build of the
 frozen source also matched both values on 80 deterministic random legal
 positions. Negative probes cover structural, identity, integrity, and file
 errors, and verify that a failed replacement cannot retain a previously loaded
-evaluator. These results establish the full-refresh bridge; they do not claim
-incremental support or native layer awareness.
+evaluator. Exhaustive incremental verification additionally covers ordinary
+moves, captures, promotions, castling, king moves, and undo restoration. These
+results establish exact historical compatibility; they do not claim native
+layer awareness.
 
 ## Public provenance
 
@@ -143,12 +146,12 @@ The engine source and the historical NNUE trainer named by the file are public:
 - [Fairy-Stockfish frozen source](https://github.com/fairy-stockfish/Fairy-Stockfish/tree/4b1940a8d0f60eeb853de7e77af3b39ebf1b6f79)
 - [variant-nnue-pytorch trainer](https://github.com/ianfab/variant-nnue-pytorch)
 
-An older Alice network is available through the
+The frozen compatibility network and its checksum record are published in the
+[OpenBench assets release](https://github.com/Belzedar94/Alice-Stockfish/releases/tag/openbench-assets-v1).
+An older Alice network is also available through the
 [historical public download](https://drive.google.com/file/d/1BqFt3H5zUGHdKwYa1vT_boSsM-kZGIoc/view).
 It is a separate artifact and must not be represented as the frozen
-`alice_run2rl_e40_l09.nnue` file. Until the frozen file itself is published
-with its exact checksum and provenance record, releases must describe it as a
-locally frozen compatibility input rather than imply a public download.
+`alice_run2rl_e40_l09.nnue` file.
 
 Every public release that includes a network must ship or link all of the
 following together: exact file, SHA-256, byte size, serialization version,
