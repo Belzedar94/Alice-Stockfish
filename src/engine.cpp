@@ -50,8 +50,6 @@
 
 namespace Stockfish {
 
-namespace NN = Eval::NNUE;
-
 constexpr int MaxHashMB  = Is64Bit ? 33554432 : 2048;
 int           MaxThreads = std::max(1024, 4 * int(get_hardware_concurrency()));
 
@@ -61,13 +59,11 @@ int           MaxThreads = std::max(1024, 4 * int(get_hardware_concurrency()));
 // PR#6526). The user can always explicitly override this behavior.
 constexpr NumaAutoPolicy DefaultNumaPolicy = BundledL3Policy{32};
 
-Engine::Engine(std::optional<std::filesystem::path> path) :
-    binaryDirectory(path ? CommandLine::get_binary_directory(*path) : std::filesystem::path{}),
+Engine::Engine(std::optional<std::filesystem::path>) :
     numaContext(NumaConfig::from_system(DefaultNumaPolicy)),
     states(new std::deque<StateInfo>(1)),
     threads(),
-    networkFile{std::nullopt, ""},
-    network(numaContext, get_default_network()) {
+    network(numaContext, std::make_unique<Eval::NNUE::Network>()) {
 
     pos.set(StartFEN, false, &states->back());
 
@@ -456,27 +452,6 @@ void Engine::verify_network() const {
           bool(options["Use NNUE"])
             ? legacyEvaluator.status_line()
             : "Legacy Alice evaluation disabled; deterministic zero diagnostic mode is active.");
-}
-
-std::unique_ptr<Eval::NNUE::Network> Engine::get_default_network() {
-
-    auto network_ = std::make_unique<NN::Network>();
-
-    network_->load(binaryDirectory, std::filesystem::path{}, networkFile);
-
-    return network_;
-}
-
-void Engine::load_network(const std::filesystem::path& file) {
-    network.modify_and_replicate(
-      [this, &file](NN::Network& network_) { network_.load(binaryDirectory, file, networkFile); });
-    threads.clear();
-    threads.ensure_network_replicated();
-}
-
-void Engine::save_network(const std::optional<std::filesystem::path>& file) {
-    network.modify_and_replicate(
-      [&file, this](NN::Network& network_) { network_.save(networkFile, file); });
 }
 
 // utility functions

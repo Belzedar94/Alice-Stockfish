@@ -93,10 +93,7 @@ class Engine {
 
     // network related
 
-    void                                 verify_network() const;
-    std::unique_ptr<Eval::NNUE::Network> get_default_network();
-    void                                 load_network(const std::filesystem::path& file);
-    void save_network(const std::optional<std::filesystem::path>& file);
+    void verify_network() const;
 
     // utility functions
 
@@ -117,8 +114,6 @@ class Engine {
     std::string                          thread_binding_information_as_string() const;
 
    private:
-    const std::filesystem::path binaryDirectory;
-
     NumaReplicationContext numaContext;
 
     Position     pos;
@@ -127,7 +122,6 @@ class Engine {
     OptionsMap                                        options;
     ThreadPool                                        threads;
     TranspositionTable                                tt;
-    Eval::NNUE::EvalFile                              networkFile;
     LazyNumaReplicatedSystemWide<Eval::NNUE::Network> network;
     LegacyAliceExact                                  legacyEvaluator;
 

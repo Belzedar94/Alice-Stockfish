@@ -85,6 +85,12 @@ empty `EvalFile` clears any previously loaded evaluator. With `Use NNUE`
 enabled, `eval` and `go` then terminate with a non-zero outcome instead of
 using zero evaluation, an embedded chess network, or stale weights.
 
+Normal builds define `NNUE_EMBEDDING_OFF`, do not make the orthodox Stockfish
+network a build prerequisite, and initialize only an unreachable zeroed shell
+needed by the retained thread-pool type. The `Engine` exposes no orthodox
+network load or save route. Historical Alice weights exist only in the
+separate strict compatibility backend.
+
 The scalar full-refresh implementation reproduces the historical feature
 transformer, PSQT bucket, `16 -> 32 -> 1` stack, integer clipping and scaling,
 and adjusted-evaluation weighting. Its board blindness is intentional and
