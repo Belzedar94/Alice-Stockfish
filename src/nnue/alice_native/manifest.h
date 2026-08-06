@@ -27,6 +27,10 @@ inline constexpr std::string_view TensorLayoutId       = "alice-native-tensors-v
 inline constexpr std::string_view QuantizationId       = "alice-native-quant-v1";
 inline constexpr std::string_view ManifestSha256 =
   "BFEAC25BC943190C2512B03DD3BC955FD5D3D9FE55109440B81F3DC6A7C883CA";
+inline constexpr std::string_view QuantizationContractSha256 =
+  "DD8571715CB7711BEE46785D0FBAC9F480ECCADD1D6CC9EF71D652554F80F9C8";
+inline constexpr std::string_view CheckpointSchemaSha256 =
+  "A7E667BB5B7B978E474A392960CF6A72A5F1A9B074DDFC97C6FA13166B5D3413";
 
 constexpr u32 WireVersion = 0xA11CE001u;
 

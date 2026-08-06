@@ -46,6 +46,11 @@ both directions with the historical `7AF32F20/3C103E72` format.
 
 The canonical manifest is 1,043 UTF-8 bytes with SHA-256
 `BFEAC25BC943190C2512B03DD3BC955FD5D3D9FE55109440B81F3DC6A7C883CA`.
+The N7 float checkpoint, exact quantization, integer inference, and
+transactional activation boundary are frozen separately in
+[`native-quantization.md`](native-quantization.md). This keeps the N0-N6 wire
+identity unchanged while binding later qualification receipts to exact
+checkpoint and quantization contract hashes.
 Tensor integers are raw little-endian values. A complete v1 container is
 220,315,747 bytes: the 12-byte header, canonical manifest, transformer hash,
 220,033,024 feature-tensor bytes, and eight dense hashes followed by 35,204
