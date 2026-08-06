@@ -162,6 +162,7 @@ Each rank describes the eight shared coordinates once:
 - `|` immediately before a piece letter places that piece on layer `B`;
 - `|` does not consume a coordinate;
 - digits count empty shared coordinates using ordinary FEN run-length rules;
+- empty-square runs use canonical decimal notation without leading zeros;
 - `|` before a digit, slash, another `|`, or end of placement is invalid.
 
 Example: a black king on `A:e8`, a white pawn on `B:e4`, and a white king on
@@ -186,7 +187,7 @@ A:a through A:h, then B:a through B:h
 ```
 
 Run lengths may cross the layer boundary and may therefore be two decimal
-digits, up to `16`. The 16-wide form does not use `|`. After expansion, the
+digits, up to `16`, without leading zeros. The 16-wide form does not use `|`. After expansion, the
 parser folds the two halves onto the shared coordinates, rejects double
 occupancy, and canonicalizes to compact placement.
 
@@ -228,7 +229,8 @@ position, and the destination layer is necessarily the opposite layer. Thus
 
 The parser MUST enumerate legal internal moves and accept a string only when it
 identifies exactly one move in the current position. Zero matches or multiple
-matches are protocol errors. The serializer MUST emit the canonical coordinate
+matches are protocol errors. Parsing is case-sensitive; files and promotion
+suffixes MUST be lowercase. The serializer MUST emit the canonical coordinate
 string. A layer selector, internal move bits, or an arbitrary first match MUST
 NOT be used to resolve a collision.
 

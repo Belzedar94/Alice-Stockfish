@@ -45,8 +45,6 @@ class RulesFixtureTests(unittest.TestCase):
         result = position.after(move)
         self.assertEqual(result.fen(), expected["resultFen"])
         self.assertEqual(result.in_check(result.side_to_move), expected["sideToMoveInCheck"])
-        if expected.get("undoRestoresInitial"):
-            self.assertEqual(position.fen(), case["initialFen"])
 
         subsequent = expected.get("subsequentMoveLegality", {})
         for uci, legal in subsequent.items():

@@ -81,6 +81,8 @@ def _consume_number(text: str, start: int) -> tuple[int, int]:
     end = start
     while end < len(text) and text[end].isdigit():
         end += 1
+    if text[start] == "0":
+        raise FenError("Empty-square runs cannot contain a leading zero.")
     value = int(text[start:end])
     if value < 1:
         raise FenError("Empty-square runs must be positive.")
@@ -559,10 +561,9 @@ class Position:
         return [move for move in self.pseudo_legal_moves() if self._is_legal(move)]
 
     def resolve_uci(self, text: str) -> Move:
-        normalized = text.lower()
-        if not UCI_RE.fullmatch(normalized):
+        if not UCI_RE.fullmatch(text):
             raise MoveResolutionError(f"Invalid UCI move syntax: {text}")
-        matches = [move for move in self.legal_moves() if move.uci() == normalized]
+        matches = [move for move in self.legal_moves() if move.uci() == text]
         if len(matches) != 1:
             raise MoveResolutionError(
                 f"UCI move {text} identifies {len(matches)} legal moves; exactly one is required."

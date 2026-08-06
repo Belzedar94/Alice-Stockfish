@@ -548,7 +548,7 @@
         "king": {"from": "B:e1", "to": "A:g1"},
         "rook": {"from": "B:h1", "to": "A:f1"},
         "sideToMoveInCheck": false,
-        "undoRestoresInitial": true
+        "engineUndoMustRestoreInitial": true
       }
     },
     {
@@ -566,7 +566,7 @@
         "king": {"from": "B:e1", "to": "A:c1"},
         "rook": {"from": "B:a1", "to": "A:d1"},
         "sideToMoveInCheck": false,
-        "undoRestoresInitial": true
+        "engineUndoMustRestoreInitial": true
       }
     },
     {
@@ -598,7 +598,7 @@
         "mover": {"piece": "P", "from": "A:b7", "to": "B:a8", "resultPiece": "Q"},
         "captured": {"piece": "r", "at": "A:a8"},
         "sideToMoveInCheck": false,
-        "undoRestoresInitial": true
+        "engineUndoMustRestoreInitial": true
       }
     },
     {
@@ -615,7 +615,7 @@
         "resultFen": "4k3/8/8/8/4|P3/4|p3/8/4K3 b - - 0 1",
         "mover": {"piece": "P", "from": "A:e2", "to": "B:e4"},
         "sideToMoveInCheck": false,
-        "undoRestoresInitial": true
+        "engineUndoMustRestoreInitial": true
       }
     },
     {
@@ -716,6 +716,33 @@
         "whiteNonPawnKeyRelation": "different",
         "countOnlyMaterialKeyRelation": "same",
         "repetitionEquivalent": false
+      }
+    },
+    {
+      "id": "uppercase-uci-is-rejected",
+      "kind": "move",
+      "description": "Public UCI coordinates and promotion suffixes are lowercase and are not normalized silently.",
+      "initialFen": "7k/P7/8/8/8/8/8/7K w - - 0 1",
+      "move": "a7a8Q",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "The promotion suffix must be lowercase."
+      }
+    },
+    {
+      "id": "fen-run-length-leading-zero-is-rejected",
+      "kind": "fen-validation",
+      "description": "Compact and legacy empty-square runs use canonical decimal notation without leading zeros.",
+      "inputFen": "04k3/08/08/08/08/08/08/04K3 w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "Empty-square runs cannot contain leading zeros."
       }
     }
   ]
