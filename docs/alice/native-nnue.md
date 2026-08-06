@@ -125,6 +125,12 @@ is checked against an independent full rebuild through all integer inference
 stages, and every undo must restore the parent FEN and position key. This is a
 qualification command only and is not called by normal search.
 
+Supported x86 qualification builds execute both loaded accumulator updates and
+dense affine layers through AVX2 or SSE4.1/SSSE3 intrinsics. Signed-eight-bit
+threat rows are widened before addition, PSQT buckets remain signed 32-bit, and
+dense inputs remain unsigned seven-bit. All SIMD results must match the scalar
+accumulators and raw dense outputs exactly before the command succeeds.
+
 ## 2. State and move semantics
 
 Every training and inference position must preserve, losslessly:

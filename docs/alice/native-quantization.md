@@ -215,9 +215,11 @@ minima, dense arithmetic envelopes, canonical runtime traversal, generation
 increments, preservation of the installed candidate on failure, and every
 normative inference stage. The incremental verifier also proves exact feature,
 PSQT, dense-stage, and undo equality over exhaustive and directed legal-move
-trees. No search accumulator or evaluation route consumes the installed object
-yet, so dense SIMD parity and generation-keyed cache invalidation remain closed
-until their qualification lands.
+trees. AVX2 and SSE4.1/SSSE3 qualification routes independently execute the
+loaded feature, threat, PSQT, and dense affine integers and compare them with
+the scalar path, including signed arithmetic boundaries. No search accumulator
+or evaluation route consumes the installed object yet, so generation-keyed
+cache invalidation remains closed until its qualification lands.
 
 ## 6. Exact acceptance
 

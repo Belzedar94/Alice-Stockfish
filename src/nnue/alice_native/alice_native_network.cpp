@@ -29,18 +29,19 @@
 #include "../../misc.h"
 #include "../../movegen.h"
 #include "../../position.h"
+#include "../simd.h"
 #include "alice_native_features.h"
 
 namespace Stockfish::Eval::NNUE::AliceNative {
 
 struct QualificationNetwork::Parameters {
     struct DenseStack {
-        std::array<i32, Fc0BiasElementsPerStack>   fc0Bias{};
-        std::array<i8, Fc0WeightElementsPerStack>  fc0Weight{};
-        std::array<i32, Fc1BiasElementsPerStack>   fc1Bias{};
-        std::array<i8, Fc1WeightElementsPerStack>  fc1Weight{};
-        std::array<i32, Fc2BiasElementsPerStack>   fc2Bias{};
-        std::array<i8, Fc2WeightElementsPerStack>  fc2Weight{};
+        std::array<i32, Fc0BiasElementsPerStack>  fc0Bias{};
+        std::array<i8, Fc0WeightElementsPerStack> fc0Weight{};
+        std::array<i32, Fc1BiasElementsPerStack>  fc1Bias{};
+        std::array<i8, Fc1WeightElementsPerStack> fc1Weight{};
+        std::array<i32, Fc2BiasElementsPerStack>  fc2Bias{};
+        std::array<i8, Fc2WeightElementsPerStack> fc2Weight{};
     };
 
     bool allocate_features() {
@@ -51,11 +52,11 @@ struct QualificationNetwork::Parameters {
         return threatWeight && threatPsqt && pieceSquareWeight && pieceSquarePsqt;
     }
 
-    std::array<i16, FtBiasElements> ftBias{};
-    std::unique_ptr<i8[]>           threatWeight;
-    std::unique_ptr<i32[]>          threatPsqt;
-    std::unique_ptr<i16[]>          pieceSquareWeight;
-    std::unique_ptr<i32[]>          pieceSquarePsqt;
+    std::array<i16, FtBiasElements>     ftBias{};
+    std::unique_ptr<i8[]>               threatWeight;
+    std::unique_ptr<i32[]>              threatPsqt;
+    std::unique_ptr<i16[]>              pieceSquareWeight;
+    std::unique_ptr<i32[]>              pieceSquarePsqt;
     std::array<DenseStack, LayerStacks> dense{};
 
     WireMetadata                                wire;
@@ -83,9 +84,9 @@ enum TensorIndex : usize {
 };
 
 constexpr std::array<std::string_view, TensorCount> TensorNames = {
-  "ft.bias",          "threat.weight",    "threat.psqt",     "pieceSquare.weight",
-  "pieceSquare.psqt", "stack.fc0.bias",   "stack.fc0.weight", "stack.fc1.bias",
-  "stack.fc1.weight", "stack.fc2.bias",   "stack.fc2.weight",
+  "ft.bias",          "threat.weight",  "threat.psqt",      "pieceSquare.weight",
+  "pieceSquare.psqt", "stack.fc0.bias", "stack.fc0.weight", "stack.fc1.bias",
+  "stack.fc1.weight", "stack.fc2.bias", "stack.fc2.weight",
 };
 
 constexpr std::array<u64, TensorCount> TensorBytes = {
@@ -218,7 +219,8 @@ class Sha256 {
 
 class AuthenticatingReader {
    public:
-    explicit AuthenticatingReader(std::istream& source) : input(source) {}
+    explicit AuthenticatingReader(std::istream& source) :
+        input(source) {}
 
     bool read(void* destination, usize bytes, Sha256* tensorHash = nullptr) {
         input.read(static_cast<char*>(destination), std::streamsize(bytes));
@@ -236,18 +238,18 @@ class AuthenticatingReader {
         std::array<u8, 4> bytes{};
         if (!read(bytes.data(), bytes.size()))
             return false;
-        value = u32(bytes[0]) | (u32(bytes[1]) << 8) | (u32(bytes[2]) << 16)
-              | (u32(bytes[3]) << 24);
+        value =
+          u32(bytes[0]) | (u32(bytes[1]) << 8) | (u32(bytes[2]) << 16) | (u32(bytes[3]) << 24);
         return true;
     }
 
-    u64                    bytes_consumed() const { return consumed; }
+    u64                bytes_consumed() const { return consumed; }
     std::array<u8, 32> finish() { return wholeHash.finish(); }
 
    private:
     std::istream& input;
-    Sha256       wholeHash;
-    u64          consumed = 0;
+    Sha256        wholeHash;
+    u64           consumed = 0;
 };
 
 std::string digest_string(const std::array<u8, 32>& digest) {
@@ -338,7 +340,7 @@ std::optional<std::string> normalized_expected_sha(const std::optional<std::stri
 }
 
 std::optional<std::string> normalized_required_sha(std::string_view expected,
-                                                   std::string&    normalized) {
+                                                   std::string&     normalized) {
     if (expected.empty())
         return "expected SHA-256 is mandatory for native parameter loading";
     return normalized_expected_sha(std::string(expected), normalized);
@@ -431,8 +433,7 @@ bool read_i32_tensor(AuthenticatingReader& reader,
         for (usize index = 0; index < take; ++index)
         {
             const u32 raw = u32(buffer[4 * index]) | (u32(buffer[4 * index + 1]) << 8)
-                          | (u32(buffer[4 * index + 2]) << 16)
-                          | (u32(buffer[4 * index + 3]) << 24);
+                          | (u32(buffer[4 * index + 2]) << 16) | (u32(buffer[4 * index + 3]) << 24);
             i32 value;
             std::memcpy(&value, &raw, sizeof(value));
             if (value == std::numeric_limits<i32>::min())
@@ -497,10 +498,10 @@ void update_i32_digest(Sha256& hash, const i32* source, u64 elements) {
     }
 }
 
-void affine_bounds(const i8*              weights,
-                   const i32*             biases,
-                   usize                  outputs,
-                   usize                  inputs,
+void affine_bounds(const i8*            weights,
+                   const i32*           biases,
+                   usize                outputs,
+                   usize                inputs,
                    std::array<i64, L2>& lower,
                    std::array<i64, L2>& upper) {
     for (usize output = 0; output < outputs; ++output)
@@ -520,7 +521,7 @@ void affine_bounds(const i8*              weights,
     }
 }
 
-bool require_bounds(std::string_view          label,
+bool require_bounds(std::string_view           label,
                     const std::array<i64, L2>& lower,
                     const std::array<i64, L2>& upper,
                     usize                      outputs,
@@ -572,26 +573,33 @@ struct LoadedAccumulator {
 
 using LoadedAccumulatorSet = std::array<LoadedAccumulator, COLOR_NB>;
 
+struct alignas(CacheLineSize) SimdLoadedAccumulator {
+    alignas(CacheLineSize) std::array<i16, L1> values{};
+    alignas(CacheLineSize) std::array<i32, PsqtBuckets> psqt{};
+};
+
+using SimdLoadedAccumulatorSet = std::array<SimdLoadedAccumulator, COLOR_NB>;
+
 struct NativeIntegerStages {
-    Color                                      sideToMove = WHITE;
-    usize                                      pieceCount = 0;
-    usize                                      phase      = 0;
+    Color                                         sideToMove = WHITE;
+    usize                                         pieceCount = 0;
+    usize                                         phase      = 0;
     std::array<std::array<i32, L1 / 2>, COLOR_NB> transformed{};
-    std::array<i32, L1>                        denseInput{};
-    std::array<i32, L2>                        z0{};
-    std::array<i32, L2>                        s0{};
-    std::array<i32, L2>                        r0{};
-    std::array<i32, L3>                        z1{};
-    std::array<i32, L3>                        s1{};
-    std::array<i32, L3>                        r1{};
-    i32                                        z2            = 0;
-    i32                                        skip          = 0;
-    i32                                        fwdOut        = 0;
-    i32                                        positionalRaw = 0;
-    i32                                        psqtRaw       = 0;
-    i32                                        positional    = 0;
-    i32                                        psqt          = 0;
-    i32                                        value         = 0;
+    std::array<i32, L1>                           denseInput{};
+    std::array<i32, L2>                           z0{};
+    std::array<i32, L2>                           s0{};
+    std::array<i32, L2>                           r0{};
+    std::array<i32, L3>                           z1{};
+    std::array<i32, L3>                           s1{};
+    std::array<i32, L3>                           r1{};
+    i32                                           z2            = 0;
+    i32                                           skip          = 0;
+    i32                                           fwdOut        = 0;
+    i32                                           positionalRaw = 0;
+    i32                                           psqtRaw       = 0;
+    i32                                           positional    = 0;
+    i32                                           psqt          = 0;
+    i32                                           value         = 0;
 };
 
 std::optional<std::string> validate_loaded_accumulator(const LoadedAccumulator& accumulator,
@@ -659,8 +667,7 @@ void apply_loaded_feature_delta(const std::vector<Feature>& before,
     while (beforeIndex < before.size() || afterIndex < after.size())
     {
         if (afterIndex == after.size()
-            || (beforeIndex < before.size()
-                && before[beforeIndex].index < after[afterIndex].index))
+            || (beforeIndex < before.size() && before[beforeIndex].index < after[afterIndex].index))
         {
             update(before[beforeIndex++].index, -1);
             ++removes;
@@ -679,13 +686,182 @@ void apply_loaded_feature_delta(const std::vector<Feature>& before,
     }
 }
 
+constexpr bool loaded_simd_available() {
+#if defined(USE_AVX2) || defined(USE_SSSE3)
+    return true;
+#else
+    return false;
+#endif
+}
+
 template<typename Parameters>
-std::optional<std::string>
-update_loaded_accumulator(const Parameters&                     parameters,
-                          const PerspectiveTrace&               before,
-                          const PerspectiveTrace&               after,
-                          LoadedAccumulator&                    accumulator,
-                          LoadedIncrementalVerificationStats&   stats) {
+void update_loaded_simd_piece(const Parameters&      parameters,
+                              IndexType              index,
+                              i32                    sign,
+                              SimdLoadedAccumulator& accumulator) {
+    const i16* row = parameters.pieceSquareWeight.get() + u64(index) * L1;
+#if defined(USE_AVX2)
+    for (usize lane = 0; lane < L1; lane += 16)
+    {
+        const __m256i current =
+          _mm256_loadu_si256(reinterpret_cast<const __m256i*>(accumulator.values.data() + lane));
+        const __m256i weight = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(row + lane));
+        const __m256i next =
+          sign > 0 ? _mm256_add_epi16(current, weight) : _mm256_sub_epi16(current, weight);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(accumulator.values.data() + lane), next);
+    }
+#elif defined(USE_SSE2)
+    for (usize lane = 0; lane < L1; lane += 8)
+    {
+        const __m128i current =
+          _mm_loadu_si128(reinterpret_cast<const __m128i*>(accumulator.values.data() + lane));
+        const __m128i weight = _mm_loadu_si128(reinterpret_cast<const __m128i*>(row + lane));
+        const __m128i next =
+          sign > 0 ? _mm_add_epi16(current, weight) : _mm_sub_epi16(current, weight);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(accumulator.values.data() + lane), next);
+    }
+#else
+    for (usize lane = 0; lane < L1; ++lane)
+        accumulator.values[lane] = i16(accumulator.values[lane] + sign * row[lane]);
+#endif
+
+    const i32* psqtRow = parameters.pieceSquarePsqt.get() + u64(index) * PsqtBuckets;
+#if defined(USE_AVX2)
+    const __m256i current =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(accumulator.psqt.data()));
+    const __m256i weight = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(psqtRow));
+    const __m256i next =
+      sign > 0 ? _mm256_add_epi32(current, weight) : _mm256_sub_epi32(current, weight);
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(accumulator.psqt.data()), next);
+#elif defined(USE_SSE2)
+    for (usize bucket = 0; bucket < PsqtBuckets; bucket += 4)
+    {
+        const __m128i current =
+          _mm_loadu_si128(reinterpret_cast<const __m128i*>(accumulator.psqt.data() + bucket));
+        const __m128i weight = _mm_loadu_si128(reinterpret_cast<const __m128i*>(psqtRow + bucket));
+        const __m128i next =
+          sign > 0 ? _mm_add_epi32(current, weight) : _mm_sub_epi32(current, weight);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(accumulator.psqt.data() + bucket), next);
+    }
+#else
+    for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
+        accumulator.psqt[bucket] += sign * psqtRow[bucket];
+#endif
+}
+
+template<typename Parameters>
+void update_loaded_simd_threat(const Parameters&      parameters,
+                               IndexType              index,
+                               i32                    sign,
+                               SimdLoadedAccumulator& accumulator) {
+    const i8* row = parameters.threatWeight.get() + u64(index) * L1;
+#if defined(USE_AVX2)
+    for (usize lane = 0; lane < L1; lane += 16)
+    {
+        const __m256i current =
+          _mm256_loadu_si256(reinterpret_cast<const __m256i*>(accumulator.values.data() + lane));
+        const __m128i packed = _mm_loadu_si128(reinterpret_cast<const __m128i*>(row + lane));
+        const __m256i weight = _mm256_cvtepi8_epi16(packed);
+        const __m256i next =
+          sign > 0 ? _mm256_add_epi16(current, weight) : _mm256_sub_epi16(current, weight);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(accumulator.values.data() + lane), next);
+    }
+#elif defined(USE_SSE2)
+    using namespace SIMD;
+    for (usize lane = 0; lane < L1; lane += 8)
+    {
+        const __m128i current =
+          _mm_loadu_si128(reinterpret_cast<const __m128i*>(accumulator.values.data() + lane));
+        u64 packed = 0;
+        std::memcpy(&packed, row + lane, sizeof(packed));
+        const __m128i weight = vec_convert_8_16(packed);
+        const __m128i next =
+          sign > 0 ? _mm_add_epi16(current, weight) : _mm_sub_epi16(current, weight);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(accumulator.values.data() + lane), next);
+    }
+#else
+    for (usize lane = 0; lane < L1; ++lane)
+        accumulator.values[lane] = i16(accumulator.values[lane] + sign * row[lane]);
+#endif
+
+    const i32* psqtRow = parameters.threatPsqt.get() + u64(index) * PsqtBuckets;
+#if defined(USE_AVX2)
+    const __m256i current =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(accumulator.psqt.data()));
+    const __m256i weight = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(psqtRow));
+    const __m256i next =
+      sign > 0 ? _mm256_add_epi32(current, weight) : _mm256_sub_epi32(current, weight);
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(accumulator.psqt.data()), next);
+#elif defined(USE_SSE2)
+    for (usize bucket = 0; bucket < PsqtBuckets; bucket += 4)
+    {
+        const __m128i current =
+          _mm_loadu_si128(reinterpret_cast<const __m128i*>(accumulator.psqt.data() + bucket));
+        const __m128i weight = _mm_loadu_si128(reinterpret_cast<const __m128i*>(psqtRow + bucket));
+        const __m128i next =
+          sign > 0 ? _mm_add_epi32(current, weight) : _mm_sub_epi32(current, weight);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(accumulator.psqt.data() + bucket), next);
+    }
+#else
+    for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
+        accumulator.psqt[bucket] += sign * psqtRow[bucket];
+#endif
+}
+
+template<typename Parameters>
+void refresh_loaded_simd_accumulator(const Parameters&       parameters,
+                                     const PerspectiveTrace& trace,
+                                     SimdLoadedAccumulator&  accumulator) {
+    accumulator = {};
+    std::copy(parameters.ftBias.begin(), parameters.ftBias.end(), accumulator.values.begin());
+    for (const auto& feature : trace.pieces)
+        update_loaded_simd_piece(parameters, feature.index, 1, accumulator);
+    for (const auto& feature : trace.threats)
+        update_loaded_simd_threat(parameters, feature.index, 1, accumulator);
+}
+
+template<typename Parameters>
+void update_loaded_simd_accumulator(const Parameters&       parameters,
+                                    const PerspectiveTrace& before,
+                                    const PerspectiveTrace& after,
+                                    SimdLoadedAccumulator&  accumulator) {
+    u64 ignoredAdds    = 0;
+    u64 ignoredRemoves = 0;
+    apply_loaded_feature_delta(
+      before.pieces, after.pieces,
+      [&](IndexType index, i32 sign) {
+          update_loaded_simd_piece(parameters, index, sign, accumulator);
+      },
+      ignoredAdds, ignoredRemoves);
+    ignoredAdds = ignoredRemoves = 0;
+    apply_loaded_feature_delta(
+      before.threats, after.threats,
+      [&](IndexType index, i32 sign) {
+          update_loaded_simd_threat(parameters, index, sign, accumulator);
+      },
+      ignoredAdds, ignoredRemoves);
+}
+
+std::optional<std::string> compare_loaded_simd(const SimdLoadedAccumulator& simd,
+                                               const LoadedAccumulator&     scalar,
+                                               Color                        perspective) {
+    for (usize lane = 0; lane < L1; ++lane)
+        if (simd.values[lane] != scalar.values[lane])
+            return "Alice native loaded SIMD feature accumulator differs from scalar at perspective "
+                 + std::to_string(int(perspective)) + " lane " + std::to_string(lane) + ".";
+    for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
+        if (simd.psqt[bucket] != scalar.psqt[bucket])
+            return "Alice native loaded SIMD PSQT accumulator differs from scalar at perspective "
+                 + std::to_string(int(perspective)) + " bucket " + std::to_string(bucket) + ".";
+    return std::nullopt;
+}
+
+template<typename Parameters>
+std::optional<std::string> update_loaded_accumulator(const Parameters&       parameters,
+                                                     const PerspectiveTrace& before,
+                                                     const PerspectiveTrace& after,
+                                                     LoadedAccumulator&      accumulator,
+                                                     LoadedIncrementalVerificationStats& stats) {
     u64 pieceAdds     = 0;
     u64 pieceRemoves  = 0;
     u64 threatAdds    = 0;
@@ -699,8 +875,7 @@ update_loaded_accumulator(const Parameters&                     parameters,
               accumulator.values[lane] += sign * i64(parameters.pieceSquareWeight[row + lane]);
           const u64 psqtRow = u64(index) * PsqtBuckets;
           for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-              accumulator.psqt[bucket] +=
-                sign * i64(parameters.pieceSquarePsqt[psqtRow + bucket]);
+              accumulator.psqt[bucket] += sign * i64(parameters.pieceSquarePsqt[psqtRow + bucket]);
       },
       pieceAdds, pieceRemoves);
 
@@ -720,10 +895,8 @@ update_loaded_accumulator(const Parameters&                     parameters,
     stats.pieceRemoves += pieceRemoves;
     stats.threatAdds += threatAdds;
     stats.threatRemoves += threatRemoves;
-    stats.maxPieceEvents =
-      std::max(stats.maxPieceEvents, pieceAdds + pieceRemoves);
-    stats.maxThreatEvents =
-      std::max(stats.maxThreatEvents, threatAdds + threatRemoves);
+    stats.maxPieceEvents  = std::max(stats.maxPieceEvents, pieceAdds + pieceRemoves);
+    stats.maxThreatEvents = std::max(stats.maxThreatEvents, threatAdds + threatRemoves);
     return validate_loaded_accumulator(accumulator, after.perspective);
 }
 
@@ -743,10 +916,9 @@ std::optional<std::string> evaluate_loaded_integer(const Parameters&           p
             return error;
         for (usize lane = 0; lane < L1 / 2; ++lane)
         {
-            const i32 left =
-              std::clamp<i32>(i32(accumulators[perspective].values[lane]), 0, 255);
-            const i32 right = std::clamp<i32>(
-              i32(accumulators[perspective].values[lane + L1 / 2]), 0, 255);
+            const i32 left = std::clamp<i32>(i32(accumulators[perspective].values[lane]), 0, 255);
+            const i32 right =
+              std::clamp<i32>(i32(accumulators[perspective].values[lane + L1 / 2]), 0, 255);
             stages.transformed[perspective][lane] = left * right / 512;
         }
     }
@@ -754,41 +926,35 @@ std::optional<std::string> evaluate_loaded_integer(const Parameters&           p
     stages.sideToMove = position.side_to_move();
     for (usize lane = 0; lane < L1 / 2; ++lane)
     {
-        stages.denseInput[lane] = stages.transformed[stages.sideToMove][lane];
+        stages.denseInput[lane]          = stages.transformed[stages.sideToMove][lane];
         stages.denseInput[lane + L1 / 2] = stages.transformed[~stages.sideToMove][lane];
     }
 
-    stages.phase     = (stages.pieceCount - 1) / 4;
-    const auto& dense = parameters.dense[stages.phase];
-    const auto affine = [](const i8*       weights,
-                           const i32*      biases,
-                           usize           outputs,
-                           usize           inputs,
-                           const i32*      values,
-                           i32*            result,
-                           std::string_view label,
-                           bool            requireI16) -> std::optional<std::string> {
+    stages.phase       = (stages.pieceCount - 1) / 4;
+    const auto& dense  = parameters.dense[stages.phase];
+    const auto  affine = [](const i8* weights, const i32* biases, usize outputs, usize inputs,
+                           const i32* values, i32* result, std::string_view label,
+                           bool requireI16) -> std::optional<std::string> {
         for (usize output = 0; output < outputs; ++output)
         {
             i64 total = biases[output];
             for (usize input = 0; input < inputs; ++input)
                 total += i64(weights[output * inputs + input]) * values[input];
-            if (total < std::numeric_limits<i32>::min()
-                || total > std::numeric_limits<i32>::max())
-                return std::string(label) + " exceeds signed i32 at row "
-                     + std::to_string(output) + ": " + std::to_string(total);
+            if (total < std::numeric_limits<i32>::min() || total > std::numeric_limits<i32>::max())
+                return std::string(label) + " exceeds signed i32 at row " + std::to_string(output)
+                     + ": " + std::to_string(total);
             if (requireI16
                 && (total < std::numeric_limits<i16>::min()
                     || total > std::numeric_limits<i16>::max()))
-                return std::string(label) + " exceeds signed i16 at row "
-                     + std::to_string(output) + ": " + std::to_string(total);
+                return std::string(label) + " exceeds signed i16 at row " + std::to_string(output)
+                     + ": " + std::to_string(total);
             result[output] = i32(total);
         }
         return std::nullopt;
     };
     const auto activate = [](i32 value, int shift, bool square) {
-        const i64 raw = square ? i64(value) * value / (i64(1) << (2 * shift + 7))
-                               : value / (i64(1) << shift);
+        const i64 raw =
+          square ? i64(value) * value / (i64(1) << (2 * shift + 7)) : value / (i64(1) << shift);
         return i32(std::clamp<i64>(raw, 0, 127));
     };
 
@@ -804,18 +970,18 @@ std::optional<std::string> evaluate_loaded_integer(const Parameters&           p
         y1[L2 + output]   = stages.r0[output];
     }
 
-    if (auto error = affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(),
-                            y1.data(), stages.z1.data(), "fc1", true))
+    if (auto error = affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(), y1.data(),
+                            stages.z1.data(), "fc1", true))
         return error;
     std::array<i32, 128> y2{};
     for (usize output = 0; output < L3; ++output)
     {
-        stages.s1[output]             = activate(stages.z1[output], 6, true);
-        stages.r1[output]             = activate(stages.z1[output], 6, false);
-        y2[output]                    = stages.s0[output];
-        y2[L2 + output]               = stages.r0[output];
-        y2[2 * L2 + output]           = stages.s1[output];
-        y2[2 * L2 + L3 + output]      = stages.r1[output];
+        stages.s1[output]        = activate(stages.z1[output], 6, true);
+        stages.r1[output]        = activate(stages.z1[output], 6, false);
+        y2[output]               = stages.s0[output];
+        y2[L2 + output]          = stages.r0[output];
+        y2[2 * L2 + output]      = stages.s1[output];
+        y2[2 * L2 + L3 + output] = stages.r1[output];
     }
 
     if (auto error = affine(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, y2.size(), y2.data(),
@@ -823,21 +989,19 @@ std::optional<std::string> evaluate_loaded_integer(const Parameters&           p
         return error;
     const i64 skip64   = i64(stages.z0[30]) - stages.z0[31];
     const i64 fwdOut64 = i64(stages.z2) + skip64;
-    if (fwdOut64 < std::numeric_limits<i32>::min()
-        || fwdOut64 > std::numeric_limits<i32>::max())
+    if (fwdOut64 < std::numeric_limits<i32>::min() || fwdOut64 > std::numeric_limits<i32>::max())
         return "fwdOut exceeds signed i32: " + std::to_string(fwdOut64);
     stages.skip   = i32(skip64);
     stages.fwdOut = i32(fwdOut64);
 
     const i64 positionalRaw64 = fwdOut64 * 9600 / 16384;
-    const i64 psqtDifference = accumulators[stages.sideToMove].psqt[stages.phase]
+    const i64 psqtDifference  = accumulators[stages.sideToMove].psqt[stages.phase]
                              - accumulators[~stages.sideToMove].psqt[stages.phase];
     const i64 psqtRaw64 = psqtDifference / 2;
     if (positionalRaw64 < std::numeric_limits<i32>::min()
         || positionalRaw64 > std::numeric_limits<i32>::max())
         return "positionalRaw16 exceeds signed i32: " + std::to_string(positionalRaw64);
-    if (psqtRaw64 < std::numeric_limits<i32>::min()
-        || psqtRaw64 > std::numeric_limits<i32>::max())
+    if (psqtRaw64 < std::numeric_limits<i32>::min() || psqtRaw64 > std::numeric_limits<i32>::max())
         return "psqtRaw16 exceeds signed i32: " + std::to_string(psqtRaw64);
     stages.positionalRaw = i32(positionalRaw64);
     stages.psqtRaw       = i32(psqtRaw64);
@@ -854,11 +1018,128 @@ bool same_integer_stages(const NativeIntegerStages& left, const NativeIntegerSta
     return left.sideToMove == right.sideToMove && left.pieceCount == right.pieceCount
         && left.phase == right.phase && left.transformed == right.transformed
         && left.denseInput == right.denseInput && left.z0 == right.z0 && left.s0 == right.s0
-        && left.r0 == right.r0 && left.z1 == right.z1 && left.s1 == right.s1
-        && left.r1 == right.r1 && left.z2 == right.z2 && left.skip == right.skip
-        && left.fwdOut == right.fwdOut && left.positionalRaw == right.positionalRaw
-        && left.psqtRaw == right.psqtRaw && left.positional == right.positional
-        && left.psqt == right.psqt && left.value == right.value;
+        && left.r0 == right.r0 && left.z1 == right.z1 && left.s1 == right.s1 && left.r1 == right.r1
+        && left.z2 == right.z2 && left.skip == right.skip && left.fwdOut == right.fwdOut
+        && left.positionalRaw == right.positionalRaw && left.psqtRaw == right.psqtRaw
+        && left.positional == right.positional && left.psqt == right.psqt
+        && left.value == right.value;
+}
+
+constexpr std::string_view dense_simd_backend() {
+#if defined(USE_AVX2)
+    return "avx2";
+#elif defined(USE_SSSE3)
+    return "ssse3";
+#else
+    return "none";
+#endif
+}
+
+std::optional<std::string> dense_simd_affine(const i8*  weights,
+                                             const i32* biases,
+                                             usize      outputs,
+                                             usize      inputs,
+                                             const i32* values,
+                                             i32*       result) {
+    alignas(CacheLineSize) std::array<u8, L1> packed{};
+    if (inputs > packed.size())
+        return "Alice native dense SIMD input exceeds the qualification buffer.";
+    for (usize input = 0; input < inputs; ++input)
+    {
+        if (values[input] < 0 || values[input] > 127)
+            return "Alice native dense SIMD input is outside unsigned seven-bit range.";
+        packed[input] = u8(values[input]);
+    }
+
+#if defined(USE_AVX2)
+    if (inputs % 32 != 0)
+        return "Alice native AVX2 input width is not a multiple of 32.";
+    for (usize output = 0; output < outputs; ++output)
+    {
+        __m256i   sum = _mm256_setzero_si256();
+        const i8* row = weights + output * inputs;
+        for (usize input = 0; input < inputs; input += 32)
+        {
+            const __m256i value =
+              _mm256_loadu_si256(reinterpret_cast<const __m256i*>(packed.data() + input));
+            const __m256i weight =
+              _mm256_loadu_si256(reinterpret_cast<const __m256i*>(row + input));
+            SIMD::m256_add_dpbusd_epi32(sum, value, weight);
+        }
+        result[output] = SIMD::m256_hadd(sum, biases[output]);
+    }
+#elif defined(USE_SSSE3)
+    if (inputs % 16 != 0)
+        return "Alice native SSSE3 input width is not a multiple of 16.";
+    for (usize output = 0; output < outputs; ++output)
+    {
+        __m128i   sum = _mm_setzero_si128();
+        const i8* row = weights + output * inputs;
+        for (usize input = 0; input < inputs; input += 16)
+        {
+            const __m128i value =
+              _mm_loadu_si128(reinterpret_cast<const __m128i*>(packed.data() + input));
+            const __m128i weight = _mm_loadu_si128(reinterpret_cast<const __m128i*>(row + input));
+            SIMD::m128_add_dpbusd_epi32(sum, value, weight);
+        }
+        result[output] = SIMD::m128_hadd(sum, biases[output]);
+    }
+#else
+    (void) weights;
+    (void) biases;
+    (void) outputs;
+    (void) values;
+    (void) result;
+    return "Alice native dense SIMD qualification is unavailable for this build.";
+#endif
+    return std::nullopt;
+}
+
+template<typename Parameters>
+std::optional<std::string>
+verify_dense_simd(const Parameters& parameters, const NativeIntegerStages& scalar, bool& verified) {
+    verified = false;
+    if (dense_simd_backend() == "none")
+        return std::nullopt;
+
+    const auto&         dense = parameters.dense[scalar.phase];
+    std::array<i32, L2> z0{};
+    if (auto error = dense_simd_affine(dense.fc0Weight.data(), dense.fc0Bias.data(), L2, L1,
+                                       scalar.denseInput.data(), z0.data()))
+        return error;
+    if (z0 != scalar.z0)
+        return "Alice native dense SIMD fc0 output differs from scalar.";
+
+    std::array<i32, 64> y1{};
+    for (usize output = 0; output < L2; ++output)
+    {
+        y1[output]      = scalar.s0[output];
+        y1[L2 + output] = scalar.r0[output];
+    }
+    std::array<i32, L3> z1{};
+    if (auto error = dense_simd_affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(),
+                                       y1.data(), z1.data()))
+        return error;
+    if (z1 != scalar.z1)
+        return "Alice native dense SIMD fc1 output differs from scalar.";
+
+    std::array<i32, 128> y2{};
+    for (usize output = 0; output < L3; ++output)
+    {
+        y2[output]               = scalar.s0[output];
+        y2[L2 + output]          = scalar.r0[output];
+        y2[2 * L2 + output]      = scalar.s1[output];
+        y2[2 * L2 + L3 + output] = scalar.r1[output];
+    }
+    std::array<i32, 1> z2{};
+    if (auto error = dense_simd_affine(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, y2.size(),
+                                       y2.data(), z2.data()))
+        return error;
+    if (z2[0] != scalar.z2)
+        return "Alice native dense SIMD fc2 output differs from scalar.";
+
+    verified = true;
+    return std::nullopt;
 }
 
 }  // namespace
@@ -997,7 +1278,7 @@ QualificationNetwork::QualificationNetwork()  = default;
 QualificationNetwork::~QualificationNetwork() = default;
 
 std::optional<std::string> QualificationNetwork::load(const std::filesystem::path& file,
-                                                      std::string_view expectedSha256) {
+                                                      std::string_view             expectedSha256) {
     const auto reject = [&](std::string reason) -> std::optional<std::string> {
         lastError = std::move(reason);
         return lastError;
@@ -1075,15 +1356,15 @@ std::optional<std::string> QualificationNetwork::load(const std::filesystem::pat
 
     std::array<Sha256, TensorCount> wireTensorHashes;
     std::string                     parseError;
-    if (!read_i16_tensor(reader, candidate->ftBias.data(), FtBiasElements,
-                         wireTensorHashes[FtBias], TensorNames[FtBias], 0, parseError)
+    if (!read_i16_tensor(reader, candidate->ftBias.data(), FtBiasElements, wireTensorHashes[FtBias],
+                         TensorNames[FtBias], 0, parseError)
         || !read_i8_tensor(reader, candidate->threatWeight.get(), ThreatWeightElements,
                            wireTensorHashes[ThreatWeight], TensorNames[ThreatWeight], 0, parseError)
         || !read_i32_tensor(reader, candidate->threatPsqt.get(), ThreatPsqtElements,
                             wireTensorHashes[ThreatPsqt], TensorNames[ThreatPsqt], 0, parseError)
-        || !read_i16_tensor(reader, candidate->pieceSquareWeight.get(),
-                            PieceSquareWeightElements, wireTensorHashes[PieceSquareWeight],
-                            TensorNames[PieceSquareWeight], 0, parseError)
+        || !read_i16_tensor(reader, candidate->pieceSquareWeight.get(), PieceSquareWeightElements,
+                            wireTensorHashes[PieceSquareWeight], TensorNames[PieceSquareWeight], 0,
+                            parseError)
         || !read_i32_tensor(reader, candidate->pieceSquarePsqt.get(), PieceSquarePsqtElements,
                             wireTensorHashes[PieceSquarePsqt], TensorNames[PieceSquarePsqt], 0,
                             parseError))
@@ -1169,7 +1450,7 @@ std::optional<std::string> QualificationNetwork::load(const std::filesystem::pat
 
     for (usize stack = 0; stack < LayerStacks; ++stack)
     {
-        const auto&          dense = candidate->dense[stack];
+        const auto&         dense = candidate->dense[stack];
         std::array<i64, L2> lower{};
         std::array<i64, L2> upper{};
 
@@ -1229,11 +1510,9 @@ std::string QualificationNetwork::status_line() const {
     std::ostringstream out;
     out << "Alice native qualification parameters loaded generation=" << active->generation
         << " path=\"" << active->wire.normalizedPath << "\" bytes=" << active->wire.bytes
-        << " sha256=" << active->wire.sha256
-        << " manifest_sha256=" << active->wire.manifestSha256
+        << " sha256=" << active->wire.sha256 << " manifest_sha256=" << active->wire.manifestSha256
         << " version=" << hex32(active->wire.version)
-        << " architecture=" << hex32(active->wire.architecture)
-        << " search=disabled";
+        << " architecture=" << hex32(active->wire.architecture) << " search=disabled";
     return out.str();
 }
 
@@ -1249,9 +1528,8 @@ std::string QualificationNetwork::tensor_status_line() const {
     return out.str();
 }
 
-std::optional<std::string> QualificationNetwork::probe(std::string_view tensor,
-                                                       u64              index,
-                                                       std::string&     report) const {
+std::optional<std::string>
+QualificationNetwork::probe(std::string_view tensor, u64 index, std::string& report) const {
     if (!active)
         return "Alice native qualification parameters are not loaded.";
 
@@ -1296,8 +1574,8 @@ std::optional<std::string> QualificationNetwork::probe(std::string_view tensor,
             return "unknown Alice native qualification tensor: " + std::string(tensor);
 
         const std::array<u64, 6> elementsPerStack = {
-          Fc0BiasElementsPerStack, Fc0WeightElementsPerStack, Fc1BiasElementsPerStack,
-          Fc1WeightElementsPerStack, Fc2BiasElementsPerStack, Fc2WeightElementsPerStack,
+          Fc0BiasElementsPerStack,   Fc0WeightElementsPerStack, Fc1BiasElementsPerStack,
+          Fc1WeightElementsPerStack, Fc2BiasElementsPerStack,   Fc2WeightElementsPerStack,
         };
         const u64 perStack = elementsPerStack[tensorIndex - Fc0Bias];
         if (index >= u64(LayerStacks) * perStack)
@@ -1307,25 +1585,25 @@ std::optional<std::string> QualificationNetwork::probe(std::string_view tensor,
         const auto& dense = active->dense[stack];
         switch (tensorIndex)
         {
-        case Fc0Bias:
+        case Fc0Bias :
             value = dense.fc0Bias[local];
             break;
-        case Fc0Weight:
+        case Fc0Weight :
             value = dense.fc0Weight[local];
             break;
-        case Fc1Bias:
+        case Fc1Bias :
             value = dense.fc1Bias[local];
             break;
-        case Fc1Weight:
+        case Fc1Weight :
             value = dense.fc1Weight[local];
             break;
-        case Fc2Bias:
+        case Fc2Bias :
             value = dense.fc2Bias[local];
             break;
-        case Fc2Weight:
+        case Fc2Weight :
             value = dense.fc2Weight[local];
             break;
-        default:
+        default :
             return "internal Alice native probe mapping failure";
         }
     }
@@ -1346,18 +1624,36 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
     if (pieceCount < 2 || pieceCount > 32)
         return "Alice native integer trace requires between 2 and 32 pieces.";
 
-    const PositionTrace trace = build_trace(position);
+    const PositionTrace  trace = build_trace(position);
     LoadedAccumulatorSet qualificationAccumulators;
     for (Color perspective : {WHITE, BLACK})
         if (auto error = refresh_loaded_accumulator(*active, trace[perspective],
                                                     qualificationAccumulators[perspective]))
             return error;
     NativeIntegerStages qualificationStages;
-    if (auto error =
-          evaluate_loaded_integer(*active, position, qualificationAccumulators, qualificationStages))
+    if (auto error = evaluate_loaded_integer(*active, position, qualificationAccumulators,
+                                             qualificationStages))
+        return error;
+    bool featureSimdVerified = false;
+    if (loaded_simd_available())
+    {
+        SimdLoadedAccumulatorSet simdAccumulators;
+        for (Color perspective : {WHITE, BLACK})
+        {
+            refresh_loaded_simd_accumulator(*active, trace[perspective],
+                                            simdAccumulators[perspective]);
+            if (auto error =
+                  compare_loaded_simd(simdAccumulators[perspective],
+                                      qualificationAccumulators[perspective], perspective))
+                return error;
+        }
+        featureSimdVerified = true;
+    }
+    bool denseSimdVerified = false;
+    if (auto error = verify_dense_simd(*active, qualificationStages, denseSimdVerified))
         return error;
 
-    std::array<std::array<i16, L1>, COLOR_NB> accumulators{};
+    std::array<std::array<i16, L1>, COLOR_NB>          accumulators{};
     std::array<std::array<i32, PsqtBuckets>, COLOR_NB> psqtAccumulators{};
 
     for (Color perspective : {WHITE, BLACK})
@@ -1415,12 +1711,11 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
         for (usize lane = 0; lane < L1 / 2; ++lane)
         {
             const i32 left  = std::clamp<i32>(accumulators[perspective][lane], 0, 255);
-            const i32 right =
-              std::clamp<i32>(accumulators[perspective][lane + L1 / 2], 0, 255);
+            const i32 right = std::clamp<i32>(accumulators[perspective][lane + L1 / 2], 0, 255);
             transformed[perspective][lane] = left * right / 512;
         }
 
-    const Color sideToMove = position.side_to_move();
+    const Color         sideToMove = position.side_to_move();
     std::array<i32, L1> denseInput{};
     for (usize lane = 0; lane < L1 / 2; ++lane)
     {
@@ -1428,43 +1723,37 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
         denseInput[lane + L1 / 2] = transformed[~sideToMove][lane];
     }
 
-    const usize phase = (pieceCount - 1) / 4;
-    const auto& dense = active->dense[phase];
-    const auto affine = [](const i8*       weights,
-                           const i32*      biases,
-                           usize           outputs,
-                           usize           inputs,
-                           const i32*      values,
-                           i32*            result,
-                           std::string_view label,
-                           bool            requireI16) -> std::optional<std::string> {
+    const usize phase  = (pieceCount - 1) / 4;
+    const auto& dense  = active->dense[phase];
+    const auto  affine = [](const i8* weights, const i32* biases, usize outputs, usize inputs,
+                           const i32* values, i32* result, std::string_view label,
+                           bool requireI16) -> std::optional<std::string> {
         for (usize output = 0; output < outputs; ++output)
         {
             i64 total = biases[output];
             for (usize input = 0; input < inputs; ++input)
                 total += i64(weights[output * inputs + input]) * values[input];
-            if (total < std::numeric_limits<i32>::min()
-                || total > std::numeric_limits<i32>::max())
-                return std::string(label) + " exceeds signed i32 at row "
-                     + std::to_string(output) + ": " + std::to_string(total);
+            if (total < std::numeric_limits<i32>::min() || total > std::numeric_limits<i32>::max())
+                return std::string(label) + " exceeds signed i32 at row " + std::to_string(output)
+                     + ": " + std::to_string(total);
             if (requireI16
                 && (total < std::numeric_limits<i16>::min()
                     || total > std::numeric_limits<i16>::max()))
-                return std::string(label) + " exceeds signed i16 at row "
-                     + std::to_string(output) + ": " + std::to_string(total);
+                return std::string(label) + " exceeds signed i16 at row " + std::to_string(output)
+                     + ": " + std::to_string(total);
             result[output] = i32(total);
         }
         return std::nullopt;
     };
     const auto activate = [](i32 value, int shift, bool square) {
-        const i64 raw = square ? i64(value) * value / (i64(1) << (2 * shift + 7))
-                               : value / (i64(1) << shift);
+        const i64 raw =
+          square ? i64(value) * value / (i64(1) << (2 * shift + 7)) : value / (i64(1) << shift);
         return i32(std::clamp<i64>(raw, 0, 127));
     };
 
     std::array<i32, L2> z0{};
-    if (auto error = affine(dense.fc0Weight.data(), dense.fc0Bias.data(), L2, L1,
-                            denseInput.data(), z0.data(), "fc0", true))
+    if (auto error = affine(dense.fc0Weight.data(), dense.fc0Bias.data(), L2, L1, denseInput.data(),
+                            z0.data(), "fc0", true))
         return error;
     std::array<i32, L2> s0{};
     std::array<i32, L2> r0{};
@@ -1478,30 +1767,29 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
     }
 
     std::array<i32, L3> z1{};
-    if (auto error = affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(),
-                            y1.data(), z1.data(), "fc1", true))
+    if (auto error = affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(), y1.data(),
+                            z1.data(), "fc1", true))
         return error;
     std::array<i32, L3>  s1{};
     std::array<i32, L3>  r1{};
     std::array<i32, 128> y2{};
     for (usize output = 0; output < L3; ++output)
     {
-        s1[output]                = activate(z1[output], 6, true);
-        r1[output]                = activate(z1[output], 6, false);
-        y2[output]                = s0[output];
-        y2[L2 + output]           = r0[output];
-        y2[2 * L2 + output]       = s1[output];
+        s1[output]               = activate(z1[output], 6, true);
+        r1[output]               = activate(z1[output], 6, false);
+        y2[output]               = s0[output];
+        y2[L2 + output]          = r0[output];
+        y2[2 * L2 + output]      = s1[output];
         y2[2 * L2 + L3 + output] = r1[output];
     }
 
     std::array<i32, 1> z2{};
-    if (auto error = affine(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, y2.size(),
-                            y2.data(), z2.data(), "fc2", false))
+    if (auto error = affine(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, y2.size(), y2.data(),
+                            z2.data(), "fc2", false))
         return error;
     const i64 skip64   = i64(z0[30]) - z0[31];
     const i64 fwdOut64 = i64(z2[0]) + skip64;
-    if (fwdOut64 < std::numeric_limits<i32>::min()
-        || fwdOut64 > std::numeric_limits<i32>::max())
+    if (fwdOut64 < std::numeric_limits<i32>::min() || fwdOut64 > std::numeric_limits<i32>::max())
         return "fwdOut exceeds signed i32: " + std::to_string(fwdOut64);
     const i32 skip   = i32(skip64);
     const i32 fwdOut = i32(fwdOut64);
@@ -1513,8 +1801,7 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
     if (positionalRaw64 < std::numeric_limits<i32>::min()
         || positionalRaw64 > std::numeric_limits<i32>::max())
         return "positionalRaw16 exceeds signed i32: " + std::to_string(positionalRaw64);
-    if (psqtRaw64 < std::numeric_limits<i32>::min()
-        || psqtRaw64 > std::numeric_limits<i32>::max())
+    if (psqtRaw64 < std::numeric_limits<i32>::min() || psqtRaw64 > std::numeric_limits<i32>::max())
         return "psqtRaw16 exceeds signed i32: " + std::to_string(psqtRaw64);
     const i32 positionalRaw16 = i32(positionalRaw64);
     const i32 psqtRaw16       = i32(psqtRaw64);
@@ -1533,9 +1820,8 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
                 != psqtAccumulators[perspective][bucket])
                 return "Alice native qualification PSQT refresh disagrees with the integer trace.";
     }
-    if (qualificationStages.sideToMove != sideToMove
-        || qualificationStages.pieceCount != pieceCount || qualificationStages.phase != phase
-        || qualificationStages.transformed != transformed
+    if (qualificationStages.sideToMove != sideToMove || qualificationStages.pieceCount != pieceCount
+        || qualificationStages.phase != phase || qualificationStages.transformed != transformed
         || qualificationStages.denseInput != denseInput || qualificationStages.z0 != z0
         || qualificationStages.s0 != s0 || qualificationStages.r0 != r0
         || qualificationStages.z1 != z1 || qualificationStages.s1 != s1
@@ -1548,8 +1834,10 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
         return "Alice native qualification stages disagree with the integer trace.";
 
     std::ostringstream out;
-    out << "{\"architecture\":\"" << ArchitectureId << "\",\"generation\":"
-        << active->generation << ",\"networkSha256\":\"" << active->wire.sha256
+    out << "{\"architecture\":\"" << ArchitectureId << "\",\"generation\":" << active->generation
+        << ",\"networkSha256\":\"" << active->wire.sha256 << "\",\"denseSimd\":\""
+        << (denseSimdVerified ? dense_simd_backend() : "none") << "\",\"featureSimd\":\""
+        << (featureSimdVerified ? dense_simd_backend() : "none")
         << "\",\"sideToMove\":" << int(sideToMove) << ",\"pieceCount\":" << pieceCount
         << ",\"pieceFeatures\":[";
     for (Color perspective : {WHITE, BLACK})
@@ -1591,71 +1879,94 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
     write_integer_array(out, s1);
     out << ",\"fc1Linear\":";
     write_integer_array(out, r1);
-    out << ",\"fc2Raw\":" << z2[0] << ",\"skip\":" << skip << ",\"fwdOut\":"
-        << fwdOut << ",\"positionalRaw16\":" << positionalRaw16 << ",\"psqtRaw16\":"
-        << psqtRaw16 << ",\"positionalValue\":" << positionalValue << ",\"psqtValue\":"
-        << psqtValue << ",\"nativeNnueValue\":" << nativeValue << '}';
+    out << ",\"fc2Raw\":" << z2[0] << ",\"skip\":" << skip << ",\"fwdOut\":" << fwdOut
+        << ",\"positionalRaw16\":" << positionalRaw16 << ",\"psqtRaw16\":" << psqtRaw16
+        << ",\"positionalValue\":" << positionalValue << ",\"psqtValue\":" << psqtValue
+        << ",\"nativeNnueValue\":" << nativeValue << '}';
     report = out.str();
     return std::nullopt;
 }
 
-std::optional<std::string>
-QualificationNetwork::verify_incremental(Position&                           position,
-                                         Depth                               depth,
-                                         LoadedIncrementalVerificationStats& stats) const {
+std::optional<std::string> QualificationNetwork::verify_incremental(
+  Position& position, Depth depth, LoadedIncrementalVerificationStats& stats) const {
     stats = {};
     if (!active)
         return "Alice native loaded incremental verification requires qualification parameters.";
     if (depth < 0 || depth > 2)
         return "Alice native loaded incremental verification depth must be between 0 and 2.";
 
-    const Parameters*  parameters         = active.get();
-    const u64          verifiedGeneration = active->generation;
-    const std::string  rootFen            = position.fen();
-    const Key          rootKey            = position.key();
-    const PositionTrace rootTrace          = build_trace(position);
+    const Parameters*    parameters         = active.get();
+    const u64            verifiedGeneration = active->generation;
+    const std::string    rootFen            = position.fen();
+    const Key            rootKey            = position.key();
+    const PositionTrace  rootTrace          = build_trace(position);
     LoadedAccumulatorSet rootAccumulators;
     for (Color perspective : {WHITE, BLACK})
         if (auto error = refresh_loaded_accumulator(*parameters, rootTrace[perspective],
                                                     rootAccumulators[perspective]))
             return error;
+    SimdLoadedAccumulatorSet rootSimdAccumulators;
+    if (loaded_simd_available())
+        for (Color perspective : {WHITE, BLACK})
+            refresh_loaded_simd_accumulator(*parameters, rootTrace[perspective],
+                                            rootSimdAccumulators[perspective]);
 
-    std::function<std::optional<std::string>(Depth, const PositionTrace&,
-                                             const LoadedAccumulatorSet&)>
+    std::function<std::optional<std::string>(
+      Depth, const PositionTrace&, const LoadedAccumulatorSet&, const SimdLoadedAccumulatorSet&)>
       visit;
-    visit = [&](Depth                       remaining,
-                const PositionTrace&        incrementalTrace,
-                const LoadedAccumulatorSet& incrementalAccumulators)
-      -> std::optional<std::string> {
+    visit =
+      [&](
+        Depth remaining, const PositionTrace& incrementalTrace,
+        const LoadedAccumulatorSet&     incrementalAccumulators,
+        const SimdLoadedAccumulatorSet& incrementalSimdAccumulators) -> std::optional<std::string> {
         ++stats.positions;
 
-        LoadedAccumulatorSet refreshedAccumulators;
+        LoadedAccumulatorSet     refreshedAccumulators;
+        SimdLoadedAccumulatorSet refreshedSimdAccumulators;
         for (Color perspective : {WHITE, BLACK})
         {
-            if (auto error = refresh_loaded_accumulator(
-                  *parameters, incrementalTrace[perspective], refreshedAccumulators[perspective]))
+            if (auto error = refresh_loaded_accumulator(*parameters, incrementalTrace[perspective],
+                                                        refreshedAccumulators[perspective]))
                 return error;
             if (incrementalAccumulators[perspective].values
                   != refreshedAccumulators[perspective].values
                 || incrementalAccumulators[perspective].psqt
                      != refreshedAccumulators[perspective].psqt)
-                return "Alice native loaded incremental accumulator mismatch at "
-                     + position.fen() + ".";
+                return "Alice native loaded incremental accumulator mismatch at " + position.fen()
+                     + ".";
             ++stats.accumulatorComparisons;
+            if (loaded_simd_available())
+            {
+                refresh_loaded_simd_accumulator(*parameters, incrementalTrace[perspective],
+                                                refreshedSimdAccumulators[perspective]);
+                if (auto error =
+                      compare_loaded_simd(incrementalSimdAccumulators[perspective],
+                                          refreshedAccumulators[perspective], perspective))
+                    return error;
+                if (auto error =
+                      compare_loaded_simd(refreshedSimdAccumulators[perspective],
+                                          refreshedAccumulators[perspective], perspective))
+                    return error;
+                ++stats.featureSimdComparisons;
+            }
         }
 
         NativeIntegerStages incrementalStages;
         NativeIntegerStages refreshedStages;
-        if (auto error = evaluate_loaded_integer(
-              *parameters, position, incrementalAccumulators, incrementalStages))
+        if (auto error = evaluate_loaded_integer(*parameters, position, incrementalAccumulators,
+                                                 incrementalStages))
             return error;
-        if (auto error =
-              evaluate_loaded_integer(*parameters, position, refreshedAccumulators, refreshedStages))
+        if (auto error = evaluate_loaded_integer(*parameters, position, refreshedAccumulators,
+                                                 refreshedStages))
             return error;
         if (!same_integer_stages(incrementalStages, refreshedStages))
             return "Alice native loaded incremental integer-stage mismatch at " + position.fen()
                  + ".";
         ++stats.integerStageComparisons;
+        bool denseSimdVerified = false;
+        if (auto error = verify_dense_simd(*parameters, incrementalStages, denseSimdVerified))
+            return error;
+        stats.denseSimdComparisons += denseSimdVerified;
 
         if (remaining == 0)
             return std::nullopt;
@@ -1678,8 +1989,9 @@ QualificationNetwork::verify_incremental(Position&                           pos
             Dirties   dirties;
             position.do_move(move, state, position.gives_check(move), dirties, nullptr, nullptr);
 
-            const PositionTrace newTrace = build_trace(position);
-            LoadedAccumulatorSet childAccumulators = incrementalAccumulators;
+            const PositionTrace        newTrace              = build_trace(position);
+            LoadedAccumulatorSet       childAccumulators     = incrementalAccumulators;
+            SimdLoadedAccumulatorSet   childSimdAccumulators = incrementalSimdAccumulators;
             std::optional<std::string> error;
             for (Color perspective : {WHITE, BLACK})
             {
@@ -1689,18 +2001,26 @@ QualificationNetwork::verify_incremental(Position&                           pos
                     || oldPerspective.kingBoard != newPerspective.kingBoard)
                 {
                     ++stats.fullRefreshes[perspective];
-                    error = refresh_loaded_accumulator(
-                      *parameters, newPerspective, childAccumulators[perspective]);
+                    error = refresh_loaded_accumulator(*parameters, newPerspective,
+                                                       childAccumulators[perspective]);
+                    if (!error && loaded_simd_available())
+                        refresh_loaded_simd_accumulator(*parameters, newPerspective,
+                                                        childSimdAccumulators[perspective]);
                 }
                 else
+                {
                     error = update_loaded_accumulator(*parameters, oldPerspective, newPerspective,
                                                       childAccumulators[perspective], stats);
+                    if (!error && loaded_simd_available())
+                        update_loaded_simd_accumulator(*parameters, oldPerspective, newPerspective,
+                                                       childSimdAccumulators[perspective]);
+                }
                 if (error)
                     break;
             }
             ++stats.transitions;
             if (!error)
-                error = visit(remaining - 1, newTrace, childAccumulators);
+                error = visit(remaining - 1, newTrace, childAccumulators, childSimdAccumulators);
 
             position.undo_move(move);
             ++stats.undoChecks;
@@ -1713,7 +2033,7 @@ QualificationNetwork::verify_incremental(Position&                           pos
         return std::nullopt;
     };
 
-    auto error = visit(depth, rootTrace, rootAccumulators);
+    auto error = visit(depth, rootTrace, rootAccumulators, rootSimdAccumulators);
     if (position.fen() != rootFen || position.key() != rootKey)
         return "Alice native loaded incremental verification did not restore the root position.";
     if (active.get() != parameters || active->generation != verifiedGeneration)

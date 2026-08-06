@@ -100,7 +100,20 @@ def build_sparse_network(path: Path, feature_fens: list[str]) -> SparseNativePar
     def install(name: str, index: int, value: int) -> None:
         install_parameter(path, parameters, name, index, value)
 
-    for lane, value in ((0, 200), (1, -128), (2, 255), (3, 64), (512, 220), (513, -128), (514, 255), (515, 32)):
+    for lane, value in (
+        (0, 200),
+        (1, -128),
+        (2, 255),
+        (3, 64),
+        (4, 255),
+        (5, 255),
+        (512, 220),
+        (513, -128),
+        (514, 255),
+        (515, 32),
+        (516, 255),
+        (517, 255),
+    ):
         install("ft.bias", lane, value)
 
     piece_rows: set[int] = set()
@@ -120,6 +133,9 @@ def build_sparse_network(path: Path, feature_fens: list[str]) -> SparseNativePar
         install("pieceSquare.weight", row * 1_024 + 3, row % 3 - 1)
         for bucket in range(8):
             install("pieceSquare.psqt", row * 8 + bucket, (row + bucket) % 11 - 5)
+    piece_boundary_row = min(piece_rows)
+    install("pieceSquare.weight", piece_boundary_row * 1_024 + 10, 32_767)
+    install("pieceSquare.weight", piece_boundary_row * 1_024 + 11, -32_767)
 
     for row in sorted(threat_rows):
         first = row % 5 - 2
@@ -128,6 +144,9 @@ def build_sparse_network(path: Path, feature_fens: list[str]) -> SparseNativePar
         install("threat.weight", row * 1_024 + 512, second or -1)
         for bucket in range(8):
             install("threat.psqt", row * 8 + bucket, (row + 2 * bucket) % 9 - 4)
+    threat_boundary_row = min(threat_rows)
+    install("threat.weight", threat_boundary_row * 1_024 + 12, 127)
+    install("threat.weight", threat_boundary_row * 1_024 + 13, -127)
 
     psqt_witness: tuple[int, int] | None = None
     for fen in feature_fens:
@@ -153,6 +172,10 @@ def build_sparse_network(path: Path, feature_fens: list[str]) -> SparseNativePar
         install("stack.fc0.weight", fc0_weight + 2 * 1_024, 2)
         install("stack.fc0.weight", fc0_weight + 2 * 1_024 + 512, -1)
         install("stack.fc0.weight", fc0_weight + 3 * 1_024 + 2, 1)
+        install("stack.fc0.weight", fc0_weight + 4 * 1_024 + 4, 127)
+        install("stack.fc0.weight", fc0_weight + 4 * 1_024 + 5, 127)
+        install("stack.fc0.weight", fc0_weight + 5 * 1_024 + 4, -127)
+        install("stack.fc0.weight", fc0_weight + 5 * 1_024 + 5, -127)
 
         fc1_base = stack * 32
         install("stack.fc1.bias", fc1_base, -8_192)
@@ -161,6 +184,10 @@ def build_sparse_network(path: Path, feature_fens: list[str]) -> SparseNativePar
         fc1_weight = stack * (32 * 64)
         install("stack.fc1.weight", fc1_weight + 2 * 64, 1)
         install("stack.fc1.weight", fc1_weight + 2 * 64 + 32, 2)
+        install("stack.fc1.weight", fc1_weight + 4 * 64 + 4, 127)
+        install("stack.fc1.weight", fc1_weight + 4 * 64 + 5, 127)
+        install("stack.fc1.weight", fc1_weight + 5 * 64 + 4, -127)
+        install("stack.fc1.weight", fc1_weight + 5 * 64 + 5, -127)
 
         install("stack.fc2.bias", stack, 17 * stack - 50)
         fc2_weight = stack * 128
@@ -234,6 +261,8 @@ def loaded_incremental_reports(
         r"max_threat_events (?P<max_threat_events>\d+) "
         r"accumulator_comparisons (?P<accumulator_comparisons>\d+) "
         r"integer_stage_comparisons (?P<integer_stage_comparisons>\d+) "
+        r"feature_simd_comparisons (?P<feature_simd_comparisons>\d+) "
+        r"dense_simd_comparisons (?P<dense_simd_comparisons>\d+) "
         r"undo_checks (?P<undo_checks>\d+) depth (?P<depth>\d+) search disabled$"
     )
     reports = [
@@ -285,6 +314,8 @@ class NativeIntegerTests(unittest.TestCase):
                 expected = evaluate_integer(parameters, pieces, threats, side, piece_count)
                 with self.subTest(fen=fen):
                     self.assertEqual(trace["architecture"], "AliceNative-v1")
+                    self.assertIn(trace["denseSimd"], ("avx2", "ssse3"))
+                    self.assertEqual(trace["featureSimd"], trace["denseSimd"])
                     self.assertEqual(trace["generation"], 1)
                     self.assertEqual(trace["networkSha256"], network_sha)
                     self.assertEqual(trace["sideToMove"], side)
@@ -302,6 +333,20 @@ class NativeIntegerTests(unittest.TestCase):
             self.assertTrue(any(trace["fc0Raw"][0] < 0 for trace in observed))
             self.assertTrue(all(trace["fc0Squared"][0] == 127 for trace in observed))
             self.assertTrue(all(trace["fc0Linear"][0] == 0 for trace in observed))
+            self.assertTrue(all(trace["fc0Raw"][4] == 32_258 for trace in observed))
+            self.assertTrue(all(trace["fc0Raw"][5] == -32_258 for trace in observed))
+            self.assertTrue(all(trace["fc1Raw"][4] == 32_258 for trace in observed))
+            self.assertTrue(all(trace["fc1Raw"][5] == -32_258 for trace in observed))
+            accumulator_values = [
+                value
+                for trace in observed
+                for perspective in trace["featureAccumulator"]
+                for value in perspective
+            ]
+            self.assertIn(32_767, accumulator_values)
+            self.assertIn(-32_767, accumulator_values)
+            self.assertIn(127, accumulator_values)
+            self.assertIn(-127, accumulator_values)
 
     def test_accumulator_overflow_and_search_routing_fail_closed(self) -> None:
         fen = phase_position(2, "w")
@@ -421,6 +466,10 @@ class NativeIntegerTests(unittest.TestCase):
                 report["accumulator_comparisons"], 2 * report["positions"]
             )
             self.assertEqual(report["integer_stage_comparisons"], report["positions"])
+            self.assertEqual(
+                report["feature_simd_comparisons"], 2 * report["positions"]
+            )
+            self.assertEqual(report["dense_simd_comparisons"], report["positions"])
             self.assertEqual(report["undo_checks"], report["transitions"])
 
         opening = reports[0]

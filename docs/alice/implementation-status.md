@@ -259,10 +259,18 @@ and 420 transitions; directed depth-one roots add captures, quiet and capture
 promotions, castling on both board layouts, and king transfers. Missing
 parameters and accumulator overflow remain fatal.
 
+On AVX2 and SSE4.1/SSSE3 builds, the same qualification paths also execute the
+loaded feature-transformer rows, signed-eight-bit threat widening, PSQT
+updates, and all three dense affine layers with the target SIMD intrinsics.
+Every SIMD accumulator element and dense output is compared with the scalar
+result. The dense corpus reaches both `+32258` and `-32258`, covers all eight
+phase stacks, and exercises full refresh plus incremental updates at every
+visited node.
+
 The installed object is not read by normal search, never selects the
-historical evaluator as a fallback, and reports `search=disabled`. Dense SIMD
-parity, generation-keyed search accumulators, and evaluation routing remain
-later exact-parity gates.
+historical evaluator as a fallback, and reports `search=disabled`.
+Generation-keyed search accumulators and evaluation routing remain later
+exact-parity gates.
 
 ## Cross-platform verification
 

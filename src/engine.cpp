@@ -538,9 +538,8 @@ Engine::validate_native_wire(const std::filesystem::path&      file,
 
 std::string Engine::native_wire_status() const { return nativeWireValidator.status_line(); }
 
-std::optional<std::string>
-Engine::load_native_qualification(const std::filesystem::path& file,
-                                  std::string_view             expectedSha256) {
+std::optional<std::string> Engine::load_native_qualification(const std::filesystem::path& file,
+                                                             std::string_view expectedSha256) {
     wait_for_search_finished();
     if (auto error = nativeQualification.load(file, expectedSha256))
         return "Alice native qualification load rejected: " + *error;
@@ -565,8 +564,8 @@ std::optional<std::string> Engine::trace_native_integer(std::string& report) {
     return nativeQualification.integer_trace(pos, report);
 }
 
-std::optional<std::string>
-Engine::verify_loaded_native_incremental(Depth depth, std::string& report) {
+std::optional<std::string> Engine::verify_loaded_native_incremental(Depth        depth,
+                                                                    std::string& report) {
     wait_for_search_finished();
     Eval::NNUE::AliceNative::LoadedIncrementalVerificationStats stats;
     if (auto error = nativeQualification.verify_incremental(pos, depth, stats))
@@ -582,7 +581,9 @@ Engine::verify_loaded_native_incremental(Depth depth, std::string& report) {
         << stats.threatAdds << " threat_removes " << stats.threatRemoves << " max_piece_events "
         << stats.maxPieceEvents << " max_threat_events " << stats.maxThreatEvents
         << " accumulator_comparisons " << stats.accumulatorComparisons
-        << " integer_stage_comparisons " << stats.integerStageComparisons << " undo_checks "
+        << " integer_stage_comparisons " << stats.integerStageComparisons
+        << " feature_simd_comparisons " << stats.featureSimdComparisons
+        << " dense_simd_comparisons " << stats.denseSimdComparisons << " undo_checks "
         << stats.undoChecks << " depth " << depth << " search disabled";
     report = out.str();
     return std::nullopt;

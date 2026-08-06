@@ -36,22 +36,24 @@ struct WireMetadata {
 };
 
 struct LoadedIncrementalVerificationStats {
-    u64 positions                 = 0;
-    u64 transitions               = 0;
-    u64 captures                  = 0;
-    u64 promotions                = 0;
-    u64 castlings                 = 0;
-    u64 kingMoves                 = 0;
-    u64 fullRefreshes[COLOR_NB]   = {};
-    u64 pieceAdds                 = 0;
-    u64 pieceRemoves              = 0;
-    u64 threatAdds                = 0;
-    u64 threatRemoves             = 0;
-    u64 maxPieceEvents            = 0;
-    u64 maxThreatEvents           = 0;
-    u64 accumulatorComparisons    = 0;
-    u64 integerStageComparisons   = 0;
-    u64 undoChecks                = 0;
+    u64 positions               = 0;
+    u64 transitions             = 0;
+    u64 captures                = 0;
+    u64 promotions              = 0;
+    u64 castlings               = 0;
+    u64 kingMoves               = 0;
+    u64 fullRefreshes[COLOR_NB] = {};
+    u64 pieceAdds               = 0;
+    u64 pieceRemoves            = 0;
+    u64 threatAdds              = 0;
+    u64 threatRemoves           = 0;
+    u64 maxPieceEvents          = 0;
+    u64 maxThreatEvents         = 0;
+    u64 accumulatorComparisons  = 0;
+    u64 integerStageComparisons = 0;
+    u64 featureSimdComparisons  = 0;
+    u64 denseSimdComparisons    = 0;
+    u64 undoChecks              = 0;
 };
 
 // Validates the complete native integer wire container without exposing it as
@@ -85,20 +87,19 @@ class QualificationNetwork {
     ~QualificationNetwork();
 
     QualificationNetwork(const QualificationNetwork&)            = delete;
-    QualificationNetwork(QualificationNetwork&&)                  = delete;
+    QualificationNetwork(QualificationNetwork&&)                 = delete;
     QualificationNetwork& operator=(const QualificationNetwork&) = delete;
     QualificationNetwork& operator=(QualificationNetwork&&)      = delete;
 
     std::optional<std::string> load(const std::filesystem::path& file,
                                     std::string_view             expectedSha256);
 
-    bool               loaded() const;
-    u64                generation() const;
-    const std::string& last_error() const;
-    std::string        status_line() const;
-    std::string        tensor_status_line() const;
-    std::optional<std::string>
-    probe(std::string_view tensor, u64 index, std::string& report) const;
+    bool                       loaded() const;
+    u64                        generation() const;
+    const std::string&         last_error() const;
+    std::string                status_line() const;
+    std::string                tensor_status_line() const;
+    std::optional<std::string> probe(std::string_view tensor, u64 index, std::string& report) const;
     std::optional<std::string> integer_trace(const Position& position, std::string& report) const;
     std::optional<std::string> verify_incremental(Position&                           position,
                                                   Depth                               depth,
