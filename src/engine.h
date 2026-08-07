@@ -116,6 +116,7 @@ class Engine {
     std::optional<std::string> trace_native_integer(std::string& report);
     std::optional<std::string> verify_loaded_native_incremental(Depth depth, std::string& report);
     std::optional<std::string> verify_native_search_session(Depth depth, std::string& report);
+    std::optional<std::string> verify_native_lease(std::string& report);
     std::optional<std::string> verify_legacy_incremental(Depth depth, u64& positions);
 
     const OptionsMap& get_options() const;

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -1082,8 +1083,104 @@ std::string WireValidator::status_line() const {
     return out.str();
 }
 
-QualificationNetwork::QualificationNetwork()  = default;
-QualificationNetwork::~QualificationNetwork() = default;
+QualificationNetwork::QualificationNetwork() = default;
+QualificationNetwork::~QualificationNetwork() {
+    assert(activeLeases.load(std::memory_order_acquire) == 0);
+}
+
+QualificationNetwork::Lease::Lease(const QualificationNetwork* leaseOwner,
+                                   const Parameters*           parameters) noexcept :
+    network(leaseOwner),
+    pinned(parameters) {}
+
+QualificationNetwork::Lease::~Lease() { reset(); }
+
+QualificationNetwork::Lease::Lease(Lease&& other) noexcept :
+    network(other.network),
+    pinned(other.pinned) {
+    other.network = nullptr;
+    other.pinned  = nullptr;
+}
+
+QualificationNetwork::Lease& QualificationNetwork::Lease::operator=(Lease&& other) noexcept {
+    if (this != &other)
+    {
+        reset();
+        network       = other.network;
+        pinned        = other.pinned;
+        other.network = nullptr;
+        other.pinned  = nullptr;
+    }
+    return *this;
+}
+
+QualificationNetwork::Lease::operator bool() const noexcept { return network && pinned; }
+
+ParameterView QualificationNetwork::Lease::parameter_view() const noexcept {
+    return pinned ? make_parameter_view(*pinned) : ParameterView{};
+}
+
+u64 QualificationNetwork::Lease::generation() const noexcept {
+    return pinned ? pinned->generation : 0;
+}
+
+std::string_view QualificationNetwork::Lease::sha256() const noexcept {
+    return pinned ? std::string_view(pinned->wire.sha256) : std::string_view{};
+}
+
+u32 QualificationNetwork::Lease::version() const noexcept {
+    return pinned ? pinned->wire.version : 0;
+}
+
+u32 QualificationNetwork::Lease::architecture() const noexcept {
+    return pinned ? pinned->wire.architecture : 0;
+}
+
+void QualificationNetwork::Lease::reset() noexcept {
+    if (network)
+        network->release_lease();
+    network = nullptr;
+    pinned  = nullptr;
+}
+
+std::optional<QualificationNetwork::Lease>
+QualificationNetwork::acquire_lease(std::string& error) const noexcept {
+    error.clear();
+    if (replacementInProgress.load(std::memory_order_acquire))
+    {
+        error = "Alice native parameter replacement is in progress.";
+        return std::nullopt;
+    }
+
+    activeLeases.fetch_add(1, std::memory_order_acq_rel);
+    if (replacementInProgress.load(std::memory_order_acquire))
+    {
+        release_lease();
+        error = "Alice native parameter replacement is in progress.";
+        return std::nullopt;
+    }
+
+    const Parameters* parameters = active.get();
+    if (!parameters)
+    {
+        release_lease();
+        error = "Alice native parameters are not loaded.";
+        return std::nullopt;
+    }
+
+    Lease lease(this, parameters);
+    return std::optional<Lease>(std::move(lease));
+}
+
+bool QualificationNetwork::has_active_lease() const noexcept {
+    return activeLeases.load(std::memory_order_acquire) != 0;
+}
+
+void QualificationNetwork::release_lease() const noexcept {
+    const u64 previous = activeLeases.fetch_sub(1, std::memory_order_acq_rel);
+    assert(previous > 0);
+    (void) previous;
+}
 
 std::optional<std::string> QualificationNetwork::load(const std::filesystem::path& file,
                                                       std::string_view             expectedSha256) {
@@ -1091,6 +1188,22 @@ std::optional<std::string> QualificationNetwork::load(const std::filesystem::pat
         lastError = std::move(reason);
         return lastError;
     };
+
+    if (has_active_lease())
+        return reject("native parameter replacement is rejected while a search lease is active");
+
+    bool expectedReplacement = false;
+    if (!replacementInProgress.compare_exchange_strong(expectedReplacement, true,
+                                                       std::memory_order_acq_rel))
+        return reject("another native parameter replacement is already in progress");
+
+    struct ReplacementGuard {
+        std::atomic_bool& flag;
+        ~ReplacementGuard() { flag.store(false, std::memory_order_release); }
+    } replacementGuard{replacementInProgress};
+
+    if (has_active_lease())
+        return reject("native parameter replacement is rejected while a search lease is active");
 
     std::string expected;
     if (auto error = normalized_required_sha(expectedSha256, expected))
@@ -1301,6 +1414,49 @@ std::optional<std::string> QualificationNetwork::load(const std::filesystem::pat
 
     active.swap(candidate);
     lastError.clear();
+    return std::nullopt;
+}
+
+std::optional<std::string> QualificationNetwork::verify_lease_contract(std::string& report) {
+    report.clear();
+    if (!active)
+        return "Alice native lease verification requires qualification parameters.";
+
+    const Parameters* originalPointer    = active.get();
+    const u64         originalGeneration = active->generation;
+    const std::string originalSha256     = active->wire.sha256;
+    const auto        originalPath       = std::filesystem::path(active->wire.normalizedPath);
+
+    std::string leaseError;
+    auto        lease = acquire_lease(leaseError);
+    if (!lease)
+        return "Alice native lease acquisition failed: " + leaseError;
+    if (!has_active_lease() || lease->generation() != originalGeneration
+        || lease->sha256() != originalSha256 || lease->version() != WireVersion
+        || lease->architecture() != CompositeArchitectureHash)
+        return "Alice native lease identity did not match the active parameters.";
+
+    const auto rejected = load(originalPath, originalSha256);
+    if (!rejected || rejected->find("search lease is active") == std::string::npos)
+        return "Alice native replacement was not rejected while a lease was active.";
+    if (active.get() != originalPointer || active->generation != originalGeneration
+        || active->wire.sha256 != originalSha256)
+        return "Alice native active parameters changed after a rejected leased replacement.";
+
+    lease.reset();
+    if (has_active_lease())
+        return "Alice native lease count remained active after release.";
+
+    auto secondLease = acquire_lease(leaseError);
+    if (!secondLease || secondLease->generation() != originalGeneration
+        || secondLease->sha256() != originalSha256)
+        return "Alice native parameters could not be leased again after rejection.";
+    secondLease.reset();
+
+    std::ostringstream out;
+    out << "alice_native lease verified generation " << originalGeneration << " sha256 "
+        << originalSha256 << " active_reload_rejections 1 reacquisitions 1";
+    report = out.str();
     return std::nullopt;
 }
 
@@ -1739,20 +1895,24 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
 std::optional<std::string>
 QualificationNetwork::verify_session(Position& position, Depth depth, std::string& report) const {
     report.clear();
-    if (!active)
-        return "Alice native search-session verification requires qualification parameters.";
     if (depth < 0 || depth > 2)
         return "Alice native search-session verification depth must be between 0 and 2.";
 
-    const Parameters*   parameters         = active.get();
-    const ParameterView parameterView      = make_parameter_view(*parameters);
-    const u64           verifiedGeneration = active->generation;
-    const std::string   verifiedSha256     = active->wire.sha256;
-    const std::string   rootFen            = position.fen();
-    const Key           rootKey            = position.key();
-    const Bitboard      rootBoardB         = position.state()->boardB;
-    const Color         rootSideToMove     = position.side_to_move();
-    const int           rootPieceCount     = position.count<ALL_PIECES>();
+    std::string leaseError;
+    auto        lease = acquire_lease(leaseError);
+    if (!lease)
+        return "Alice native search-session verification requires qualification parameters: "
+             + leaseError;
+
+    const Parameters*   parameters         = lease->pinned;
+    const ParameterView parameterView      = lease->parameter_view();
+    const u64           verifiedGeneration = lease->generation();
+    const std::string   verifiedSha256(lease->sha256());
+    const std::string   rootFen        = position.fen();
+    const Key           rootKey        = position.key();
+    const Bitboard      rootBoardB     = position.state()->boardB;
+    const Color         rootSideToMove = position.side_to_move();
+    const int           rootPieceCount = position.count<ALL_PIECES>();
 
     std::unique_ptr<SearchSession> session(new (std::nothrow) SearchSession(
       parameterView, verifiedGeneration, verifiedSha256, position));

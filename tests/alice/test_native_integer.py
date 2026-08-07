@@ -201,7 +201,10 @@ def build_sparse_network(path: Path, feature_fens: list[str]) -> SparseNativePar
 
 def engine_integer_traces(network: Path, fens: list[str]) -> tuple[list[dict], str]:
     network_sha = file_sha256(network)
-    commands = [f"alice_native_load_file {command_path(network)} {network_sha}"]
+    commands = [
+        f"alice_native_load_file {command_path(network)} {network_sha}",
+        "alice_native_verify_lease",
+    ]
     for fen in fens:
         commands.extend((f"position fen {fen}", "alice_native_eval_trace"))
     commands.extend(("quit", ""))
@@ -215,6 +218,20 @@ def engine_integer_traces(network: Path, fens: list[str]) -> tuple[list[dict], s
     )
     if result.returncode != 0:
         raise AssertionError(result.stdout + result.stderr)
+
+    lease_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("alice_native lease verified ")
+    ]
+    expected_lease = (
+        f"alice_native lease verified generation 1 sha256 {network_sha} "
+        "active_reload_rejections 1 reacquisitions 1"
+    )
+    if lease_lines != [expected_lease]:
+        raise AssertionError(
+            f"Unexpected native lease report: {lease_lines}.\n" + result.stdout[-4000:]
+        )
     prefix = "alice_native_integer_trace "
     traces = [
         json.loads(line[len(prefix) :])

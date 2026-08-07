@@ -11,6 +11,7 @@
 #ifndef NNUE_ALICE_NATIVE_NETWORK_H_INCLUDED
 #define NNUE_ALICE_NATIVE_NETWORK_H_INCLUDED
 
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -25,6 +26,8 @@ class Position;
 }
 
 namespace Stockfish::Eval::NNUE::AliceNative {
+
+struct ParameterView;
 
 struct WireMetadata {
     std::string normalizedPath;
@@ -84,7 +87,36 @@ class WireValidator {
 // after same-handle authentication, parsing, and canonical traversal checks.
 // Normal search never reads this object in N7.
 class QualificationNetwork {
+   private:
+    struct Parameters;
+
    public:
+    class Lease {
+       public:
+        Lease() noexcept = default;
+        ~Lease();
+
+        Lease(const Lease&)            = delete;
+        Lease& operator=(const Lease&) = delete;
+        Lease(Lease&& other) noexcept;
+        Lease& operator=(Lease&& other) noexcept;
+
+        explicit         operator bool() const noexcept;
+        ParameterView    parameter_view() const noexcept;
+        u64              generation() const noexcept;
+        std::string_view sha256() const noexcept;
+        u32              version() const noexcept;
+        u32              architecture() const noexcept;
+
+       private:
+        friend class QualificationNetwork;
+        Lease(const QualificationNetwork* owner, const Parameters* parameters) noexcept;
+        void reset() noexcept;
+
+        const QualificationNetwork* network = nullptr;
+        const Parameters*           pinned  = nullptr;
+    };
+
     QualificationNetwork();
     ~QualificationNetwork();
 
@@ -95,6 +127,10 @@ class QualificationNetwork {
 
     std::optional<std::string> load(const std::filesystem::path& file,
                                     std::string_view             expectedSha256);
+
+    std::optional<Lease>       acquire_lease(std::string& error) const noexcept;
+    bool                       has_active_lease() const noexcept;
+    std::optional<std::string> verify_lease_contract(std::string& report);
 
     bool                       loaded() const;
     u64                        generation() const;
@@ -110,10 +146,12 @@ class QualificationNetwork {
     verify_session(Position& position, Depth depth, std::string& report) const;
 
    private:
-    struct Parameters;
+    void release_lease() const noexcept;
 
     std::unique_ptr<Parameters> active;
     std::string                 lastError;
+    mutable std::atomic<u64>    activeLeases{0};
+    std::atomic_bool            replacementInProgress{false};
 };
 
 }  // namespace Stockfish::Eval::NNUE::AliceNative

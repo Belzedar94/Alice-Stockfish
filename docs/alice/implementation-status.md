@@ -306,10 +306,16 @@ accumulators and the static value with a semantic full refresh. It also requires
 balanced pushes and pops, exact undo restoration, and unchanged parameter
 identity. The opening tree and all directed transition roots pass this gate.
 
+A move-only parameter lease pins the immutable object, generation, wire
+version, architecture, and SHA-256 for the complete session. Replacement is
+rejected immediately while a lease is active, before file I/O, and preserves
+the installed pointer and identity. `alice_native_verify_lease` proves one
+rejected replacement followed by successful reacquisition of the same object.
+
 The installed object is not read by normal search, never selects the
 historical evaluator as a fallback, and reports `search=disabled`.
-An immutable parameter lease, active-reload rejection, and evaluation routing
-remain later exact-parity gates.
+The explicit evaluation selector and live search routing remain later
+exact-parity gates.
 
 ## Cross-platform verification
 

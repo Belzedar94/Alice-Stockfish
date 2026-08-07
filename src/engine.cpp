@@ -907,7 +907,6 @@ std::string Engine::native_wire_status() const { return nativeWireValidator.stat
 
 std::optional<std::string> Engine::load_native_qualification(const std::filesystem::path& file,
                                                              std::string_view expectedSha256) {
-    wait_for_search_finished();
     if (auto error = nativeQualification.load(file, expectedSha256))
         return "Alice native qualification load rejected: " + *error;
     return std::nullopt;
@@ -960,6 +959,11 @@ std::optional<std::string> Engine::verify_loaded_native_incremental(Depth       
 std::optional<std::string> Engine::verify_native_search_session(Depth depth, std::string& report) {
     wait_for_search_finished();
     return nativeQualification.verify_session(pos, depth, report);
+}
+
+std::optional<std::string> Engine::verify_native_lease(std::string& report) {
+    wait_for_search_finished();
+    return nativeQualification.verify_lease_contract(report);
 }
 
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {

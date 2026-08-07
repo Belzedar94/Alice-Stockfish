@@ -150,6 +150,16 @@ the production integer body, and requires exact parent and root restoration.
 Normal search still cannot select this session until parameter leasing and
 active-reload rejection pass their own runtime gate.
 
+The parameter object now provides a move-only lease containing its immutable
+pointer, generation, wire version, architecture, and SHA-256 identity. Session
+qualification holds that lease for the complete traversal. A replacement
+attempt while any lease is active is rejected immediately before opening or
+parsing a file; the active pointer, generation, and SHA-256 remain unchanged.
+After release, the same authenticated object can be leased again. The
+`alice_native_verify_lease` command proves the rejection and reacquisition
+contract. Evaluation routing remains disabled until the selector and live UCI
+failure paths pass their dedicated gate.
+
 ## 2. State and move semantics
 
 Every training and inference position must preserve, losslessly:
