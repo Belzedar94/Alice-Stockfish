@@ -155,7 +155,9 @@ def file_contains(path: Path, needle: bytes) -> bool:
     return False
 
 
-def verify_binary_role(path: Path, role: str, reasons: list[str]) -> None:
+def verify_binary_role(
+    path: Path, role: str, source_commit: str, reasons: list[str]
+) -> None:
     expected_format, expected_architecture = BINARY_ROLE_REQUIREMENTS[role]
     actual_format = executable_format(path)
     if actual_format != expected_format:
@@ -174,6 +176,10 @@ def verify_binary_role(path: Path, role: str, reasons: list[str]) -> None:
     )
     if not any(file_contains(path, marker) for marker in platform_markers):
         reasons.append(f"{role}: binary does not embed the expected compiler platform")
+    if not file_contains(path, source_commit[:8].encode("ascii")):
+        reasons.append(
+            f"{role}: binary does not embed the declared source commit {source_commit[:8]}"
+        )
     other_architecture = (
         "x86-64-avx2" if expected_architecture == "x86-64-bmi2" else "x86-64-bmi2"
     )
@@ -480,7 +486,7 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
             if binary_path in seen_paths:
                 reasons.append(f"{role}: artifact path is reused")
             seen_paths.add(binary_path)
-            verify_binary_role(binary_path, role, reasons)
+            verify_binary_role(binary_path, role, source_commit, reasons)
         if binary_sha is not None:
             if binary_sha in seen_binary_sha256:
                 reasons.append(f"{role}: binary SHA-256 is reused across release roles")
@@ -510,6 +516,17 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
                 reasons.append(f"{role}: invalid load-failure JSON: {error}")
     if seen_roles != BINARY_ROLES:
         reasons.append("binaries: the four platform and architecture roles are incomplete")
+    release_binary_sha256 = set(binary_sha256_by_role.values())
+    for label, identity in acceptance_identities.items():
+        engines = identity.get("engines")
+        contender = engines[0] if isinstance(engines, list) and engines else None
+        if (
+            not isinstance(contender, dict)
+            or contender.get("binary_sha256") not in release_binary_sha256
+        ):
+            reasons.append(
+                f"{label} local battery does not bind a candidate release binary"
+            )
     if network_sha is not None and "openbench_shadow_receipt" in loaded_receipts:
         verify_openbench_shadow(
             loaded_receipts["openbench_shadow_receipt"],

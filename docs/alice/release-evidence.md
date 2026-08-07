@@ -30,6 +30,9 @@ frozen historical executable
 using the frozen legacy network
 `9f9e557015a55c0a6981db64e1f3044dedb91fd8a8c1a6d4f3c45d0eee91fbd9`;
 the structural zero evaluator cannot satisfy either strength gate.
+The contender binary SHA-256 in both local batteries must equal one of the
+four candidate release artifacts; a result produced by a development or
+otherwise unlisted executable cannot authorize those artifacts.
 The OpenBench shadow receipt must repeat the candidate source commit and
 network SHA-256. Every preset must also name a release binary role and the
 matching binary SHA-256 from the candidate manifest; a clean audit from any
@@ -39,7 +42,10 @@ The four release artifacts must have four distinct SHA-256 identities. The
 auditor reads each executable header and requires x86-64 PE for Windows roles
 or x86-64 ELF for Linux roles. It also verifies the embedded Stockfish
 compilation architecture (`x86-64-bmi2` or `x86-64-avx2`) and rejects a binary
-that embeds the incompatible release architecture.
+that embeds the incompatible release architecture. Every binary must also
+embed the first eight hexadecimal characters of the manifest's full source
+commit, as emitted by Stockfish's build identity; a stale-revision artifact is
+rejected even when its platform and architecture are otherwise correct.
 
 Audit a manifest with:
 

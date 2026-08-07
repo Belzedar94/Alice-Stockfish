@@ -31,7 +31,7 @@ def write_json(path: Path, value: dict[str, object]) -> None:
     write_create_only_json(path, value)
 
 
-def write_test_binary(path: Path, role: str) -> None:
+def write_test_binary(path: Path, role: str, source_commit: str) -> None:
     executable_format, architecture = alice_release_evidence.BINARY_ROLE_REQUIREMENTS[
         role
     ]
@@ -51,7 +51,10 @@ def write_test_binary(path: Path, role: str) -> None:
         payload[18:20] = (62).to_bytes(2, "little")
         platform_marker = " on Linux"
     payload.extend(
-        f"\x00{role}\x00{architecture}\x00{platform_marker}\x00".encode("ascii")
+        (
+            f"\x00{role}\x00{architecture}\x00{platform_marker}\x00"
+            f"{source_commit[:8]}\x00"
+        ).encode("ascii")
     )
     path.write_bytes(payload)
 
@@ -198,7 +201,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         binaries = []
         for role in sorted(alice_release_evidence.BINARY_ROLES):
             binary = root / f"{role}.bin"
-            write_test_binary(binary, role)
+            write_test_binary(binary, role, source_commit)
             binary_sha = sha256_file(binary)
             bench = root / f"{role}-bench.json"
             write_json(
@@ -236,6 +239,15 @@ class ReleaseEvidenceTests(unittest.TestCase):
                     "triple_bench": reference(bench),
                     "load_failures": reference(failures),
                 }
+            )
+
+        contender_binary_sha256 = binaries[0]["artifact"]["sha256"]
+        for output in (exact, fixed):
+            self.mutate_aggregate(
+                output,
+                lambda receipt: receipt["inputs"]["engines"][0].__setitem__(
+                    "binary_sha256", contender_binary_sha256
+                ),
             )
 
         shadow = root / "shadow.json"
@@ -389,6 +401,55 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "frozen historical reference" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_local_battery_from_a_nonrelease_binary_blocks_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+
+            def select_unreleased_binary(receipt: dict[str, object]) -> None:
+                receipt["inputs"]["engines"][0]["binary_sha256"] = "f" * 64
+
+            for field in ("exact_los_receipt", "fixed_final_receipt"):
+                path = Path(value[field]["path"])
+                self.mutate_aggregate(path, select_unreleased_binary)
+                value[field]["sha256"] = sha256_file(path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "candidate release binary" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_binary_from_another_source_commit_blocks_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            binary_entry = value["binaries"][1]
+            binary_path = Path(binary_entry["artifact"]["path"])
+            write_test_binary(binary_path, binary_entry["role"], "b" * 40)
+            binary_sha = sha256_file(binary_path)
+            binary_entry["artifact"]["sha256"] = binary_sha
+            for field in ("triple_bench", "load_failures"):
+                evidence_path = Path(binary_entry[field]["path"])
+                evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                evidence["binary_sha256"] = binary_sha
+                evidence_path.write_bytes(canonical_json_bytes(evidence))
+                binary_entry[field]["sha256"] = sha256_file(evidence_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "declared source commit" in reason
                 for reason in receipt["blocking_reasons"]
             )
         )
