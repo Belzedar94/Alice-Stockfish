@@ -187,6 +187,60 @@ class ReleaseEvidenceTests(unittest.TestCase):
         network.write_bytes(b"native network fixture\n")
         network_sha = sha256_file(network)
 
+        dataset_manifest = root / "dataset-manifest.json"
+        write_json(
+            dataset_manifest,
+            {
+                "schema": "alice-training-dataset-manifest-v1",
+                "training_run_id": "training-fixture",
+                "position_count": 1024,
+                "train_position_count": 900,
+                "validation_position_count": 124,
+                "split_seed": 7,
+            },
+        )
+        checkpoint = root / "checkpoint.pt"
+        checkpoint.write_bytes(b"trained checkpoint fixture\n")
+        export_receipt = root / "export-receipt.json"
+        write_json(
+            export_receipt,
+            {
+                "schema": "alice-native-export-receipt-v1",
+                "training_run_id": "training-fixture",
+                "checkpoint_sha256": sha256_file(checkpoint),
+                "network_sha256": network_sha,
+                "network_bytes": network.stat().st_size,
+                "element_count": 2048,
+                "element_mismatches": 0,
+                "deterministic_reexport_sha256": network_sha,
+            },
+        )
+        dataset_reference = reference(dataset_manifest)
+        checkpoint_reference = reference(checkpoint)
+        export_reference = reference(export_receipt)
+        gate_references = {}
+        for gate in (f"G{index}" for index in range(1, 9)):
+            sample_count = (
+                1024 if gate in {"G1", "G2"} else 2048 if gate in {"G4", "G5"} else 32
+            )
+            report = root / f"{gate.lower()}-report.json"
+            write_json(
+                report,
+                {
+                    "schema": "alice-native-gate-report-v1",
+                    "gate": gate,
+                    "status": "PASS",
+                    "training_run_id": "training-fixture",
+                    "network_sha256": network_sha,
+                    "dataset_manifest_sha256": dataset_reference["sha256"],
+                    "checkpoint_sha256": checkpoint_reference["sha256"],
+                    "export_receipt_sha256": export_reference["sha256"],
+                    "sample_count": sample_count,
+                    "mismatch_count": 0,
+                },
+            )
+            gate_references[gate] = reference(report)
+
         qualification = root / "qualification.json"
         write_json(
             qualification,
@@ -196,18 +250,13 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 "network_sha256": network_sha,
                 "network_kind": "trained",
                 "training_run_id": "training-fixture",
-                "dataset_manifest_sha256": "1" * 64,
-                "dataset_position_count": 1024,
-                "checkpoint_sha256": "2" * 64,
-                "export_receipt_sha256": "3" * 64,
-                "checkpoint_file_element_count": 2048,
-                "checkpoint_file_element_mismatches": 0,
-                "file_engine_position_count": 32,
-                "file_engine_centipawn_difference": 0,
-                "incremental_full_position_count": 32,
-                "incremental_full_mismatches": 0,
-                "network_parameter_nonzero_count": 64,
-                "gates": {f"G{index}": "PASS" for index in range(1, 9)},
+                "dataset_manifest": dataset_reference,
+                "checkpoint": checkpoint_reference,
+                "export_receipt": export_reference,
+                "network_parameter_nonzero_bytes": (
+                    alice_release_evidence.count_native_parameter_nonzero_bytes(network)
+                ),
+                "gates": gate_references,
             },
         )
 
@@ -552,7 +601,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
             manifest, value, size = self.build_candidate(root)
             qualification_path = Path(value["native_qualification"]["path"])
             qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
-            qualification["network_parameter_nonzero_count"] = 0
+            qualification["network_parameter_nonzero_bytes"] = 0
             qualification_path.write_text(json.dumps(qualification), encoding="utf-8")
             value["native_qualification"]["sha256"] = sha256_file(qualification_path)
             manifest.write_text(json.dumps(value), encoding="utf-8")
@@ -560,16 +609,15 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 receipt = alice_release_evidence.audit_release_candidate(manifest)
         self.assertFalse(receipt["strength_release_authorized"])
         self.assertTrue(
-            any("network_parameter_nonzero_count" in reason for reason in receipt["blocking_reasons"])
+            any(
+                "no verified nonzero parameters" in reason
+                for reason in receipt["blocking_reasons"]
+            )
         )
 
-    def test_boolean_mismatch_counters_block_release(self) -> None:
-        fields = (
-            "checkpoint_file_element_mismatches",
-            "file_engine_centipawn_difference",
-            "incremental_full_mismatches",
-        )
-        for field in fields:
+    def test_gate_report_numeric_fields_reject_booleans(self) -> None:
+        cases = (("sample_count", True), ("mismatch_count", False))
+        for field, replacement in cases:
             with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 manifest, value, size = self.build_candidate(root)
@@ -577,10 +625,13 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 qualification = json.loads(
                     qualification_path.read_text(encoding="utf-8")
                 )
-                qualification[field] = False
-                qualification_path.write_text(
-                    json.dumps(qualification), encoding="utf-8"
-                )
+                report_reference = qualification["gates"]["G3"]
+                report_path = Path(report_reference["path"])
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                report[field] = replacement
+                report_path.write_bytes(canonical_json_bytes(report))
+                report_reference["sha256"] = sha256_file(report_path)
+                qualification_path.write_bytes(canonical_json_bytes(qualification))
                 value["native_qualification"]["sha256"] = sha256_file(
                     qualification_path
                 )
@@ -591,8 +642,32 @@ class ReleaseEvidenceTests(unittest.TestCase):
                     receipt = alice_release_evidence.audit_release_candidate(manifest)
             self.assertFalse(receipt["strength_release_authorized"])
             self.assertTrue(
-                any(field in reason for reason in receipt["blocking_reasons"])
+                any(
+                    "G3 report did not pass exactly" in reason
+                    for reason in receipt["blocking_reasons"]
+                )
             )
+
+    def test_qualification_artifact_hashes_are_recomputed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            qualification = json.loads(
+                Path(value["native_qualification"]["path"]).read_text(encoding="utf-8")
+            )
+            checkpoint_path = Path(qualification["checkpoint"]["path"])
+            checkpoint_path.write_bytes(b"tampered checkpoint\n")
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "native qualification checkpoint: SHA-256 mismatch" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
 
     def test_local_battery_for_another_network_blocks_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

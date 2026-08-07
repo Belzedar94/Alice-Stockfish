@@ -2,39 +2,39 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-native-qualification-v1.schema.json",
   "$defs": {
-    "positiveInteger": {"minimum": 1, "type": "integer"},
-    "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+    "reference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {"minLength": 1, "type": "string"},
+        "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["path", "sha256"],
+      "type": "object"
+    }
   },
   "additionalProperties": false,
   "properties": {
-    "checkpoint_file_element_count": {"$ref": "#/$defs/positiveInteger"},
-    "checkpoint_file_element_mismatches": {"const": 0},
-    "checkpoint_sha256": {"$ref": "#/$defs/sha256"},
-    "dataset_manifest_sha256": {"$ref": "#/$defs/sha256"},
-    "dataset_position_count": {"$ref": "#/$defs/positiveInteger"},
-    "export_receipt_sha256": {"$ref": "#/$defs/sha256"},
-    "file_engine_centipawn_difference": {"const": 0},
-    "file_engine_position_count": {"$ref": "#/$defs/positiveInteger"},
+    "checkpoint": {"$ref": "#/$defs/reference"},
+    "dataset_manifest": {"$ref": "#/$defs/reference"},
+    "export_receipt": {"$ref": "#/$defs/reference"},
     "gates": {
       "additionalProperties": false,
       "properties": {
-        "G1": {"const": "PASS"},
-        "G2": {"const": "PASS"},
-        "G3": {"const": "PASS"},
-        "G4": {"const": "PASS"},
-        "G5": {"const": "PASS"},
-        "G6": {"const": "PASS"},
-        "G7": {"const": "PASS"},
-        "G8": {"const": "PASS"}
+        "G1": {"$ref": "#/$defs/reference"},
+        "G2": {"$ref": "#/$defs/reference"},
+        "G3": {"$ref": "#/$defs/reference"},
+        "G4": {"$ref": "#/$defs/reference"},
+        "G5": {"$ref": "#/$defs/reference"},
+        "G6": {"$ref": "#/$defs/reference"},
+        "G7": {"$ref": "#/$defs/reference"},
+        "G8": {"$ref": "#/$defs/reference"}
       },
       "required": ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"],
       "type": "object"
     },
-    "incremental_full_mismatches": {"const": 0},
-    "incremental_full_position_count": {"$ref": "#/$defs/positiveInteger"},
     "network_kind": {"const": "trained"},
-    "network_parameter_nonzero_count": {"$ref": "#/$defs/positiveInteger"},
-    "network_sha256": {"$ref": "#/$defs/sha256"},
+    "network_parameter_nonzero_bytes": {"minimum": 1, "type": "integer"},
+    "network_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
     "schema": {"const": "alice-native-qualification-v1"},
     "status": {"const": "qualified"},
     "training_run_id": {
@@ -48,17 +48,10 @@
     "network_sha256",
     "network_kind",
     "training_run_id",
-    "dataset_manifest_sha256",
-    "dataset_position_count",
-    "checkpoint_sha256",
-    "export_receipt_sha256",
-    "checkpoint_file_element_count",
-    "checkpoint_file_element_mismatches",
-    "file_engine_position_count",
-    "file_engine_centipawn_difference",
-    "incremental_full_position_count",
-    "incremental_full_mismatches",
-    "network_parameter_nonzero_count",
+    "dataset_manifest",
+    "checkpoint",
+    "export_receipt",
+    "network_parameter_nonzero_bytes",
     "gates"
   ],
   "type": "object"

@@ -60,17 +60,10 @@ QUALIFICATION_FIELDS = {
     "network_sha256",
     "network_kind",
     "training_run_id",
-    "dataset_manifest_sha256",
-    "dataset_position_count",
-    "checkpoint_sha256",
-    "export_receipt_sha256",
-    "checkpoint_file_element_count",
-    "checkpoint_file_element_mismatches",
-    "file_engine_position_count",
-    "file_engine_centipawn_difference",
-    "incremental_full_position_count",
-    "incremental_full_mismatches",
-    "network_parameter_nonzero_count",
+    "dataset_manifest",
+    "checkpoint",
+    "export_receipt",
+    "network_parameter_nonzero_bytes",
     "gates",
 }
 SHADOW_FIELDS = {
@@ -166,6 +159,50 @@ SHADOW_TIMING = {
 }
 SHADOW_ENGINE_OPTIONS = {"Threads": "1", "Hash": "512", "Move Overhead": "10"}
 SHADOW_WORKER_CONFIGURATION = {"cpuflags": [], "pairing": "color-swapped-pairs"}
+NATIVE_WIRE_BYTES = 220_315_747
+NATIVE_WIRE_VERSION = 0xA11CE001
+NATIVE_ARCHITECTURE_HASH = 0xEC7CCD50
+NATIVE_FEATURE_TENSOR_BYTES = (
+    2 * 1_024
+    + 119_616 * 1_024
+    + 119_616 * 8 * 4
+    + 45_056 * 1_024 * 2
+    + 45_056 * 8 * 4
+)
+NATIVE_DENSE_STACK_TENSOR_BYTES = (
+    32 * 4 + 32 * 1_024 + 32 * 4 + 32 * 64 + 4 + 128
+)
+NATIVE_LAYER_STACKS = 8
+DATASET_MANIFEST_FIELDS = {
+    "schema",
+    "training_run_id",
+    "position_count",
+    "train_position_count",
+    "validation_position_count",
+    "split_seed",
+}
+EXPORT_RECEIPT_FIELDS = {
+    "schema",
+    "training_run_id",
+    "checkpoint_sha256",
+    "network_sha256",
+    "network_bytes",
+    "element_count",
+    "element_mismatches",
+    "deterministic_reexport_sha256",
+}
+GATE_REPORT_FIELDS = {
+    "schema",
+    "gate",
+    "status",
+    "training_run_id",
+    "network_sha256",
+    "dataset_manifest_sha256",
+    "checkpoint_sha256",
+    "export_receipt_sha256",
+    "sample_count",
+    "mismatch_count",
+}
 
 
 def load_object(path: Path) -> dict[str, object]:
@@ -294,50 +331,202 @@ def verify_acceptance(
     return aggregate_input_identity(receipt)
 
 
+def count_nonzero_bytes(stream, byte_count: int) -> int | None:
+    remaining = byte_count
+    nonzero = 0
+    while remaining:
+        chunk = stream.read(min(1024 * 1024, remaining))
+        if not chunk:
+            return None
+        nonzero += len(chunk) - chunk.count(0)
+        remaining -= len(chunk)
+    return nonzero
+
+
+def count_native_parameter_nonzero_bytes(path: Path) -> int | None:
+    """Count only tensor bytes, excluding native wire metadata and hashes."""
+
+    if path.stat().st_size != NATIVE_WIRE_BYTES:
+        with path.open("rb") as stream:
+            return count_nonzero_bytes(stream, path.stat().st_size)
+    with path.open("rb") as stream:
+        header = stream.read(12)
+        if len(header) != 12:
+            return None
+        if (
+            int.from_bytes(header[0:4], "little") != NATIVE_WIRE_VERSION
+            or int.from_bytes(header[4:8], "little") != NATIVE_ARCHITECTURE_HASH
+        ):
+            return None
+        manifest_length = int.from_bytes(header[8:12], "little")
+        expected_manifest_length = NATIVE_WIRE_BYTES - (
+            12
+            + 4
+            + NATIVE_FEATURE_TENSOR_BYTES
+            + NATIVE_LAYER_STACKS * (4 + NATIVE_DENSE_STACK_TENSOR_BYTES)
+        )
+        if manifest_length != expected_manifest_length:
+            return None
+        stream.seek(manifest_length, 1)
+        if len(stream.read(4)) != 4:
+            return None
+        nonzero = count_nonzero_bytes(stream, NATIVE_FEATURE_TENSOR_BYTES)
+        if nonzero is None:
+            return None
+        for _ in range(NATIVE_LAYER_STACKS):
+            if len(stream.read(4)) != 4:
+                return None
+            stack_nonzero = count_nonzero_bytes(stream, NATIVE_DENSE_STACK_TENSOR_BYTES)
+            if stack_nonzero is None:
+                return None
+            nonzero += stack_nonzero
+        if stream.read(1):
+            return None
+        return nonzero
+
+
 def verify_native_qualification(
-    receipt: dict[str, object], network_sha256: str, reasons: list[str]
+    receipt: dict[str, object],
+    network_path: Path,
+    network_sha256: str,
+    reasons: list[str],
 ) -> None:
     required_gates = {f"G{index}" for index in range(1, 9)}
     gates = receipt.get("gates")
+    training_run_id = receipt.get("training_run_id")
     if (
         set(receipt) != QUALIFICATION_FIELDS
         or receipt.get("schema") != "alice-native-qualification-v1"
         or receipt.get("status") != "qualified"
         or receipt.get("network_sha256") != network_sha256
         or receipt.get("network_kind") != "trained"
-        or not isinstance(receipt.get("training_run_id"), str)
-        or not ID_RE.fullmatch(str(receipt.get("training_run_id")))
+        or not isinstance(training_run_id, str)
+        or not ID_RE.fullmatch(training_run_id)
         or not isinstance(gates, dict)
         or set(gates) != required_gates
-        or any(value != "PASS" for value in gates.values())
     ):
         reasons.append("native qualification: trained G1-G8 evidence is incomplete")
-    for field in (
-        "dataset_manifest_sha256",
-        "checkpoint_sha256",
-        "export_receipt_sha256",
+        return
+
+    dataset_path, dataset_sha = verify_reference(
+        receipt.get("dataset_manifest"), "native qualification dataset manifest", reasons
+    )
+    checkpoint_path, checkpoint_sha = verify_reference(
+        receipt.get("checkpoint"), "native qualification checkpoint", reasons
+    )
+    export_path, export_sha = verify_reference(
+        receipt.get("export_receipt"), "native qualification export receipt", reasons
+    )
+    dataset = load_evidence_object(
+        dataset_path, "native qualification dataset manifest", reasons
+    )
+    export = load_evidence_object(export_path, "native qualification export receipt", reasons)
+    if checkpoint_path is not None and checkpoint_path.stat().st_size == 0:
+        reasons.append("native qualification: checkpoint is empty")
+
+    dataset_position_count: int | None = None
+    if dataset is not None:
+        try:
+            exact_fields(dataset, DATASET_MANIFEST_FIELDS, "native qualification dataset")
+        except ValueError as error:
+            reasons.append(str(error))
+        position_count = dataset.get("position_count")
+        train_count = dataset.get("train_position_count")
+        validation_count = dataset.get("validation_position_count")
+        split_seed = dataset.get("split_seed")
+        if (
+            dataset.get("schema") != "alice-training-dataset-manifest-v1"
+            or dataset.get("training_run_id") != training_run_id
+            or type(position_count) is not int
+            or type(train_count) is not int
+            or type(validation_count) is not int
+            or type(split_seed) is not int
+            or position_count <= 0
+            or train_count <= 0
+            or validation_count <= 0
+            or train_count + validation_count != position_count
+        ):
+            reasons.append("native qualification: dataset manifest is inconsistent")
+        else:
+            dataset_position_count = position_count
+
+    export_element_count: int | None = None
+    if export is not None:
+        try:
+            exact_fields(export, EXPORT_RECEIPT_FIELDS, "native qualification export receipt")
+        except ValueError as error:
+            reasons.append(str(error))
+        element_count = export.get("element_count")
+        if (
+            export.get("schema") != "alice-native-export-receipt-v1"
+            or export.get("training_run_id") != training_run_id
+            or export.get("checkpoint_sha256") != checkpoint_sha
+            or export.get("network_sha256") != network_sha256
+            or export.get("deterministic_reexport_sha256") != network_sha256
+            or type(export.get("network_bytes")) is not int
+            or export.get("network_bytes") != network_path.stat().st_size
+            or type(element_count) is not int
+            or element_count <= 0
+            or type(export.get("element_mismatches")) is not int
+            or export.get("element_mismatches") != 0
+        ):
+            reasons.append("native qualification: export receipt is inconsistent")
+        else:
+            export_element_count = element_count
+
+    computed_nonzero = count_native_parameter_nonzero_bytes(network_path)
+    declared_nonzero = receipt.get("network_parameter_nonzero_bytes")
+    if (
+        type(declared_nonzero) is not int
+        or computed_nonzero is None
+        or declared_nonzero != computed_nonzero
+        or computed_nonzero <= 0
     ):
-        value = receipt.get(field)
-        if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
-            reasons.append(f"native qualification: {field} is missing")
-    for field in (
-        "checkpoint_file_element_mismatches",
-        "file_engine_centipawn_difference",
-        "incremental_full_mismatches",
-    ):
-        value = receipt.get(field)
-        if type(value) is not int or value != 0:
-            reasons.append(f"native qualification: {field} is not zero")
-    for field in (
-        "dataset_position_count",
-        "checkpoint_file_element_count",
-        "file_engine_position_count",
-        "incremental_full_position_count",
-        "network_parameter_nonzero_count",
-    ):
-        value = receipt.get(field)
-        if type(value) is not int or value <= 0:
-            reasons.append(f"native qualification: {field} is not positive")
+        reasons.append(
+            "native qualification: candidate network has no verified nonzero parameters"
+        )
+
+    gate_hashes: set[str] = set()
+    for gate in sorted(required_gates):
+        report_path, report_sha = verify_reference(
+            gates.get(gate), f"native qualification {gate} report", reasons
+        )
+        report = load_evidence_object(
+            report_path, f"native qualification {gate} report", reasons
+        )
+        if report_sha is not None:
+            gate_hashes.add(report_sha)
+        if report is None:
+            continue
+        try:
+            exact_fields(report, GATE_REPORT_FIELDS, f"native qualification {gate} report")
+        except ValueError as error:
+            reasons.append(str(error))
+        sample_count = report.get("sample_count")
+        mismatch_count = report.get("mismatch_count")
+        expected_sample_count = None
+        if gate in {"G1", "G2"}:
+            expected_sample_count = dataset_position_count
+        elif gate in {"G4", "G5"}:
+            expected_sample_count = export_element_count
+        if (
+            report.get("schema") != "alice-native-gate-report-v1"
+            or report.get("gate") != gate
+            or report.get("status") != "PASS"
+            or report.get("training_run_id") != training_run_id
+            or report.get("network_sha256") != network_sha256
+            or report.get("dataset_manifest_sha256") != dataset_sha
+            or report.get("checkpoint_sha256") != checkpoint_sha
+            or report.get("export_receipt_sha256") != export_sha
+            or type(sample_count) is not int
+            or sample_count <= 0
+            or (expected_sample_count is not None and sample_count != expected_sample_count)
+            or type(mismatch_count) is not int
+            or mismatch_count != 0
+        ):
+            reasons.append(f"native qualification: {gate} report did not pass exactly")
+    if len(gate_hashes) != 8:
+        reasons.append("native qualification: G1-G8 reports are not distinct")
 
 
 def verify_triple_bench(
@@ -763,9 +952,16 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
             except (UnicodeDecodeError, ValueError) as error:
                 reasons.append(f"{label}: invalid JSON: {error}")
 
-    if network_sha is not None and "native_qualification" in loaded_receipts:
+    if (
+        network_path is not None
+        and network_sha is not None
+        and "native_qualification" in loaded_receipts
+    ):
         verify_native_qualification(
-            loaded_receipts["native_qualification"], network_sha, reasons
+            loaded_receipts["native_qualification"],
+            network_path,
+            network_sha,
+            reasons,
         )
     acceptance_identities: dict[str, dict[str, object]] = {}
     if "exact_los_receipt" in loaded_receipts:

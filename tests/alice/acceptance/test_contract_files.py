@@ -34,6 +34,15 @@ class ContractFileTests(unittest.TestCase):
         native_qualification_schema = load_contract(
             "schemas/alice-native-qualification-v1.schema.json"
         )
+        dataset_manifest_schema = load_contract(
+            "schemas/alice-training-dataset-manifest-v1.schema.json"
+        )
+        native_export_schema = load_contract(
+            "schemas/alice-native-export-receipt-v1.schema.json"
+        )
+        native_gate_schema = load_contract(
+            "schemas/alice-native-gate-report-v1.schema.json"
+        )
         openbench_shadow_schema = load_contract(
             "schemas/alice-openbench-shadow-receipt-v1.schema.json"
         )
@@ -82,6 +91,18 @@ class ContractFileTests(unittest.TestCase):
         self.assertEqual(
             native_qualification_schema["properties"]["schema"]["const"],
             "alice-native-qualification-v1",
+        )
+        self.assertEqual(
+            dataset_manifest_schema["properties"]["schema"]["const"],
+            "alice-training-dataset-manifest-v1",
+        )
+        self.assertEqual(
+            native_export_schema["properties"]["schema"]["const"],
+            "alice-native-export-receipt-v1",
+        )
+        self.assertEqual(
+            native_gate_schema["properties"]["schema"]["const"],
+            "alice-native-gate-report-v1",
         )
         self.assertEqual(
             openbench_shadow_schema["properties"]["schema"]["const"],

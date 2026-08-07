@@ -26,9 +26,19 @@ by `0x01`. The auditor streams both files and accepts no other byte difference.
 The three descriptor, command, and output identities must be distinct, and the
 two mutated inputs must differ from both each other and the candidate network.
 The native network must have the exact AliceNative-v1 wire size.
-The qualification receipt must identify a trained run, positive dataset and
-comparison sample sizes, a positive nonzero-parameter count, and zero
-checkpoint/file, file/engine, and incremental/full mismatches.
+The qualification receipt must identify a trained run and reference the exact
+dataset manifest, checkpoint, export receipt, and eight distinct gate reports
+by absolute path and SHA-256. The auditor reopens every artifact and recomputes
+its digest. Dataset counts and split identity come from the dataset manifest;
+checkpoint and candidate-network identities, wire size, deterministic
+re-export identity, element count, and zero serialization mismatches come from
+the export receipt. Every G1-G8 report must bind all three artifact identities,
+the candidate network, and the same training run, with a positive sample count
+and an exact zero mismatch count. G1/G2 samples are checked against the dataset
+count and G4/G5 against the exported element count. The auditor independently
+streams the candidate wire tensors, excludes metadata and architecture hashes,
+and requires the receipt's positive nonzero-byte count to match the bytes on
+disk; an all-zero or sentinel parameter payload cannot qualify.
 Both local batteries must bind the same pinned inputs, select the native
 evaluator, and identify the exact candidate network. Their normalized worker
 configuration identity includes every UCI option and every worker-level
