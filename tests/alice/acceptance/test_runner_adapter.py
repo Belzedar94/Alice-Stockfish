@@ -100,6 +100,27 @@ class RunnerAdapterTests(unittest.TestCase):
                     response, 7, pair_directory, "fen", ENGINE_NAMES
                 )
 
+    def test_durable_result_must_match_exact_json_types(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pair_directory = Path(temporary) / "pair"
+            response = materialize_pair(pair_directory)
+            stored = json.loads(
+                (pair_directory / "result.jsonl").read_text(encoding="utf-8")
+            )
+            stored["games"][0]["game_number"] = 1.0
+            (pair_directory / "result.jsonl").write_bytes(
+                canonical_json_bytes(stored)
+            )
+            artifacts = response["artifacts"]
+            assert isinstance(artifacts, dict)
+            artifacts["result_jsonl_sha256"] = sha256_file(
+                pair_directory / "result.jsonl"
+            )
+            with self.assertRaisesRegex(ValueError, "durable result differ"):
+                validate_worker_response(
+                    response, 7, pair_directory, "fen", ENGINE_NAMES
+                )
+
     def test_self_consistent_but_contradictory_score_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pair_directory = Path(temporary) / "pair"

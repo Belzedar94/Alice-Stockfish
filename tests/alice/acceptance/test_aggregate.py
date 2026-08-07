@@ -258,6 +258,28 @@ class AggregateReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "sealed snapshot does not match"):
                 aggregate_receipts("bad-seal-result", "fixed-final", paths)
 
+    def test_seal_numeric_fields_require_exact_integer_types(self) -> None:
+        cases = (
+            ("admitted_pairs", 51.0, "sealed snapshot does not match"),
+            ("attempt_ordinal", 50.0, "attempt ordinal"),
+        )
+        for field, replacement, message in cases:
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                paths = self.materialize(root, "exact-los")
+                bad = control_receipt("STC", "exact-los")
+                bad["sealed_snapshot"][field] = replacement
+                bad["sealed_snapshot_sha256"] = hashlib.sha256(
+                    canonical_json_bytes(bad["sealed_snapshot"])
+                ).hexdigest()
+                paths["STC"].unlink()
+                write_create_only_json(paths["STC"], bad)
+                with self.assertRaisesRegex(ValueError, message):
+                    aggregate_receipts("bad-seal-type", "exact-los", paths)
+
     def test_boolean_statistic_cannot_replace_a_numeric_measurement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

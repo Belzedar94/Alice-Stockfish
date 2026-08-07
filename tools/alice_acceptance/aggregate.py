@@ -347,14 +347,18 @@ def validate_sealed_snapshot(
         "stop_reason",
         "conclusion",
     ):
-        if seal.get(field) != result.get(field):
+        if canonical_json_bytes(seal.get(field)) != canonical_json_bytes(
+            result.get(field)
+        ):
             raise ValueError(
                 f"{control} sealed snapshot does not match final result field {field}"
             )
     admitted_pairs = result.get("admitted_pairs")
+    attempt_ordinal = seal.get("attempt_ordinal")
     if (
         type(admitted_pairs) is not int
-        or seal.get("attempt_ordinal") != admitted_pairs - 1
+        or type(attempt_ordinal) is not int
+        or attempt_ordinal != admitted_pairs - 1
     ):
         raise ValueError(f"{control} sealed snapshot attempt ordinal is inconsistent")
 

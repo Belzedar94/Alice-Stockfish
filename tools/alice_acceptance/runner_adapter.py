@@ -151,7 +151,7 @@ def validate_worker_response(
     if artifacts.get("result_jsonl_sha256") != sha256_file(result_path):
         raise ValueError("pair result-file SHA-256 mismatch")
     stored = parse_strict_json(result_path.read_bytes())
-    if stored != result:
+    if canonical_json_bytes(stored) != canonical_json_bytes(result):
         raise ValueError("pair response and durable result differ")
     classes = result.get("game_classes")
     scores = result.get("game_scores")
