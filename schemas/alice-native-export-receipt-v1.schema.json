@@ -8,7 +8,7 @@
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
-    "element_count": {"minimum": 1, "type": "integer"},
+    "element_count": {"const": 170222600},
     "element_mismatches": {"const": 0},
     "network_bytes": {"minimum": 1, "type": "integer"},
     "network_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},

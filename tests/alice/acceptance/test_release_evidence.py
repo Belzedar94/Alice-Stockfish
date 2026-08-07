@@ -23,6 +23,10 @@ from tools.alice_acceptance.statistics import paired_statistics
 from tools import alice_release_evidence
 
 
+RUNNER_FIXTURE = Path(__file__).resolve().with_name("fake_pair_worker.py")
+RUNNER_FIXTURE_SHA256 = sha256_file(RUNNER_FIXTURE)
+
+
 def reference(path: Path) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": sha256_file(path)}
 
@@ -95,8 +99,10 @@ def control_receipt(
             "canonical_definition_sha256": "2" * 64,
             "book_sha256": "3" * 64,
             "opening_seed": opening_seed,
-            "pair_worker_sha256": "4" * 64,
-            "pair_core_sha256": "5" * 64,
+            "pair_worker_sha256": RUNNER_FIXTURE_SHA256,
+            "pair_worker_path": str(RUNNER_FIXTURE),
+            "pair_core_sha256": RUNNER_FIXTURE_SHA256,
+            "pair_core_path": str(RUNNER_FIXTURE),
             "source_worker_definition_sha256": "6" * 64,
             "worker_definition_sha256": "7" * 64,
             "normalized_worker_configuration_sha256": "c" * 64,
@@ -210,7 +216,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 "checkpoint_sha256": sha256_file(checkpoint),
                 "network_sha256": network_sha,
                 "network_bytes": network.stat().st_size,
-                "element_count": 2048,
+                "element_count": alice_release_evidence.NATIVE_PARAMETER_ELEMENTS,
                 "element_mismatches": 0,
                 "deterministic_reexport_sha256": network_sha,
             },
@@ -220,9 +226,12 @@ class ReleaseEvidenceTests(unittest.TestCase):
         export_reference = reference(export_receipt)
         gate_references = {}
         for gate in (f"G{index}" for index in range(1, 9)):
-            sample_count = (
-                1024 if gate in {"G1", "G2"} else 2048 if gate in {"G4", "G5"} else 32
-            )
+            if gate in {"G1", "G2"}:
+                sample_count = 1024
+            elif gate in {"G4", "G5"}:
+                sample_count = alice_release_evidence.NATIVE_PARAMETER_ELEMENTS
+            else:
+                sample_count = 32
             report = root / f"{gate.lower()}-report.json"
             write_json(
                 report,
@@ -665,6 +674,45 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "native qualification checkpoint: SHA-256 mismatch" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_partial_native_parameter_count_blocks_qualification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            qualification_path = Path(value["native_qualification"]["path"])
+            qualification = json.loads(
+                qualification_path.read_text(encoding="utf-8")
+            )
+            export_reference = qualification["export_receipt"]
+            export_path = Path(export_reference["path"])
+            export = json.loads(export_path.read_text(encoding="utf-8"))
+            export["element_count"] = 1
+            export_path.write_bytes(canonical_json_bytes(export))
+            export_reference["sha256"] = sha256_file(export_path)
+            for gate, report_reference in qualification["gates"].items():
+                report_path = Path(report_reference["path"])
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                report["export_receipt_sha256"] = export_reference["sha256"]
+                if gate in {"G4", "G5"}:
+                    report["sample_count"] = 1
+                report_path.write_bytes(canonical_json_bytes(report))
+                report_reference["sha256"] = sha256_file(report_path)
+            qualification_path.write_bytes(canonical_json_bytes(qualification))
+            value["native_qualification"]["sha256"] = sha256_file(
+                qualification_path
+            )
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "export receipt is inconsistent" in reason
                 for reason in receipt["blocking_reasons"]
             )
         )

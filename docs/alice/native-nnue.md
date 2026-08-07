@@ -328,8 +328,9 @@ PASS object. A qualification receipt references the dataset manifest,
 checkpoint, export receipt, and one report for every gate by absolute path and
 SHA-256. The release auditor opens and hashes each artifact, verifies their
 training-run and candidate-network cross-references, derives dataset and
-serialized-element sample counts from the referenced manifests, and requires
-zero mismatches in every gate report. It also counts nonzero bytes directly in
+serialized-element sample counts from the referenced manifests, requires the
+frozen architecture's complete `170222600` scalar elements, and requires zero
+mismatches in every gate report. It also counts nonzero bytes directly in
 the AliceNative-v1 tensor regions while excluding headers, manifests, and
 architecture hashes. This independent count must equal the qualification
 receipt and must be positive.

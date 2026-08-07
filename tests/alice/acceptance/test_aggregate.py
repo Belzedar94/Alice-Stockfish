@@ -11,9 +11,17 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tools.alice_acceptance.aggregate import FIXED_GAMES, aggregate_receipts
-from tools.alice_acceptance.evidence import canonical_json_bytes, write_create_only_json
+from tools.alice_acceptance.evidence import (
+    canonical_json_bytes,
+    sha256_file,
+    write_create_only_json,
+)
 from tools.alice_acceptance.statistics import paired_statistics
 from tools.alice_acceptance.policy import TIMING_CONTROLS
+
+
+RUNNER_FIXTURE = Path(__file__).resolve().with_name("fake_pair_worker.py")
+RUNNER_FIXTURE_SHA256 = sha256_file(RUNNER_FIXTURE)
 
 
 def control_receipt(
@@ -50,8 +58,10 @@ def control_receipt(
             "canonical_definition_sha256": "2" * 64,
             "book_sha256": "3" * 64,
             "opening_seed": opening_seed,
-            "pair_worker_sha256": "4" * 64,
-            "pair_core_sha256": "5" * 64,
+            "pair_worker_sha256": RUNNER_FIXTURE_SHA256,
+            "pair_worker_path": str(RUNNER_FIXTURE),
+            "pair_core_sha256": RUNNER_FIXTURE_SHA256,
+            "pair_core_path": str(RUNNER_FIXTURE),
             "source_worker_definition_sha256": "6" * 64,
             "worker_definition_sha256": "7" * 64,
             "normalized_worker_configuration_sha256": "c" * 64,
@@ -186,6 +196,25 @@ class AggregateReceiptTests(unittest.TestCase):
                 write_create_only_json(paths["STC"], bad)
                 with self.assertRaisesRegex(ValueError, "artifact hashes"):
                     aggregate_receipts("bad-artifacts", "exact-los", paths)
+
+    def test_runner_artifact_hashes_are_recomputed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            worker = root / "pair-worker.py"
+            worker.write_bytes(b"trusted runner fixture\n")
+            worker_sha = sha256_file(worker)
+            paths = {}
+            for control in ("VSTC", "STC", "LTC"):
+                receipt = control_receipt(control, "exact-los")
+                for artifact in ("pair_worker", "pair_core"):
+                    receipt["inputs"][f"{artifact}_path"] = str(worker.resolve())
+                    receipt["inputs"][f"{artifact}_sha256"] = worker_sha
+                path = root / f"{control}.json"
+                write_create_only_json(path, receipt)
+                paths[control] = path
+            worker.write_bytes(b"modified runner fixture\n")
+            with self.assertRaisesRegex(ValueError, "pair_worker SHA-256 mismatch"):
+                aggregate_receipts("tampered-runner", "exact-los", paths)
 
     def test_policy_numeric_fields_require_exact_integer_types(self) -> None:
         cases = (

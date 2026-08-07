@@ -101,6 +101,10 @@ class ContractFileTests(unittest.TestCase):
             "alice-native-export-receipt-v1",
         )
         self.assertEqual(
+            native_export_schema["properties"]["element_count"]["const"],
+            170_222_600,
+        )
+        self.assertEqual(
             native_gate_schema["properties"]["schema"]["const"],
             "alice-native-gate-report-v1",
         )

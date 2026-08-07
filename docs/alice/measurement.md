@@ -132,9 +132,12 @@ A clean aggregate requires zero discarded pairs and zero abort evidence.
 ## 8. Evidence and commands
 
 Before a control starts, snapshot the pinned book, pair worker, runner core,
-engine binaries, networks, and rewritten worker definition. Run a complete
-pair on each persistent process as preflight. The preflight is not part of the
-statistical sample.
+engine binaries, networks, and rewritten worker definition. The control input
+inventory preserves absolute paths and SHA-256 values for both runner-code
+snapshots. Every aggregation pass reopens those files and recomputes both
+digests; a missing, modified, or merely self-declared runner identity fails
+closed. Run a complete pair on each persistent process as preflight. The
+preflight is not part of the statistical sample.
 
 Run one control from an `alice-acceptance-run-definition-v1` file:
 

@@ -102,7 +102,9 @@ INVENTORY_FIELDS = {
     "book_sha256",
     "opening_seed",
     "pair_worker_sha256",
+    "pair_worker_path",
     "pair_core_sha256",
+    "pair_core_path",
     "source_worker_definition_sha256",
     "worker_definition_sha256",
     "normalized_worker_configuration_sha256",
@@ -171,10 +173,24 @@ def validate_input_inventory(
         raise ValueError(f"{control} input inventory fields do not match the contract")
     if inventory.get("schema") != "alice-acceptance-input-inventory-v1":
         raise ValueError(f"{control} input inventory schema is unsupported")
-    for field in INVENTORY_FIELDS.difference({"schema", "engines", "opening_seed"}):
+    path_fields = {"pair_worker_path", "pair_core_path"}
+    hash_fields = INVENTORY_FIELDS.difference(
+        {"schema", "engines", "opening_seed"}, path_fields
+    )
+    for field in hash_fields:
         value = inventory.get(field)
         if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
             raise ValueError(f"{control} input inventory {field} is not canonical")
+    for artifact in ("pair_worker", "pair_core"):
+        path_value = inventory.get(f"{artifact}_path")
+        expected_sha = inventory.get(f"{artifact}_sha256")
+        if not isinstance(path_value, str) or not Path(path_value).is_absolute():
+            raise ValueError(f"{control} input inventory {artifact} path is not absolute")
+        path = Path(path_value).resolve()
+        if not path.is_file():
+            raise ValueError(f"{control} input inventory {artifact} artifact is missing")
+        if sha256_file(path) != expected_sha:
+            raise ValueError(f"{control} input inventory {artifact} SHA-256 mismatch")
     opening_seed = inventory.get("opening_seed")
     if (
         type(opening_seed) is not int

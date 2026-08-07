@@ -60,7 +60,11 @@ and its canonical SHA-256. The aggregator recomputes that hash and compares all
 sealed statistical fields with the final controller result before granting any
 strength eligibility. It also requires exactly `openings_jsonl_sha256` and
 `status_jsonl_sha256` in the control artifact map; missing, malformed, or extra
-artifact identities fail closed.
+artifact identities fail closed. The input inventory retains absolute paths to
+the create-only pair-worker and runner-core snapshots as well as their hashes.
+Aggregation, including release-time revalidation, reopens both files and
+recomputes their SHA-256. Equal-looking hashes without the authenticated runner
+bytes cannot enter a strength aggregate.
 
 The machine schemas are in [`schemas`](../../schemas). Statistical and final
 gate semantics are in [measurement.md](measurement.md) and

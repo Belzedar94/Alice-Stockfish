@@ -35,8 +35,9 @@ re-export identity, element count, and zero serialization mismatches come from
 the export receipt. Every G1-G8 report must bind all three artifact identities,
 the candidate network, and the same training run, with a positive sample count
 and an exact zero mismatch count. G1/G2 samples are checked against the dataset
-count and G4/G5 against the exported element count. The auditor independently
-streams the candidate wire tensors, excludes metadata and architecture hashes,
+count. G4/G5 must cover the frozen AliceNative-v1 architecture's complete
+`170222600` scalar elements. The auditor independently streams the candidate
+wire tensors, excludes metadata and architecture hashes,
 and requires the receipt's positive nonzero-byte count to match the bytes on
 disk; an all-zero or sentinel parameter payload cannot qualify.
 Both local batteries must bind the same pinned inputs, select the native
@@ -55,7 +56,11 @@ otherwise unlisted executable cannot authorize those artifacts.
 Every embedded control receipt must contain exactly the canonical SHA-256 of
 its `openings.jsonl` and `status.jsonl`; an empty, partial, malformed, or
 extended artifact map cannot enter either strength aggregate, and the two
-identities must be distinct.
+identities must be distinct. Each control inventory also carries absolute paths
+and SHA-256 values for its create-only pair-worker and runner-core snapshots.
+The aggregator reopens and hashes those files during battery aggregation and
+release audit; replacement code cannot be hidden behind self-declared runner
+hashes.
 The OpenBench shadow receipt must repeat the candidate source commit and
 network SHA-256. Every preset must also name a release binary role and the
 matching binary SHA-256 from the candidate manifest. It references a canonical

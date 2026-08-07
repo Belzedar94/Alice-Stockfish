@@ -173,6 +173,15 @@ NATIVE_DENSE_STACK_TENSOR_BYTES = (
     32 * 4 + 32 * 1_024 + 32 * 4 + 32 * 64 + 4 + 128
 )
 NATIVE_LAYER_STACKS = 8
+NATIVE_PARAMETER_ELEMENTS = (
+    1_024
+    + 119_616 * 1_024
+    + 119_616 * 8
+    + 45_056 * 1_024
+    + 45_056 * 8
+    + NATIVE_LAYER_STACKS
+    * (32 + 32 * 1_024 + 32 + 32 * 64 + 1 + 128)
+)
 DATASET_MANIFEST_FIELDS = {
     "schema",
     "training_run_id",
@@ -466,7 +475,7 @@ def verify_native_qualification(
             or type(export.get("network_bytes")) is not int
             or export.get("network_bytes") != network_path.stat().st_size
             or type(element_count) is not int
-            or element_count <= 0
+            or element_count != NATIVE_PARAMETER_ELEMENTS
             or type(export.get("element_mismatches")) is not int
             or export.get("element_mismatches") != 0
         ):
