@@ -30,6 +30,7 @@ from .runner_adapter import (
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+FROZEN_LEGACY_NETWORK_NAME = "alice_run2rl_e40_l09.nnue"
 
 
 def utc_now() -> str:
@@ -201,7 +202,7 @@ def prepare_snapshots(
     if not isinstance(engines, list) or len(engines) != 2:
         raise ValueError("pair-worker definition requires two engines")
 
-    network_snapshots: dict[str, Path] = {}
+    network_snapshots: dict[tuple[str, str], Path] = {}
     engine_inventory = []
     for index, item in enumerate(engines):
         if not isinstance(item, dict):
@@ -230,14 +231,23 @@ def prepare_snapshots(
             network_source = require_absolute_file(
                 item.get("network_path"), f"engines[{index}].network_path"
             )
-            if network_sha not in network_snapshots:
-                network_snapshot = snapshots / "networks" / (
-                    network_sha + network_source.suffix.lower()
+            if (
+                evaluator == "Legacy"
+                and network_source.name != FROZEN_LEGACY_NETWORK_NAME
+            ):
+                raise ValueError(
+                    f"engines[{index}].network_path must use the frozen legacy basename "
+                    f"{FROZEN_LEGACY_NETWORK_NAME}"
+                )
+            network_key = (network_sha, network_source.name)
+            if network_key not in network_snapshots:
+                network_snapshot = (
+                    snapshots / "networks" / network_sha / network_source.name
                 )
                 copy_create_only(network_source, network_snapshot, network_sha)
-                network_snapshots[network_sha] = network_snapshot
+                network_snapshots[network_key] = network_snapshot
             else:
-                network_snapshot = network_snapshots[network_sha]
+                network_snapshot = network_snapshots[network_key]
             item["network_path"] = str(network_snapshot)
             options = item.get("options")
             if not isinstance(options, dict):

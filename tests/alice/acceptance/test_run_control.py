@@ -12,7 +12,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from tools.alice_acceptance.__main__ import reject_d_evidence_root, run_control
+from tools.alice_acceptance.__main__ import (
+    FROZEN_LEGACY_NETWORK_NAME,
+    prepare_snapshots,
+    reject_d_evidence_root,
+    run_control,
+)
+from tools.alice_acceptance.runner_adapter import parse_strict_json
 
 
 def sha256(path: Path) -> str:
@@ -20,6 +26,91 @@ def sha256(path: Path) -> str:
 
 
 class RunControlTests(unittest.TestCase):
+    def legacy_snapshot_fixture(
+        self, parent: Path, network_name: str
+    ) -> tuple[dict[str, object], Path, str]:
+        worker = ROOT / "tests/alice/acceptance/fake_pair_worker.py"
+        book = parent / "book.epd"
+        book.write_text("test-fen\n", encoding="utf-8", newline="\n")
+        executable = parent / "engine.bin"
+        executable.write_bytes(b"test executable identity\n")
+        if os.name != "nt":
+            executable.chmod(0o755)
+        network = parent / network_name
+        network.write_bytes(b"legacy network identity\n")
+        network_sha = sha256(network)
+        engine = {
+            "path": str(executable.resolve()),
+            "binary_sha256": sha256(executable),
+            "cwd": str(parent.resolve()),
+            "name": "Alice-legacy-test",
+            "evaluator": "Legacy",
+            "network_sha256": network_sha,
+            "network_path": str(network.resolve()),
+            "time_control": "2+0.02",
+            "options": {
+                "Threads": "1",
+                "Hash": "512",
+                "Use NNUE": "true",
+                "Alice Evaluation": "Legacy",
+                "Alice_Frozen_Network": "true",
+                "EvalFile": str(network.resolve()),
+            },
+        }
+        worker_definition = parent / "worker-definition.json"
+        worker_definition.write_text(
+            json.dumps(
+                {
+                    "schema": "alice-pair-worker-definition-v1",
+                    "engines": [engine, json.loads(json.dumps(engine))],
+                }
+            ),
+            encoding="utf-8",
+        )
+        run_definition = {
+            "book": {"path": str(book.resolve()), "sha256": sha256(book)},
+            "pair_worker": {
+                "script": str(worker.resolve()),
+                "script_sha256": sha256(worker),
+                "core": str(worker.resolve()),
+                "core_sha256": sha256(worker),
+                "definition": str(worker_definition.resolve()),
+                "definition_sha256": sha256(worker_definition),
+            },
+        }
+        return run_definition, network, network_sha
+
+    def test_legacy_snapshot_preserves_the_frozen_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            definition, _network, network_sha = self.legacy_snapshot_fixture(
+                parent, FROZEN_LEGACY_NETWORK_NAME
+            )
+            evidence = parent / "evidence"
+            evidence.mkdir()
+            _worker, rewritten, _book, _inventory = prepare_snapshots(
+                definition, evidence, "1" * 64, "2" * 64
+            )
+            value = parse_strict_json(rewritten.read_bytes())
+            paths = [Path(engine["network_path"]) for engine in value["engines"]]
+            self.assertEqual(paths[0], paths[1])
+            self.assertEqual(paths[0].name, FROZEN_LEGACY_NETWORK_NAME)
+            self.assertEqual(paths[0].parent.name, network_sha)
+            self.assertEqual(sha256(paths[0]), network_sha)
+            for engine in value["engines"]:
+                self.assertEqual(Path(engine["options"]["EvalFile"]), paths[0])
+
+    def test_legacy_snapshot_rejects_a_noncanonical_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            definition, _network, _network_sha = self.legacy_snapshot_fixture(
+                parent, "renamed.nnue"
+            )
+            evidence = parent / "evidence"
+            evidence.mkdir()
+            with self.assertRaisesRegex(ValueError, "frozen legacy basename"):
+                prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
+
     def test_fixed_ltc_runs_through_two_persistent_processes(self) -> None:
         worker = ROOT / "tests/alice/acceptance/fake_pair_worker.py"
         with tempfile.TemporaryDirectory() as temporary:

@@ -29,6 +29,11 @@ Legacy selection uses `Alice Evaluation=Legacy`, `Use NNUE=true`, and the
 pinned `EvalFile`. `Zero` requires both `Alice Evaluation=Zero` and
 `Use NNUE=false`; it is valid only for structural verification.
 
+The frozen Legacy source must retain the canonical basename
+`alice_run2rl_e40_l09.nnue`. Snapshotting content-addresses its parent
+directory as `snapshots/networks/<sha256>/` and preserves that basename; a
+renamed Legacy source is rejected before any worker starts.
+
 The controller rejects unknown definition fields, duplicate JSON keys,
 noncanonical hashes, a policy time-control mismatch, a reused evidence root,
 and evidence rooted on `D:`. Each persistent process authenticates declared
