@@ -52,6 +52,9 @@ class ContractFileTests(unittest.TestCase):
         load_failure_schema = load_contract(
             "schemas/alice-load-failure-matrix-v1.schema.json"
         )
+        triple_bench_schema = load_contract(
+            "schemas/alice-triple-bench-v1.schema.json"
+        )
         worker_schema = load_contract(
             "schemas/alice-pair-worker-definition-v1.schema.json"
         )
@@ -123,6 +126,13 @@ class ContractFileTests(unittest.TestCase):
         self.assertEqual(
             load_failure_schema["properties"]["schema"]["const"],
             "alice-load-failure-matrix-v1",
+        )
+        self.assertEqual(
+            triple_bench_schema["properties"]["schema"]["const"],
+            "alice-triple-bench-v1",
+        )
+        self.assertEqual(
+            triple_bench_schema["properties"]["runs"]["minItems"], 3
         )
         self.assertEqual(
             worker_schema["properties"]["schema"]["const"],

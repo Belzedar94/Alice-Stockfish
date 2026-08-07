@@ -226,7 +226,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         export_reference = reference(export_receipt)
         gate_references = {}
         for gate in (f"G{index}" for index in range(1, 9)):
-            if gate in {"G1", "G2"}:
+            if gate in {"G1", "G2", "G6"}:
                 sample_count = 1024
             elif gate in {"G4", "G5"}:
                 sample_count = alice_release_evidence.NATIVE_PARAMETER_ELEMENTS
@@ -288,13 +288,43 @@ class ReleaseEvidenceTests(unittest.TestCase):
             write_test_binary(binary, role, source_commit)
             binary_sha = sha256_file(binary)
             bench = root / f"{role}-bench.json"
+            bench_runs = []
+            for ordinal in range(3):
+                command = root / f"{role}-bench-{ordinal}-command.json"
+                write_json(
+                    command,
+                    {
+                        "schema": "alice-triple-bench-command-v1",
+                        "ordinal": ordinal,
+                        "binary_path": str(binary.resolve()),
+                        "binary_sha256": binary_sha,
+                        "network_path": str(network.resolve()),
+                        "network_sha256": network_sha,
+                        "stdin": alice_release_evidence.TRIPLE_BENCH_STDIN,
+                    },
+                )
+                stdout = root / f"{role}-bench-{ordinal}-stdout.txt"
+                stdout.write_text(
+                    f"Alice native network sha256={network_sha}\n"
+                    "Nodes searched : 162582\n",
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                bench_runs.append(
+                    {
+                        "ordinal": ordinal,
+                        "command": reference(command),
+                        "stdout": reference(stdout),
+                        "exit_code": 0,
+                    }
+                )
             write_json(
                 bench,
                 {
                     "schema": "alice-triple-bench-v1",
                     "binary_sha256": binary_sha,
                     "network_sha256": network_sha,
-                    "signatures": ["Nodes searched : 162582"] * 3,
+                    "runs": bench_runs,
                 },
             )
             failures = root / f"{role}-failures.json"
@@ -472,7 +502,15 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 bench_reference = value["binaries"][0]["triple_bench"]
                 bench_path = Path(bench_reference["path"])
                 bench = json.loads(bench_path.read_text(encoding="utf-8"))
-                bench["signatures"] = [signature] * 3
+                stdout_reference = bench["runs"][0]["stdout"]
+                stdout_path = Path(stdout_reference["path"])
+                stdout_path.write_text(
+                    f"Alice native network sha256={value['network']['sha256']}\n"
+                    f"{signature}\n",
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                stdout_reference["sha256"] = sha256_file(stdout_path)
                 bench_path.write_bytes(canonical_json_bytes(bench))
                 bench_reference["sha256"] = sha256_file(bench_path)
                 manifest.write_text(json.dumps(value), encoding="utf-8")
@@ -483,7 +521,37 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertFalse(receipt["strength_release_authorized"])
             self.assertTrue(
                 any(
-                    "triple bench is not reproducible" in reason
+                    "stdout lacks the canonical bench evidence" in reason
+                    for reason in receipt["blocking_reasons"]
+                )
+            )
+
+    def test_triple_bench_artifact_hashes_are_recomputed(self) -> None:
+        cases = (
+            ("command", "triple bench run 0 command: SHA-256 mismatch"),
+            ("stdout", "triple bench run 0 stdout: SHA-256 mismatch"),
+        )
+        for artifact, expected_reason in cases:
+            with (
+                self.subTest(artifact=artifact),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                manifest, value, size = self.build_candidate(root)
+                bench_path = Path(value["binaries"][0]["triple_bench"]["path"])
+                bench = json.loads(bench_path.read_text(encoding="utf-8"))
+                artifact_path = Path(bench["runs"][0][artifact]["path"])
+                artifact_path.write_text(
+                    "tampered bench evidence\n", encoding="utf-8"
+                )
+                with mock.patch.object(
+                    alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+                ):
+                    receipt = alice_release_evidence.audit_release_candidate(manifest)
+            self.assertFalse(receipt["strength_release_authorized"])
+            self.assertTrue(
+                any(
+                    expected_reason in reason
                     for reason in receipt["blocking_reasons"]
                 )
             )
@@ -656,6 +724,37 @@ class ReleaseEvidenceTests(unittest.TestCase):
                     for reason in receipt["blocking_reasons"]
                 )
             )
+
+    def test_g6_requires_the_complete_parity_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            qualification_path = Path(value["native_qualification"]["path"])
+            qualification = json.loads(
+                qualification_path.read_text(encoding="utf-8")
+            )
+            report_reference = qualification["gates"]["G6"]
+            report_path = Path(report_reference["path"])
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["sample_count"] = 1
+            report_path.write_bytes(canonical_json_bytes(report))
+            report_reference["sha256"] = sha256_file(report_path)
+            qualification_path.write_bytes(canonical_json_bytes(qualification))
+            value["native_qualification"]["sha256"] = sha256_file(
+                qualification_path
+            )
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "G6 report did not pass exactly" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
 
     def test_qualification_artifact_hashes_are_recomputed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -83,6 +83,18 @@ SHADOW_PRESET_FIELDS = {
     "invalid_pairs",
     "adjudication",
 }
+TRIPLE_BENCH_FIELDS = {"schema", "binary_sha256", "network_sha256", "runs"}
+TRIPLE_BENCH_RUN_FIELDS = {"ordinal", "command", "stdout", "exit_code"}
+TRIPLE_BENCH_COMMAND_FIELDS = {
+    "schema",
+    "ordinal",
+    "binary_path",
+    "binary_sha256",
+    "network_path",
+    "network_sha256",
+    "stdin",
+}
+TRIPLE_BENCH_STDIN = "bench\nquit\n"
 LOAD_FAILURE_MATRIX_FIELDS = {
     "schema",
     "binary_sha256",
@@ -514,7 +526,7 @@ def verify_native_qualification(
         sample_count = report.get("sample_count")
         mismatch_count = report.get("mismatch_count")
         expected_sample_count = None
-        if gate in {"G1", "G2"}:
+        if gate in {"G1", "G2", "G6"}:
             expected_sample_count = dataset_position_count
         elif gate in {"G4", "G5"}:
             expected_sample_count = export_element_count
@@ -540,34 +552,100 @@ def verify_native_qualification(
 
 def verify_triple_bench(
     receipt: dict[str, object],
+    binary_path: Path,
     binary_sha256: str,
+    network_path: Path,
     network_sha256: str,
     role: str,
     reasons: list[str],
 ) -> None:
-    signatures = receipt.get("signatures")
-    canonical_signatures = []
-    if isinstance(signatures, list):
-        for value in signatures:
-            if not isinstance(value, str):
-                canonical_signatures.append(False)
-                continue
-            match = re.fullmatch(r"Nodes searched\s*:\s*([0-9]+)", value.strip())
-            canonical_signatures.append(
-                match is not None
-                and match.group(1) == str(CANONICAL_BENCH_NODES)
-            )
+    runs = receipt.get("runs")
     if (
-        receipt.get("schema") != "alice-triple-bench-v1"
+        set(receipt) != TRIPLE_BENCH_FIELDS
+        or receipt.get("schema") != "alice-triple-bench-v1"
         or receipt.get("binary_sha256") != binary_sha256
         or receipt.get("network_sha256") != network_sha256
-        or not isinstance(signatures, list)
-        or len(signatures) != 3
-        or any(not isinstance(value, str) or not value for value in signatures)
-        or len(set(signatures)) != 1
-        or canonical_signatures != [True, True, True]
+        or not isinstance(runs, list)
+        or len(runs) != 3
     ):
         reasons.append(f"{role}: triple bench is not reproducible")
+        return
+    command_hashes: set[str] = set()
+    command_paths: set[Path] = set()
+    stdout_paths: set[Path] = set()
+    for ordinal, run in enumerate(runs):
+        label = f"{role} triple bench run {ordinal}"
+        if (
+            not isinstance(run, dict)
+            or set(run) != TRIPLE_BENCH_RUN_FIELDS
+            or type(run.get("ordinal")) is not int
+            or run.get("ordinal") != ordinal
+            or type(run.get("exit_code")) is not int
+            or run.get("exit_code") != 0
+        ):
+            reasons.append(f"{label}: execution receipt is incomplete")
+            continue
+        command_path, command_sha = verify_reference(
+            run.get("command"), f"{label} command", reasons
+        )
+        stdout_path, _stdout_sha = verify_reference(
+            run.get("stdout"), f"{label} stdout", reasons
+        )
+        command = load_evidence_object(command_path, f"{label} command", reasons)
+        expected_command = {
+            "schema": "alice-triple-bench-command-v1",
+            "ordinal": ordinal,
+            "binary_path": str(binary_path.resolve()),
+            "binary_sha256": binary_sha256,
+            "network_path": str(network_path.resolve()),
+            "network_sha256": network_sha256,
+            "stdin": TRIPLE_BENCH_STDIN,
+        }
+        if command is not None:
+            try:
+                exact_fields(command, TRIPLE_BENCH_COMMAND_FIELDS, f"{label} command")
+            except ValueError as error:
+                reasons.append(str(error))
+            if command != expected_command:
+                reasons.append(f"{label}: command is not bound to the release artifacts")
+            elif (
+                command_path is not None
+                and hashlib.sha256(canonical_json_bytes(command)).hexdigest()
+                != command_sha
+            ):
+                reasons.append(f"{label}: command is not canonical JSON")
+        if stdout_path is not None:
+            try:
+                stdout = stdout_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as error:
+                reasons.append(f"{label}: stdout is not UTF-8: {error}")
+            else:
+                signatures = [
+                    match.group(1)
+                    for line in stdout.splitlines()
+                    if (
+                        match := re.fullmatch(
+                            r"Nodes searched\s*:\s*([0-9]+)", line.strip()
+                        )
+                    )
+                ]
+                if (
+                    signatures != [str(CANONICAL_BENCH_NODES)]
+                    or network_sha256 not in stdout.lower()
+                ):
+                    reasons.append(f"{label}: stdout lacks the canonical bench evidence")
+        if command_path is not None:
+            command_paths.add(command_path)
+        if command_sha is not None:
+            command_hashes.add(command_sha)
+        if stdout_path is not None:
+            stdout_paths.add(stdout_path)
+    if (
+        len(command_hashes) != 3
+        or len(command_paths) != 3
+        or len(stdout_paths) != 3
+    ):
+        reasons.append(f"{role}: triple bench does not bind three distinct executions")
 
 
 def matches_frozen_mutation(source: Path, mutated: Path, probe_kind: str) -> bool:
@@ -1074,10 +1152,22 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
         load_path, _load_sha = verify_reference(
             binary.get("load_failures"), f"{role} load failures", reasons
         )
-        if bench_path is not None and binary_sha is not None and network_sha is not None:
+        if (
+            bench_path is not None
+            and binary_path is not None
+            and binary_sha is not None
+            and network_path is not None
+            and network_sha is not None
+        ):
             try:
                 verify_triple_bench(
-                    load_object(bench_path), binary_sha, network_sha, role, reasons
+                    load_object(bench_path),
+                    binary_path,
+                    binary_sha,
+                    network_path,
+                    network_sha,
+                    role,
+                    reasons,
                 )
             except (UnicodeDecodeError, ValueError) as error:
                 reasons.append(f"{role}: invalid triple-bench JSON: {error}")

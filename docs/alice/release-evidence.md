@@ -11,7 +11,8 @@ A candidate manifest must bind:
 - clean 200-pair official OpenBench shadow receipts at VSTC, STC, and LTC,
   each tracking `800/4` and `40/8/10` virtual endings;
 - Windows BMI2, Windows AVX2, Linux BMI2, and Linux AVX2 binaries;
-- three identical `162582`-node canonical bench signatures for every binary; and
+- three distinct, authenticated `162582`-node canonical bench executions for
+  every binary; and
 - missing, corrupt, and incompatible network probes for every binary.
 
 Each negative load probe must exit nonzero, publish no search result, and show
@@ -35,7 +36,8 @@ re-export identity, element count, and zero serialization mismatches come from
 the export receipt. Every G1-G8 report must bind all three artifact identities,
 the candidate network, and the same training run, with a positive sample count
 and an exact zero mismatch count. G1/G2 samples are checked against the dataset
-count. G4/G5 must cover the frozen AliceNative-v1 architecture's complete
+count, and G6 must cover that same complete parity corpus. G4/G5 must cover the
+frozen AliceNative-v1 architecture's complete
 `170222600` scalar elements. The auditor independently streams the candidate
 wire tensors, excludes metadata and architecture hashes,
 and requires the receipt's positive nonzero-byte count to match the bytes on
@@ -81,6 +83,14 @@ that embeds the incompatible release architecture. Every binary must also
 embed the manifest's complete 40-character source commit, as emitted by
 Stockfish's build identity; a stale-revision artifact is rejected even when
 its platform and architecture are otherwise correct.
+
+Every triple-bench receipt references three distinct canonical command
+artifacts and three distinct raw UTF-8 stdout artifacts by absolute path and
+SHA-256. The auditor reopens every artifact, recomputes its digest, requires
+each command to bind the exact executable and network paths and hashes, and
+parses exactly one `Nodes searched : 162582` result plus the selected network
+SHA-256 from each stdout. A declared signature without those authenticated
+execution artifacts cannot satisfy the release gate.
 
 Audit a manifest with:
 

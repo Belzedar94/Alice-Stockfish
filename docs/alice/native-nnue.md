@@ -295,7 +295,9 @@ Using the sealed file, compare the trainer-side integer inference path and the
 engine inference path on all parity-corpus positions. Compare the raw NNUE output
 before unrelated search terms and the final documented NNUE contribution.
 Required result: bit-exact raw output and zero centipawn difference for every
-position.
+position. The release auditor requires the G6 report's sample count to equal the
+sealed dataset manifest's complete position count; a partial parity sample does
+not qualify.
 
 ### G7. Load identity and failure behavior
 
