@@ -48,6 +48,22 @@ QUALIFICATION_FIELDS = {
     "network_parameter_nonzero_count",
     "gates",
 }
+SHADOW_FIELDS = {
+    "schema",
+    "service",
+    "status",
+    "source_commit",
+    "network_sha256",
+    "presets",
+}
+SHADOW_PRESET_FIELDS = {
+    "binary_role",
+    "binary_sha256",
+    "pairs",
+    "inversions",
+    "invalid_pairs",
+    "adjudication",
+}
 
 
 def load_object(path: Path) -> dict[str, object]:
@@ -194,7 +210,18 @@ def verify_load_failures(
             reasons.append(f"{role}: {name} load failure did not fail closed")
 
 
-def verify_openbench_shadow(receipt: dict[str, object], reasons: list[str]) -> None:
+def verify_openbench_shadow(
+    receipt: dict[str, object],
+    source_commit: str,
+    network_sha256: str,
+    binary_sha256_by_role: dict[str, str],
+    reasons: list[str],
+) -> None:
+    try:
+        exact_fields(receipt, SHADOW_FIELDS, "OpenBench shadow evidence")
+    except ValueError as error:
+        reasons.append(str(error))
+        return
     presets = receipt.get("presets")
     if (
         receipt.get("schema") != "alice-openbench-shadow-receipt-v1"
@@ -205,10 +232,33 @@ def verify_openbench_shadow(receipt: dict[str, object], reasons: list[str]) -> N
     ):
         reasons.append("OpenBench shadow evidence is incomplete")
         return
+    if receipt.get("source_commit") != source_commit:
+        reasons.append("OpenBench shadow evidence does not bind the candidate source commit")
+    if receipt.get("network_sha256") != network_sha256:
+        reasons.append("OpenBench shadow evidence does not bind the candidate network")
     for preset, result in presets.items():
+        if not isinstance(result, dict):
+            reasons.append(f"OpenBench shadow preset {preset} is not an object")
+            continue
+        try:
+            exact_fields(result, SHADOW_PRESET_FIELDS, f"OpenBench shadow preset {preset}")
+        except ValueError as error:
+            reasons.append(str(error))
+            continue
+        binary_role = result.get("binary_role")
+        binary_sha256 = result.get("binary_sha256")
         if (
-            not isinstance(result, dict)
-            or result.get("pairs") != 200
+            not isinstance(binary_role, str)
+            or binary_role not in binary_sha256_by_role
+            or not isinstance(binary_sha256, str)
+            or not SHA256_RE.fullmatch(binary_sha256)
+            or binary_sha256_by_role[binary_role] != binary_sha256
+        ):
+            reasons.append(
+                f"OpenBench shadow preset {preset} does not bind a candidate binary"
+            )
+        if (
+            result.get("pairs") != 200
             or result.get("inversions") != 0
             or result.get("invalid_pairs") != 0
             or result.get("adjudication") != ["800/4", "40/8/10"]
@@ -311,15 +361,13 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
                 reasons.append(
                     f"{label} local battery does not bind the candidate native network"
                 )
-    if "openbench_shadow_receipt" in loaded_receipts:
-        verify_openbench_shadow(loaded_receipts["openbench_shadow_receipt"], reasons)
-
     binaries = manifest.get("binaries")
     if not isinstance(binaries, list) or len(binaries) != 4:
         reasons.append("binaries: exactly four release roles are required")
         binaries = []
     seen_roles: set[str] = set()
     seen_paths: set[Path] = set()
+    binary_sha256_by_role: dict[str, str] = {}
     for index, binary in enumerate(binaries):
         label = f"binaries[{index}]"
         if not isinstance(binary, dict):
@@ -342,6 +390,7 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
             seen_paths.add(binary_path)
         if binary_path is not None and binary_sha is not None:
             artifacts[role] = {"sha256": binary_sha, "size": binary_path.stat().st_size}
+            binary_sha256_by_role[role] = binary_sha
         bench_path, _bench_sha = verify_reference(
             binary.get("triple_bench"), f"{role} triple bench", reasons
         )
@@ -364,6 +413,14 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
                 reasons.append(f"{role}: invalid load-failure JSON: {error}")
     if seen_roles != BINARY_ROLES:
         reasons.append("binaries: the four platform and architecture roles are incomplete")
+    if network_sha is not None and "openbench_shadow_receipt" in loaded_receipts:
+        verify_openbench_shadow(
+            loaded_receipts["openbench_shadow_receipt"],
+            source_commit,
+            network_sha,
+            binary_sha256_by_role,
+            reasons,
+        )
 
     reasons = sorted(set(reasons))
     authorized = not reasons

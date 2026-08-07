@@ -95,6 +95,11 @@ be counted toward a local LOS gate. It runs at Alice's lower queue priority.
 The official scheduler may assign it to any eligible worker, including T24,
 without manual worker intervention.
 
+The aggregate shadow receipt repeats the candidate source commit and network
+SHA-256. Each preset records the release binary role and exact binary SHA-256
+used for that audit. Release evidence rejects a receipt whose source, network,
+or binary does not match the candidate manifest.
+
 For each 200-pair audit, preserve and report:
 
 - all 200 opening identifiers and both color assignments;

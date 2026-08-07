@@ -22,6 +22,10 @@ comparison sample sizes, a positive nonzero-parameter count, and zero
 checkpoint/file, file/engine, and incremental/full mismatches.
 Both local batteries must bind the same pinned inputs, select the native
 evaluator, and identify the exact candidate network.
+The OpenBench shadow receipt must repeat the candidate source commit and
+network SHA-256. Every preset must also name a release binary role and the
+matching binary SHA-256 from the candidate manifest; a clean audit from any
+other source, network, or binary cannot authorize the candidate.
 
 Audit a manifest with:
 

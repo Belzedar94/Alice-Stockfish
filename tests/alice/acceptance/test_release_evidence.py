@@ -111,6 +111,7 @@ def control_receipt(
 
 class ReleaseEvidenceTests(unittest.TestCase):
     def build_candidate(self, root: Path) -> tuple[Path, dict[str, object], int]:
+        source_commit = "a" * 40
         network = root / "alice.nnue"
         network.write_bytes(b"native network fixture\n")
         network_sha = sha256_file(network)
@@ -151,25 +152,6 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 output,
                 aggregate_receipts(f"{mode}-fixture", mode, paths),
             )
-
-        shadow = root / "shadow.json"
-        write_json(
-            shadow,
-            {
-                "schema": "alice-openbench-shadow-receipt-v1",
-                "service": "https://belzedar.duckdns.org",
-                "status": "PASS",
-                "presets": {
-                    control: {
-                        "pairs": 200,
-                        "inversions": 0,
-                        "invalid_pairs": 0,
-                        "adjudication": ["800/4", "40/8/10"],
-                    }
-                    for control in ("VSTC", "STC", "LTC")
-                },
-            },
-        )
 
         binaries = []
         for index, role in enumerate(sorted(alice_release_evidence.BINARY_ROLES)):
@@ -214,10 +196,34 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 }
             )
 
+        shadow = root / "shadow.json"
+        shadow_binary = binaries[0]
+        write_json(
+            shadow,
+            {
+                "schema": "alice-openbench-shadow-receipt-v1",
+                "service": "https://belzedar.duckdns.org",
+                "status": "PASS",
+                "source_commit": source_commit,
+                "network_sha256": network_sha,
+                "presets": {
+                    control: {
+                        "binary_role": shadow_binary["role"],
+                        "binary_sha256": shadow_binary["artifact"]["sha256"],
+                        "pairs": 200,
+                        "inversions": 0,
+                        "invalid_pairs": 0,
+                        "adjudication": ["800/4", "40/8/10"],
+                    }
+                    for control in ("VSTC", "STC", "LTC")
+                },
+            },
+        )
+
         manifest_value = {
             "schema": "alice-release-candidate-v1",
             "release_id": "alice-test",
-            "source_commit": "a" * 40,
+            "source_commit": source_commit,
             "network": reference(network),
             "native_qualification": reference(qualification),
             "exact_los_receipt": reference(exact),
@@ -294,6 +300,27 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertTrue(
             any("does not bind the candidate native network" in reason for reason in receipt["blocking_reasons"])
         )
+
+    def test_openbench_shadow_for_another_candidate_blocks_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            shadow_path = Path(value["openbench_shadow_receipt"]["path"])
+            shadow = json.loads(shadow_path.read_text(encoding="utf-8"))
+            shadow["source_commit"] = "b" * 40
+            shadow["network_sha256"] = "c" * 64
+            for preset in shadow["presets"].values():
+                preset["binary_sha256"] = "d" * 64
+            shadow_path.write_bytes(canonical_json_bytes(shadow))
+            value["openbench_shadow_receipt"]["sha256"] = sha256_file(shadow_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        reasons = receipt["blocking_reasons"]
+        self.assertTrue(any("candidate source commit" in reason for reason in reasons))
+        self.assertTrue(any("candidate network" in reason for reason in reasons))
+        self.assertTrue(any("candidate binary" in reason for reason in reasons))
 
 
 if __name__ == "__main__":

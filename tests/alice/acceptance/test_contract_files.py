@@ -34,6 +34,9 @@ class ContractFileTests(unittest.TestCase):
         native_qualification_schema = load_contract(
             "schemas/alice-native-qualification-v1.schema.json"
         )
+        openbench_shadow_schema = load_contract(
+            "schemas/alice-openbench-shadow-receipt-v1.schema.json"
+        )
         worker_schema = load_contract(
             "schemas/alice-pair-worker-definition-v1.schema.json"
         )
@@ -69,6 +72,10 @@ class ContractFileTests(unittest.TestCase):
         self.assertEqual(
             native_qualification_schema["properties"]["schema"]["const"],
             "alice-native-qualification-v1",
+        )
+        self.assertEqual(
+            openbench_shadow_schema["properties"]["schema"]["const"],
+            "alice-openbench-shadow-receipt-v1",
         )
         self.assertEqual(
             worker_schema["properties"]["schema"]["const"],
