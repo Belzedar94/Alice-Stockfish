@@ -43,9 +43,9 @@ auditor reads each executable header and requires x86-64 PE for Windows roles
 or x86-64 ELF for Linux roles. It also verifies the embedded Stockfish
 compilation architecture (`x86-64-bmi2` or `x86-64-avx2`) and rejects a binary
 that embeds the incompatible release architecture. Every binary must also
-embed the first eight hexadecimal characters of the manifest's full source
-commit, as emitted by Stockfish's build identity; a stale-revision artifact is
-rejected even when its platform and architecture are otherwise correct.
+embed the manifest's complete 40-character source commit, as emitted by
+Stockfish's build identity; a stale-revision artifact is rejected even when
+its platform and architecture are otherwise correct.
 
 Audit a manifest with:
 

@@ -176,9 +176,9 @@ def verify_binary_role(
     )
     if not any(file_contains(path, marker) for marker in platform_markers):
         reasons.append(f"{role}: binary does not embed the expected compiler platform")
-    if not file_contains(path, source_commit[:8].encode("ascii")):
+    if not file_contains(path, source_commit.encode("ascii")):
         reasons.append(
-            f"{role}: binary does not embed the declared source commit {source_commit[:8]}"
+            f"{role}: binary does not embed the declared full source commit"
         )
     other_architecture = (
         "x86-64-avx2" if expected_architecture == "x86-64-bmi2" else "x86-64-bmi2"

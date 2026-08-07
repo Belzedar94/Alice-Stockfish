@@ -53,7 +53,7 @@ def write_test_binary(path: Path, role: str, source_commit: str) -> None:
     payload.extend(
         (
             f"\x00{role}\x00{architecture}\x00{platform_marker}\x00"
-            f"{source_commit[:8]}\x00"
+            f"{source_commit}\x00"
         ).encode("ascii")
     )
     path.write_bytes(payload)
@@ -449,7 +449,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertFalse(receipt["strength_release_authorized"])
         self.assertTrue(
             any(
-                "declared source commit" in reason
+                "declared full source commit" in reason
                 for reason in receipt["blocking_reasons"]
             )
         )

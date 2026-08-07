@@ -253,6 +253,13 @@ std::string compiler_info() {
     compiler += "(undefined architecture)";
 #endif
 
+    compiler += "\nSource commit              : ";
+#if defined(GIT_SHA_FULL)
+    compiler += stringify(GIT_SHA_FULL);
+#else
+    compiler += "(undefined source commit)";
+#endif
+
     compiler += "\nCompilation settings       : ";
     compiler += (Is64Bit ? "64bit" : "32bit");
 #if defined(USE_AVX512ICL)
