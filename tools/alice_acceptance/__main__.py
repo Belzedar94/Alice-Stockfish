@@ -155,6 +155,48 @@ def reject_d_evidence_root(path: Path) -> None:
         raise ValueError("acceptance evidence must not be written to D:")
 
 
+def validate_pair_worker_definition(
+    value: dict[str, object],
+) -> tuple[list[dict[str, object]], tuple[str, str]]:
+    if value.get("schema") != "alice-pair-worker-definition-v1":
+        raise ValueError("unsupported pair-worker definition schema")
+    engine_values = value.get("engines")
+    if not isinstance(engine_values, list) or len(engine_values) != 2:
+        raise ValueError("pair-worker definition requires two engines")
+
+    engines: list[dict[str, object]] = []
+    names: list[str] = []
+    for item in engine_values:
+        if not isinstance(item, dict):
+            raise ValueError("engine definition must be an object")
+        name = item.get("name")
+        if (
+            not isinstance(name, str)
+            or not name
+            or len(name) > 128
+            or not name.isascii()
+            or any(
+                character == '"' or not character.isprintable()
+                for character in name
+            )
+        ):
+            raise ValueError("each engine requires a PGN-safe ASCII name")
+        if name in names:
+            raise ValueError("the two engine names must be distinct")
+        options = item.get("options")
+        if (
+            not isinstance(options, dict)
+            or any(not isinstance(key, str) for key in options)
+            or any(not isinstance(option, str) for option in options.values())
+        ):
+            raise ValueError("engine options must be a string-to-string object")
+        if options.get("Threads") != "1" or options.get("Hash") != "512":
+            raise ValueError("each engine requires Threads=1 and Hash=512")
+        engines.append(item)
+        names.append(name)
+    return engines, (names[0], names[1])
+
+
 def prepare_snapshots(
     run_definition: dict[str, object],
     evidence_root: Path,
@@ -167,6 +209,17 @@ def prepare_snapshots(
     book_config = run_definition.get("book")
     if not isinstance(runner_config, dict) or not isinstance(book_config, dict):
         raise ValueError("run definition requires book and pair_worker objects")
+
+    worker_definition_source = require_absolute_file(
+        runner_config.get("definition"), "pair_worker.definition"
+    )
+    worker_definition_source_sha = sha256_file(worker_definition_source)
+    if worker_definition_source_sha != require_sha256(
+        runner_config.get("definition_sha256"), "pair_worker.definition_sha256"
+    ):
+        raise ValueError("pair-worker definition SHA-256 mismatch")
+    worker_definition = load_object(worker_definition_source)
+    engines, engine_names = validate_pair_worker_definition(worker_definition)
 
     worker_source = require_absolute_file(runner_config.get("script"), "pair_worker.script")
     core_source = require_absolute_file(runner_config.get("core"), "pair_worker.core")
@@ -188,27 +241,11 @@ def prepare_snapshots(
     book_snapshot = snapshots / "book" / book_source.name
     copy_create_only(book_source, book_snapshot, book_sha)
 
-    worker_definition_source = require_absolute_file(
-        runner_config.get("definition"), "pair_worker.definition"
-    )
-    worker_definition_source_sha = sha256_file(worker_definition_source)
-    if worker_definition_source_sha != require_sha256(
-        runner_config.get("definition_sha256"), "pair_worker.definition_sha256"
-    ):
-        raise ValueError("pair-worker definition SHA-256 mismatch")
-    worker_definition = load_object(worker_definition_source)
-    if worker_definition.get("schema") != "alice-pair-worker-definition-v1":
-        raise ValueError("unsupported pair-worker definition schema")
-    engines = worker_definition.get("engines")
-    if not isinstance(engines, list) or len(engines) != 2:
-        raise ValueError("pair-worker definition requires two engines")
-
     network_snapshots: dict[tuple[str, str], Path] = {}
     engine_inventory = []
     normalized_engines = []
     for index, item in enumerate(engines):
-        if not isinstance(item, dict):
-            raise ValueError("engine definition must be an object")
+        name = engine_names[index]
         binary_source = require_absolute_file(
             item.get("path"), f"engines[{index}].path"
         )
@@ -225,12 +262,7 @@ def prepare_snapshots(
 
         evaluator = item.get("evaluator")
         options = item.get("options")
-        if (
-            not isinstance(options, dict)
-            or any(not isinstance(key, str) for key in options)
-            or any(not isinstance(value, str) for value in options.values())
-        ):
-            raise ValueError("engine options must be a string-to-string object")
+        assert isinstance(options, dict)
         normalized_options = dict(options)
         network_sha = str(item.get("network_sha256", ""))
         network_snapshot = None
@@ -280,7 +312,7 @@ def prepare_snapshots(
         normalized_engines.append(
             {
                 "role": "contender" if index == 0 else "reference",
-                "name": item.get("name"),
+                "name": name,
                 "binary_sha256": binary_sha,
                 "network_sha256": network_sha or None,
                 "evaluator": evaluator,
@@ -370,6 +402,8 @@ def run_control(definition_path: Path, evidence_root: Path) -> dict[str, object]
         for item in engines:
             if item["time_control"] != expected_time_control:
                 raise ValueError("pair-worker time control does not match the policy")
+        engine_names = (engines[0]["name"], engines[1]["name"])
+        assert all(isinstance(name, str) for name in engine_names)
 
         control_root = evidence_root / "controls" / control
         pairs_root = control_root / "pairs"
@@ -414,7 +448,11 @@ def run_control(definition_path: Path, evidence_root: Path) -> dict[str, object]
                 write_create_only_json(pair_directory / "request.json", request)
                 write_create_only_json(pair_directory / "response.json", response)
                 result = validate_worker_response(
-                    response, ordinal, pair_directory, str(request["opening"]["fen"])
+                    response,
+                    ordinal,
+                    pair_directory,
+                    str(request["opening"]["fen"]),
+                    engine_names,
                 )
                 if not result.scorable:
                     raise RuntimeError("paired preflight produced an unscorable result")
@@ -447,6 +485,7 @@ def run_control(definition_path: Path, evidence_root: Path) -> dict[str, object]
                         ordinal,
                         pair_directory,
                         str(request["opening"]["fen"]),
+                        engine_names,
                     )
                     controller.submit(result)
                     append_jsonl(

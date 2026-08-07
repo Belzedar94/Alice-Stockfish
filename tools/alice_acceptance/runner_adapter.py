@@ -88,7 +88,16 @@ def validate_worker_response(
     expected_ordinal: int,
     pair_directory: str | Path,
     expected_fen: str,
+    expected_engine_names: tuple[str, str],
 ) -> PairResult:
+    if (
+        len(expected_engine_names) != 2
+        or any(
+            not isinstance(name, str) or not name for name in expected_engine_names
+        )
+        or expected_engine_names[0] == expected_engine_names[1]
+    ):
+        raise ValueError("expected engine identities must be two distinct names")
     if set(response) != {"schema", "pair_ordinal", "result", "artifacts"}:
         raise ValueError("pair-worker response fields do not match the contract")
     if response.get("schema") != "alice-pair-worker-response-v1":
@@ -195,8 +204,15 @@ def validate_worker_response(
         if not isinstance(moves, list) or any(not isinstance(move, str) for move in moves):
             raise ValueError("final valid position moves must be strings")
         headers, pgn_moves = pgn_games[index]
+        expected_white, expected_black = (
+            expected_engine_names
+            if index == 0
+            else (expected_engine_names[1], expected_engine_names[0])
+        )
         if (
-            headers.get("FEN") != expected_fen
+            headers.get("White") != expected_white
+            or headers.get("Black") != expected_black
+            or headers.get("FEN") != expected_fen
             or headers.get("Result") != result_token
             or headers.get("Variant") != "alice"
             or headers.get("SetUp") != "1"

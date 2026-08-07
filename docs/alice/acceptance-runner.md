@@ -36,14 +36,19 @@ renamed Legacy source is rejected before any worker starts.
 
 The controller rejects unknown definition fields, duplicate JSON keys,
 noncanonical hashes, a policy time-control mismatch, a reused evidence root,
-and evidence rooted on `D:`. Each persistent process authenticates declared
-UCI options, binary and network bytes, evaluator identity, and the evaluator's
-reported SHA-256 before it plays a preflight pair.
+evidence rooted on `D:`, non-unique or PGN-unsafe engine names, and any engine
+that does not specify exactly `Threads=1` and `Hash=512`. Each persistent
+process authenticates declared UCI options, binary and network bytes,
+evaluator identity, and the evaluator's reported SHA-256 before it plays a
+preflight pair.
 
 Per-pair evidence is admitted only after the response, result-core hash, PGN
 hash, result-file hash, terminal classifications, contender scores, root FEN,
-and move prefix agree. Files are create-only. A process may be reused across
-pairs, but an engine is restarted and reauthenticated after a runtime failure.
+move prefix, and both color assignments agree. Game 1 must name the contender
+as White and the reference as Black; game 2 must name the reference as White
+and the contender as Black. Files are create-only. A process may be reused
+across pairs, but an engine is restarted and reauthenticated after a runtime
+failure.
 
 Every finalized control receipt embeds the create-only acceptance-seal payload
 and its canonical SHA-256. The aggregator recomputes that hash and compares all

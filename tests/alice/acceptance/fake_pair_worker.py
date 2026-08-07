@@ -40,22 +40,29 @@ def game(number):
     }
 
 
-def respond(request):
+def respond(request, engine_names):
     ordinal = request["pair_ordinal"]
     directory = Path(request["evidence_directory"])
     os.mkdir(directory)
     pgn_path = directory / "games.pgn"
     result_path = directory / "result.jsonl"
-    pgn_block = (
-        '[Round "%s"]\n'
-        '[Result "1/2-1/2"]\n'
-        '[SetUp "1"]\n'
-        '[FEN "test-fen"]\n'
-        '[Variant "alice"]\n'
-        '[PlyCount "0"]\n'
-        "\n1/2-1/2\n\n"
-    ) % ordinal
-    pgn_path.write_bytes((pgn_block + pgn_block).encode("ascii"))
+    pgn_blocks = []
+    for white, black in (
+        (engine_names[0], engine_names[1]),
+        (engine_names[1], engine_names[0]),
+    ):
+        pgn_blocks.append(
+            '[Round "%s"]\n'
+            '[White "%s"]\n'
+            '[Black "%s"]\n'
+            '[Result "1/2-1/2"]\n'
+            '[SetUp "1"]\n'
+            '[FEN "test-fen"]\n'
+            '[Variant "alice"]\n'
+            '[PlyCount "0"]\n'
+            "\n1/2-1/2\n\n" % (ordinal, white, black)
+        )
+    pgn_path.write_bytes("".join(pgn_blocks).encode("ascii"))
     core = {
         "schema": "alice-pair-result-v1",
         "ordinal": ordinal,
@@ -80,10 +87,12 @@ def respond(request):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--definition", required=True)
-    parser.parse_args()
+    args = parser.parse_args()
+    definition = json.loads(Path(args.definition).read_text(encoding="utf-8"))
+    engine_names = tuple(engine["name"] for engine in definition["engines"])
     for line in sys.stdin.buffer:
         request = json.loads(line.decode("utf-8"))
-        sys.stdout.buffer.write(canonical(respond(request)))
+        sys.stdout.buffer.write(canonical(respond(request, engine_names)))
         sys.stdout.buffer.flush()
     return 0
 

@@ -12,7 +12,13 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tools.alice_acceptance.evidence import canonical_json_bytes, sha256_file
-from tools.alice_acceptance.runner_adapter import parse_strict_json, validate_worker_response
+from tools.alice_acceptance.runner_adapter import (
+    parse_strict_json,
+    validate_worker_response,
+)
+
+
+ENGINE_NAMES = ("Alice-contender", "Alice-reference")
 
 
 def game(game_number: int) -> dict[str, object]:
@@ -29,17 +35,28 @@ def game(game_number: int) -> dict[str, object]:
     }
 
 
-def materialize_pair(directory: Path, ordinal: int = 7) -> dict[str, object]:
+def materialize_pair(
+    directory: Path,
+    ordinal: int = 7,
+    color_assignments: tuple[tuple[str, str], tuple[str, str]] = (
+        (ENGINE_NAMES[0], ENGINE_NAMES[1]),
+        (ENGINE_NAMES[1], ENGINE_NAMES[0]),
+    ),
+) -> dict[str, object]:
     directory.mkdir()
-    block = (
-        '[Result "1/2-1/2"]\n'
-        '[SetUp "1"]\n'
-        '[FEN "fen"]\n'
-        '[Variant "alice"]\n'
-        '[PlyCount "0"]\n'
-        "\n1/2-1/2\n\n"
-    )
-    (directory / "games.pgn").write_bytes((block + block).encode("ascii"))
+    blocks = []
+    for white, black in color_assignments:
+        blocks.append(
+            '[White "%s"]\n'
+            '[Black "%s"]\n'
+            '[Result "1/2-1/2"]\n'
+            '[SetUp "1"]\n'
+            '[FEN "fen"]\n'
+            '[Variant "alice"]\n'
+            '[PlyCount "0"]\n'
+            "\n1/2-1/2\n\n" % (white, black)
+        )
+    (directory / "games.pgn").write_bytes("".join(blocks).encode("ascii"))
     core = {
         "schema": "alice-pair-result-v1",
         "ordinal": ordinal,
@@ -66,7 +83,9 @@ class RunnerAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             pair_directory = Path(temporary) / "pair"
             response = materialize_pair(pair_directory)
-            result = validate_worker_response(response, 7, pair_directory, "fen")
+            result = validate_worker_response(
+                response, 7, pair_directory, "fen", ENGINE_NAMES
+            )
         self.assertTrue(result.scorable)
         self.assertEqual(result.game_scores, (0.5, 0.5))
 
@@ -77,7 +96,9 @@ class RunnerAdapterTests(unittest.TestCase):
             with open(pair_directory / "games.pgn", "ab") as output:
                 output.write(b"tamper")
             with self.assertRaisesRegex(ValueError, "PGN SHA-256"):
-                validate_worker_response(response, 7, pair_directory, "fen")
+                validate_worker_response(
+                    response, 7, pair_directory, "fen", ENGINE_NAMES
+                )
 
     def test_self_consistent_but_contradictory_score_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -98,7 +119,9 @@ class RunnerAdapterTests(unittest.TestCase):
                 pair_directory / "result.jsonl"
             )
             with self.assertRaisesRegex(ValueError, "contender score"):
-                validate_worker_response(response, 7, pair_directory, "fen")
+                validate_worker_response(
+                    response, 7, pair_directory, "fen", ENGINE_NAMES
+                )
 
     def test_unknown_fields_and_duplicate_json_keys_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -106,7 +129,9 @@ class RunnerAdapterTests(unittest.TestCase):
             response = materialize_pair(pair_directory)
             response["ignored"] = True
             with self.assertRaisesRegex(ValueError, "fields"):
-                validate_worker_response(response, 7, pair_directory, "fen")
+                validate_worker_response(
+                    response, 7, pair_directory, "fen", ENGINE_NAMES
+                )
         with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
             parse_strict_json(b'{"key":1,"key":2}')
         with self.assertRaisesRegex(ValueError, "non-finite JSON number"):
@@ -126,7 +151,39 @@ class RunnerAdapterTests(unittest.TestCase):
             assert isinstance(artifacts, dict)
             artifacts["games_pgn_sha256"] = sha256_file(pgn_path)
             with self.assertRaisesRegex(ValueError, "PGN contradicts"):
-                validate_worker_response(response, 7, pair_directory, "fen")
+                validate_worker_response(
+                    response, 7, pair_directory, "fen", ENGINE_NAMES
+                )
+
+    def test_repeated_color_assignment_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pair_directory = Path(temporary) / "pair"
+            response = materialize_pair(
+                pair_directory,
+                color_assignments=(
+                    (ENGINE_NAMES[0], ENGINE_NAMES[1]),
+                    (ENGINE_NAMES[0], ENGINE_NAMES[1]),
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "PGN contradicts"):
+                validate_worker_response(
+                    response, 7, pair_directory, "fen", ENGINE_NAMES
+                )
+
+    def test_reversed_game_order_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pair_directory = Path(temporary) / "pair"
+            response = materialize_pair(
+                pair_directory,
+                color_assignments=(
+                    (ENGINE_NAMES[1], ENGINE_NAMES[0]),
+                    (ENGINE_NAMES[0], ENGINE_NAMES[1]),
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "PGN contradicts"):
+                validate_worker_response(
+                    response, 7, pair_directory, "fen", ENGINE_NAMES
+                )
 
 
 if __name__ == "__main__":

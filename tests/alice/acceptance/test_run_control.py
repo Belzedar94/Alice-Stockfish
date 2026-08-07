@@ -63,7 +63,13 @@ class RunControlTests(unittest.TestCase):
             json.dumps(
                 {
                     "schema": "alice-pair-worker-definition-v1",
-                    "engines": [engine, json.loads(json.dumps(engine))],
+                    "engines": [
+                        engine,
+                        {
+                            **json.loads(json.dumps(engine)),
+                            "name": "Alice-legacy-reference",
+                        },
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -168,6 +174,68 @@ class RunControlTests(unittest.TestCase):
                 third_inventory["engines"][0]["options_sha256"],
             )
 
+    def test_snapshot_rejects_nonfrozen_thread_and_hash_options(self) -> None:
+        cases = (
+            ("missing Threads", lambda options: options.pop("Threads")),
+            ("wrong Threads", lambda options: options.__setitem__("Threads", "16")),
+            ("missing Hash", lambda options: options.pop("Hash")),
+            ("wrong Hash", lambda options: options.__setitem__("Hash", "64")),
+        )
+        for label, mutate in cases:
+            with (
+                self.subTest(case=label),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                parent = Path(temporary)
+                definition, _network, _network_sha = self.legacy_snapshot_fixture(
+                    parent, FROZEN_LEGACY_NETWORK_NAME
+                )
+                worker_definition_path = Path(
+                    definition["pair_worker"]["definition"]
+                )
+                worker_definition = json.loads(
+                    worker_definition_path.read_text(encoding="utf-8")
+                )
+                mutate(worker_definition["engines"][0]["options"])
+                worker_definition_path.write_text(
+                    json.dumps(worker_definition), encoding="utf-8"
+                )
+                definition["pair_worker"]["definition_sha256"] = sha256(
+                    worker_definition_path
+                )
+                evidence = parent / "evidence"
+                evidence.mkdir()
+                with self.assertRaisesRegex(
+                    ValueError, "Threads=1 and Hash=512"
+                ):
+                    prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
+                self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_snapshot_rejects_duplicate_engine_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            definition, _network, _network_sha = self.legacy_snapshot_fixture(
+                parent, FROZEN_LEGACY_NETWORK_NAME
+            )
+            worker_definition_path = Path(definition["pair_worker"]["definition"])
+            worker_definition = json.loads(
+                worker_definition_path.read_text(encoding="utf-8")
+            )
+            worker_definition["engines"][1]["name"] = worker_definition["engines"][0][
+                "name"
+            ]
+            worker_definition_path.write_text(
+                json.dumps(worker_definition), encoding="utf-8"
+            )
+            definition["pair_worker"]["definition_sha256"] = sha256(
+                worker_definition_path
+            )
+            evidence = parent / "evidence"
+            evidence.mkdir()
+            with self.assertRaisesRegex(ValueError, "engine names must be distinct"):
+                prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
+            self.assertEqual(list(evidence.iterdir()), [])
+
     def test_fixed_ltc_runs_through_two_persistent_processes(self) -> None:
         worker = ROOT / "tests/alice/acceptance/fake_pair_worker.py"
         with tempfile.TemporaryDirectory() as temporary:
@@ -198,7 +266,10 @@ class RunControlTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema": "alice-pair-worker-definition-v1",
-                        "engines": [engine, dict(engine)],
+                        "engines": [
+                            engine,
+                            {**dict(engine), "name": "Alice-reference-test"},
+                        ],
                         "max_plies": 8,
                     }
                 ),
