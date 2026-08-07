@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import sys
 import tempfile
@@ -10,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tools.alice_acceptance.aggregate import FIXED_GAMES, aggregate_receipts
-from tools.alice_acceptance.evidence import write_create_only_json
+from tools.alice_acceptance.evidence import canonical_json_bytes, write_create_only_json
 from tools.alice_acceptance.statistics import paired_statistics
 from tools.alice_acceptance.policy import TIMING_CONTROLS
 
@@ -22,7 +23,7 @@ def control_receipt(control: str, mode: str) -> dict[str, object]:
     conclusion = "FIXED_COMPLETE" if fixed else "PASS"
     pentanomial = [0, 0, 0, 0, admitted_pairs]
     base_ms, increment_ms = TIMING_CONTROLS[control]
-    return {
+    receipt = {
         "schema": "alice-control-receipt-v1",
         "run_id": f"source-{control.lower()}",
         "status": "finalized",
@@ -88,10 +89,30 @@ def control_receipt(control: str, mode: str) -> dict[str, object]:
             "statistics": paired_statistics(pentanomial),
             "stop_reason": "fixed-target" if fixed else "los-100.0",
         },
-        "sealed_snapshot_sha256": "1" * 64,
+        "sealed_snapshot": None,
+        "sealed_snapshot_sha256": "",
         "artifacts": {},
         "strength_release_authorized": False,
     }
+    result = receipt["result"]
+    seal = {
+        "schema": "alice-acceptance-seal-v1",
+        "control": control,
+        "mode": mode,
+        "attempt_ordinal": admitted_pairs - 1,
+        "admitted_pairs": result["admitted_pairs"],
+        "scored_games": result["scored_games"],
+        "wld": result["wld"],
+        "pentanomial": result["pentanomial"],
+        "statistics": result["statistics"],
+        "stop_reason": result["stop_reason"],
+        "conclusion": result["conclusion"],
+    }
+    receipt["sealed_snapshot"] = seal
+    receipt["sealed_snapshot_sha256"] = hashlib.sha256(
+        canonical_json_bytes(seal)
+    ).hexdigest()
+    return receipt
 
 
 class AggregateReceiptTests(unittest.TestCase):
@@ -171,6 +192,37 @@ class AggregateReceiptTests(unittest.TestCase):
             write_create_only_json(paths["STC"], bad)
             with self.assertRaisesRegex(ValueError, "pinned input identity"):
                 aggregate_receipts("bad-options", "exact-los", paths)
+
+    def test_arbitrary_seal_digest_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self.materialize(root, "fixed-final")
+            bad = control_receipt("STC", "fixed-final")
+            bad["sealed_snapshot_sha256"] = "f" * 64
+            paths["STC"].unlink()
+            write_create_only_json(paths["STC"], bad)
+            with self.assertRaisesRegex(ValueError, "SHA-256 does not match"):
+                aggregate_receipts("bad-seal-hash", "fixed-final", paths)
+
+    def test_final_result_cannot_diverge_from_the_sealed_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self.materialize(root, "fixed-final")
+            bad = control_receipt("STC", "fixed-final")
+            admitted_pairs = bad["result"]["admitted_pairs"]
+            scored_games = bad["result"]["scored_games"]
+            pentanomial = [0, 0, admitted_pairs, 0, 0]
+            bad["result"]["wld"] = {
+                "wins": 0,
+                "losses": 0,
+                "draws": scored_games,
+            }
+            bad["result"]["pentanomial"] = pentanomial
+            bad["result"]["statistics"] = paired_statistics(pentanomial)
+            paths["STC"].unlink()
+            write_create_only_json(paths["STC"], bad)
+            with self.assertRaisesRegex(ValueError, "sealed snapshot does not match"):
+                aggregate_receipts("bad-seal-result", "fixed-final", paths)
 
 
 if __name__ == "__main__":

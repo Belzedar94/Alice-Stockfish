@@ -45,6 +45,11 @@ hash, result-file hash, terminal classifications, contender scores, root FEN,
 and move prefix agree. Files are create-only. A process may be reused across
 pairs, but an engine is restarted and reauthenticated after a runtime failure.
 
+Every finalized control receipt embeds the create-only acceptance-seal payload
+and its canonical SHA-256. The aggregator recomputes that hash and compares all
+sealed statistical fields with the final controller result before granting any
+strength eligibility.
+
 The machine schemas are in [`schemas`](../../schemas). Statistical and final
 gate semantics are in [measurement.md](measurement.md) and
 [final-gate.md](final-gate.md).

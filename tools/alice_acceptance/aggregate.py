@@ -27,9 +27,23 @@ CONTROL_FIELDS = {
     "policy",
     "inputs",
     "result",
+    "sealed_snapshot",
     "sealed_snapshot_sha256",
     "artifacts",
     "strength_release_authorized",
+}
+SEAL_FIELDS = {
+    "schema",
+    "control",
+    "mode",
+    "attempt_ordinal",
+    "admitted_pairs",
+    "scored_games",
+    "wld",
+    "pentanomial",
+    "statistics",
+    "stop_reason",
+    "conclusion",
 }
 RESULT_FIELDS = {
     "schema",
@@ -291,6 +305,45 @@ def validate_control_result(
         raise ValueError("unsupported aggregate mode")
 
 
+def validate_sealed_snapshot(
+    seal: object,
+    sealed_snapshot_sha256: str,
+    result: dict[str, object],
+    control: str,
+    mode: str,
+) -> None:
+    if not isinstance(seal, dict) or set(seal) != SEAL_FIELDS:
+        raise ValueError(f"{control} sealed snapshot fields do not match the contract")
+    actual_sha256 = hashlib.sha256(canonical_json_bytes(seal)).hexdigest()
+    if actual_sha256 != sealed_snapshot_sha256:
+        raise ValueError(f"{control} sealed snapshot SHA-256 does not match its payload")
+    if (
+        seal.get("schema") != "alice-acceptance-seal-v1"
+        or seal.get("control") != control
+        or seal.get("mode") != mode
+    ):
+        raise ValueError(f"{control} sealed snapshot identity is inconsistent")
+    for field in (
+        "admitted_pairs",
+        "scored_games",
+        "wld",
+        "pentanomial",
+        "statistics",
+        "stop_reason",
+        "conclusion",
+    ):
+        if seal.get(field) != result.get(field):
+            raise ValueError(
+                f"{control} sealed snapshot does not match final result field {field}"
+            )
+    admitted_pairs = result.get("admitted_pairs")
+    if (
+        type(admitted_pairs) is not int
+        or seal.get("attempt_ordinal") != admitted_pairs - 1
+    ):
+        raise ValueError(f"{control} sealed snapshot attempt ordinal is inconsistent")
+
+
 def validate_control_receipt(
     value: dict[str, object], control: str, mode: str
 ) -> dict[str, object]:
@@ -325,6 +378,13 @@ def validate_control_receipt(
     validate_control_policy(policy, control, mode)
     validate_input_inventory(inventory, control)
     validate_control_result(result, control, mode)
+    validate_sealed_snapshot(
+        value.get("sealed_snapshot"),
+        sealed_snapshot_sha256,
+        result,
+        control,
+        mode,
+    )
     return value
 
 

@@ -68,7 +68,7 @@ def control_receipt(
     conclusion = "FIXED_COMPLETE" if fixed else "PASS"
     pentanomial = [0, 0, 0, 0, admitted_pairs]
     base_ms, increment_ms = TIMING_CONTROLS[control]
-    return {
+    receipt = {
         "schema": "alice-control-receipt-v1",
         "run_id": f"source-{mode}-{control.lower()}",
         "status": "finalized",
@@ -134,10 +134,30 @@ def control_receipt(
             "stop_reason": "fixed-target" if fixed else "los-100.0",
             "conclusion": conclusion,
         },
-        "sealed_snapshot_sha256": "1" * 64,
+        "sealed_snapshot": None,
+        "sealed_snapshot_sha256": "",
         "artifacts": {},
         "strength_release_authorized": False,
     }
+    result = receipt["result"]
+    seal = {
+        "schema": "alice-acceptance-seal-v1",
+        "control": control,
+        "mode": mode,
+        "attempt_ordinal": admitted_pairs - 1,
+        "admitted_pairs": result["admitted_pairs"],
+        "scored_games": result["scored_games"],
+        "wld": result["wld"],
+        "pentanomial": result["pentanomial"],
+        "statistics": result["statistics"],
+        "stop_reason": result["stop_reason"],
+        "conclusion": result["conclusion"],
+    }
+    receipt["sealed_snapshot"] = seal
+    receipt["sealed_snapshot_sha256"] = hashlib.sha256(
+        canonical_json_bytes(seal)
+    ).hexdigest()
+    return receipt
 
 
 class ReleaseEvidenceTests(unittest.TestCase):

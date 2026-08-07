@@ -475,6 +475,7 @@ def run_control(definition_path: Path, evidence_root: Path) -> dict[str, object]
             },
             "inputs": inventory,
             "result": controller.summary(),
+            "sealed_snapshot": controller.seal_payload,
             "sealed_snapshot_sha256": seal.sha256,
             "artifacts": {
                 "openings_jsonl_sha256": sha256_file(openings_path),

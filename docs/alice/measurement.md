@@ -104,6 +104,11 @@ The controller creates and flushes an immutable seal before draining a later
 in-flight pair. A result beyond that seal is `excluded_after_seal`; it is never
 described as discarded and never changes the sealed W/L/D, pentanomial, Elo,
 or LOS.
+The control receipt embeds that exact canonical seal payload and its SHA-256.
+Aggregation recomputes the digest and requires the seal's control, mode,
+attempt ordinal, admitted count, W/L/D, pentanomial, statistics, stop reason,
+and conclusion to agree with the final result. A syntactically valid arbitrary
+digest or a post-seal statistical rewrite is rejected.
 
 The exact battery passes only with `100.0` at VSTC, STC, and LTC. Interrupted
 experiments do not resume statistically.

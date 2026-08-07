@@ -18,6 +18,7 @@ from tools.alice_acceptance.__main__ import (
     reject_d_evidence_root,
     run_control,
 )
+from tools.alice_acceptance.evidence import canonical_json_bytes
 from tools.alice_acceptance.runner_adapter import parse_strict_json
 
 
@@ -239,6 +240,21 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(result["scored_games"], 200)
             self.assertEqual(result["attempted_pairs"], 100)
             self.assertEqual(result["pentanomial"], [0, 0, 100, 0, 0])
+            seal = receipt["sealed_snapshot"]
+            self.assertEqual(
+                hashlib.sha256(canonical_json_bytes(seal)).hexdigest(),
+                receipt["sealed_snapshot_sha256"],
+            )
+            for field in (
+                "admitted_pairs",
+                "scored_games",
+                "wld",
+                "pentanomial",
+                "statistics",
+                "stop_reason",
+                "conclusion",
+            ):
+                self.assertEqual(seal[field], result[field])
             self.assertEqual(len(list((evidence / "controls/LTC/pairs").iterdir())), 100)
             self.assertTrue((evidence / "controls/LTC/seal.json").is_file())
             self.assertTrue((evidence / "receipt.json").is_file())

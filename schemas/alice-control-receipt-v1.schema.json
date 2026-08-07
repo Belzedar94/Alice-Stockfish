@@ -9,6 +9,12 @@
     "result": {"type": "object"},
     "run_id": {"minLength": 1, "type": "string"},
     "schema": {"const": "alice-control-receipt-v1"},
+    "sealed_snapshot": {
+      "oneOf": [
+        {"type": "object"},
+        {"type": "null"}
+      ]
+    },
     "sealed_snapshot_sha256": {
       "oneOf": [
         {"pattern": "^[0-9a-f]{64}$", "type": "string"},
@@ -27,6 +33,7 @@
     "policy",
     "inputs",
     "result",
+    "sealed_snapshot",
     "sealed_snapshot_sha256",
     "artifacts",
     "strength_release_authorized"
