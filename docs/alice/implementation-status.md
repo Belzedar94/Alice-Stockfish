@@ -72,10 +72,20 @@ setting `Use NNUE` to `false` selects a reported zero-evaluation diagnostic
 mode; that mode is not a compatibility or strength result. `export_net`
 remains closed.
 
+The contract is mandatory: there is no nullable evaluator and no implicit
+zero result. Evaluation, push, and pop return structured failures. A successful
+push is paired with one position undo followed by one pop on normal returns,
+cutoffs, stops, and failures. A failed push is undone without a pop. Runtime
+failure suppresses iteration and best-move publication, reports the evaluator
+identity and failing stage, and terminates the UCI process. The
+`alice_search_verify_contract` diagnostic injects evaluation, push, and pop
+failures and checks exact stack and root restoration separately from a normal
+stop.
+
 Executable conformance additionally covers repeated-search determinism, an
 Alice mate in one, terminal mate reporting, prompt interruption with exact
-root-state preservation, the explicit diagnostic mode, and fail-closed search
-without a network.
+root-state preservation, the explicit diagnostic mode, mandatory evaluator
+failure propagation, and fail-closed search without a network.
 
 ## Historical NNUE compatibility milestone
 

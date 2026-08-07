@@ -88,6 +88,10 @@ void UCIEngine::init_search_update_listeners() {
     engine.set_on_update_full(
       [this](const auto& i) { on_update_full(i, engine.get_options()["UCI_ShowWDL"]); });
     engine.set_on_start([]() {});
+    engine.set_on_search_error([](const auto& message) {
+        print_info_string("CRITICAL ERROR: " + std::string(message));
+        std::exit(1);
+    });
     engine.set_on_bestmove([](const auto& bm, const auto& p) { on_bestmove(bm, p); });
     engine.set_on_verify_network([](const auto& s) { print_info_string(s); });
 }
@@ -163,6 +167,13 @@ void UCIEngine::loop() {
         {
             if (auto error = engine.trace_eval())
                 terminate_on_critical_error(*error);
+        }
+        else if (token == "alice_search_verify_contract")
+        {
+            std::string report;
+            if (auto error = engine.verify_search_contract(report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
         }
         else if (token == "alice_verify_incremental")
         {
@@ -280,8 +291,7 @@ void UCIEngine::loop() {
                   "alice_native_verify_loaded_incremental requires an integer depth between 0 and 2.");
 
             std::string report;
-            if (auto error =
-                  engine.verify_loaded_native_incremental(Depth(requestedDepth), report))
+            if (auto error = engine.verify_loaded_native_incremental(Depth(requestedDepth), report))
                 terminate_on_critical_error(*error);
             sync_cout << report << sync_endl;
         }

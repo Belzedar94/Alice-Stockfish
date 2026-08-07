@@ -90,6 +90,7 @@ class Engine {
     void set_on_iter(std::function<void(const InfoIter&)>&&);
     void set_on_bestmove(std::function<void(std::string_view, std::string_view)>&&);
     void set_on_start(std::function<void()>&&);
+    void set_on_search_error(std::function<void(std::string_view)>&&);
     void set_on_verify_network(std::function<void(std::string_view)>&&);
 
     // network related
@@ -99,6 +100,7 @@ class Engine {
     // utility functions
 
     std::optional<std::string> trace_eval() const;
+    std::optional<std::string> verify_search_contract(std::string& report);
     std::string                trace_native_features();
     std::optional<std::string> verify_native_incremental(Depth depth, std::string& report);
     std::optional<std::string>
@@ -112,8 +114,7 @@ class Engine {
     std::optional<std::string>
     probe_native_parameter(std::string_view tensor, u64 index, std::string& report) const;
     std::optional<std::string> trace_native_integer(std::string& report);
-    std::optional<std::string> verify_loaded_native_incremental(Depth depth,
-                                                                std::string& report);
+    std::optional<std::string> verify_loaded_native_incremental(Depth depth, std::string& report);
     std::optional<std::string> verify_legacy_incremental(Depth depth, u64& positions);
 
     const OptionsMap& get_options() const;
@@ -145,6 +146,7 @@ class Engine {
     Eval::NNUE::AliceNative::QualificationNetwork     nativeQualification;
 
     Search::SearchManager::UpdateContext  updateContext;
+    std::function<void(std::string_view)> onSearchError;
     std::function<void(std::string_view)> onVerifyNetwork;
     std::map<NumaIndex, SharedHistories>  sharedHists;
 

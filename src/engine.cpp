@@ -19,6 +19,7 @@
 #include "engine.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cassert>
 #include <cstdlib>
@@ -65,6 +66,314 @@ constexpr const char* DefaultLegacyEvalFile = "";
 // history sharing and the speed loss from more cross-cache accesses (see
 // PR#6526). The user can always explicitly override this behavior.
 constexpr NumaAutoPolicy DefaultNumaPolicy = BundledL3Policy{32};
+
+namespace {
+
+struct SearchPositionIdentity {
+    const StateInfo* state      = nullptr;
+    Key              key        = 0;
+    Bitboard         boardB     = 0;
+    Color            sideToMove = WHITE;
+    int              pieceCount = 0;
+};
+
+SearchPositionIdentity search_position_identity(const Position& position) noexcept {
+    return {position.state(), position.key(), position.state()->boardB, position.side_to_move(),
+            position.count<ALL_PIECES>()};
+}
+
+bool same_search_position(const SearchPositionIdentity& identity,
+                          const Position&               position) noexcept {
+    return identity.state == position.state() && identity.key == position.key()
+        && identity.boardB == position.state()->boardB
+        && identity.sideToMove == position.side_to_move()
+        && identity.pieceCount == position.count<ALL_PIECES>();
+}
+
+class SearchPositionStack {
+   public:
+    explicit SearchPositionStack(const Position& root) {
+        frames[0] = search_position_identity(root);
+    }
+
+    bool matches(const Position& position, AliceSearch::EvalFailure& failure) const noexcept {
+        if (same_search_position(frames[depth], position))
+            return true;
+        failure.code  = AliceSearch::EvalFailureCode::POSITION_MISMATCH;
+        failure.stage = AliceSearch::EvalStage::EVALUATE;
+        return false;
+    }
+
+    bool push(const Position& position, AliceSearch::EvalFailure& failure) noexcept {
+        if (depth >= MAX_PLY)
+        {
+            failure.code  = AliceSearch::EvalFailureCode::STACK_OVERFLOW;
+            failure.stage = AliceSearch::EvalStage::PUSH;
+            return false;
+        }
+        if (position.state()->previous != frames[depth].state)
+        {
+            failure.code  = AliceSearch::EvalFailureCode::POSITION_MISMATCH;
+            failure.stage = AliceSearch::EvalStage::PUSH;
+            return false;
+        }
+        frames[++depth] = search_position_identity(position);
+        return true;
+    }
+
+    bool pop(const Position& restoredParent, AliceSearch::EvalFailure& failure) noexcept {
+        if (depth == 0)
+        {
+            failure.code  = AliceSearch::EvalFailureCode::STACK_UNDERFLOW;
+            failure.stage = AliceSearch::EvalStage::POP;
+            return false;
+        }
+        --depth;
+        if (same_search_position(frames[depth], restoredParent))
+            return true;
+        failure.code  = AliceSearch::EvalFailureCode::POSITION_MISMATCH;
+        failure.stage = AliceSearch::EvalStage::POP;
+        return false;
+    }
+
+    usize size() const noexcept { return depth; }
+
+   private:
+    std::array<SearchPositionIdentity, MAX_PLY + 1> frames{};
+    usize                                           depth = 0;
+};
+
+class LegacySearchEvaluator final: public AliceSearch::Evaluator {
+   public:
+    LegacySearchEvaluator(LegacyAliceExact&                              evaluator,
+                          std::unique_ptr<LegacyAliceExact::Accumulator> accumulator,
+                          const Position&                                root) :
+        legacy(evaluator),
+        state(std::move(accumulator)),
+        positions(root) {}
+
+    AliceSearch::EvaluatorIdentity identity() const noexcept override {
+        return {"LegacyAliceExact", 0, legacy.metadata().sha256};
+    }
+
+    bool evaluate(const Position&           position,
+                  Value&                    value,
+                  AliceSearch::EvalFailure& failure) noexcept override {
+        if (!state || !positions.matches(position, failure))
+        {
+            if (!failure)
+            {
+                failure.code  = AliceSearch::EvalFailureCode::NOT_READY;
+                failure.stage = AliceSearch::EvalStage::EVALUATE;
+            }
+            return false;
+        }
+        const auto result = legacy.evaluate(position, *state, true);
+        if (!result)
+        {
+            failure.code  = AliceSearch::EvalFailureCode::NOT_READY;
+            failure.stage = AliceSearch::EvalStage::EVALUATE;
+            return false;
+        }
+        value = *result;
+        return true;
+    }
+
+    bool push(const Position&           position,
+              const Dirties&            dirties,
+              AliceSearch::EvalFailure& failure) noexcept override {
+        if (!state)
+        {
+            failure.code  = AliceSearch::EvalFailureCode::NOT_READY;
+            failure.stage = AliceSearch::EvalStage::PUSH;
+            return false;
+        }
+        if (!positions.push(position, failure))
+            return false;
+        legacy.push(*state, position, dirties);
+        return true;
+    }
+
+    bool pop(const Position& restoredParent, AliceSearch::EvalFailure& failure) noexcept override {
+        if (!state)
+        {
+            failure.code  = AliceSearch::EvalFailureCode::NOT_READY;
+            failure.stage = AliceSearch::EvalStage::POP;
+            return false;
+        }
+        if (positions.size() == 0)
+            return positions.pop(restoredParent, failure);
+        legacy.pop(*state);
+        return positions.pop(restoredParent, failure);
+    }
+
+   private:
+    LegacyAliceExact&                              legacy;
+    std::unique_ptr<LegacyAliceExact::Accumulator> state;
+    SearchPositionStack                            positions;
+};
+
+class ZeroSearchEvaluator final: public AliceSearch::Evaluator {
+   public:
+    explicit ZeroSearchEvaluator(const Position& root) :
+        positions(root) {}
+
+    AliceSearch::EvaluatorIdentity identity() const noexcept override {
+        return {"ZeroDiagnostic", 0, {}};
+    }
+
+    bool evaluate(const Position&           position,
+                  Value&                    value,
+                  AliceSearch::EvalFailure& failure) noexcept override {
+        if (!positions.matches(position, failure))
+            return false;
+        value = VALUE_ZERO;
+        return true;
+    }
+
+    bool push(const Position& position,
+              const Dirties&,
+              AliceSearch::EvalFailure& failure) noexcept override {
+        return positions.push(position, failure);
+    }
+
+    bool pop(const Position& restoredParent, AliceSearch::EvalFailure& failure) noexcept override {
+        return positions.pop(restoredParent, failure);
+    }
+
+   private:
+    SearchPositionStack positions;
+};
+
+enum class ContractFailurePoint : u8 {
+    NONE,
+    EVALUATE,
+    PUSH,
+    POP
+};
+
+class ContractSearchEvaluator final: public AliceSearch::Evaluator {
+   public:
+    ContractSearchEvaluator(const Position& root, ContractFailurePoint requestedFailure) :
+        positions(root),
+        failurePoint(requestedFailure) {}
+
+    AliceSearch::EvaluatorIdentity identity() const noexcept override {
+        return {"ContractProbe", 0, {}};
+    }
+
+    bool evaluate(const Position&           position,
+                  Value&                    value,
+                  AliceSearch::EvalFailure& failure) noexcept override {
+        ++evaluationCalls;
+        if (!positions.matches(position, failure))
+            return false;
+        if (!failureInjected && failurePoint == ContractFailurePoint::EVALUATE)
+        {
+            failureInjected = true;
+            failure.code    = AliceSearch::EvalFailureCode::INTERNAL_INVARIANT;
+            failure.stage   = AliceSearch::EvalStage::EVALUATE;
+            return false;
+        }
+        value = VALUE_ZERO;
+        return true;
+    }
+
+    bool push(const Position& position,
+              const Dirties&,
+              AliceSearch::EvalFailure& failure) noexcept override {
+        ++pushCalls;
+        if (!failureInjected && failurePoint == ContractFailurePoint::PUSH)
+        {
+            failureInjected = true;
+            failure.code    = AliceSearch::EvalFailureCode::INTERNAL_INVARIANT;
+            failure.stage   = AliceSearch::EvalStage::PUSH;
+            return false;
+        }
+        return positions.push(position, failure);
+    }
+
+    bool pop(const Position& restoredParent, AliceSearch::EvalFailure& failure) noexcept override {
+        ++popCalls;
+        if (!positions.pop(restoredParent, failure))
+            return false;
+        if (!failureInjected && failurePoint == ContractFailurePoint::POP)
+        {
+            failureInjected = true;
+            failure.code    = AliceSearch::EvalFailureCode::INTERNAL_INVARIANT;
+            failure.stage   = AliceSearch::EvalStage::POP;
+            return false;
+        }
+        return true;
+    }
+
+    u64   evaluations() const noexcept { return evaluationCalls; }
+    u64   pushes() const noexcept { return pushCalls; }
+    u64   pops() const noexcept { return popCalls; }
+    usize depth() const noexcept { return positions.size(); }
+
+   private:
+    SearchPositionStack  positions;
+    ContractFailurePoint failurePoint;
+    bool                 failureInjected = false;
+    u64                  evaluationCalls = 0;
+    u64                  pushCalls       = 0;
+    u64                  popCalls        = 0;
+};
+
+struct ContractCaseResult {
+    AliceSearch::Result result;
+    u64                 evaluations = 0;
+    u64                 pushes      = 0;
+    u64                 pops        = 0;
+    usize               depth       = 0;
+    u64                 iterations  = 0;
+    bool                rootMatches = false;
+};
+
+std::optional<std::string> run_search_contract_case(ContractFailurePoint point,
+                                                    Depth                depth,
+                                                    bool                 stopBeforeStart,
+                                                    ContractCaseResult&  output) {
+    StateInfo rootState;
+    Position  position;
+    if (auto error = position.set(StartFEN, false, &rootState))
+        return error->what();
+
+    const std::string rootFen = position.fen();
+    const Key         rootKey = position.key();
+    std::vector<Move> rootMoves;
+    for (Move move : MoveList<LEGAL>(position))
+        rootMoves.push_back(move);
+
+    AliceSearch::Limits limits;
+    limits.depth = depth;
+    std::atomic_bool        stop(stopBeforeStart);
+    ContractSearchEvaluator evaluator(position, point);
+    output.result      = AliceSearch::search(position, rootMoves, limits, evaluator, stop,
+                                             [&](const AliceSearch::Result&) { ++output.iterations; });
+    output.evaluations = evaluator.evaluations();
+    output.pushes      = evaluator.pushes();
+    output.pops        = evaluator.pops();
+    output.depth       = evaluator.depth();
+    output.rootMatches = position.fen() == rootFen && position.key() == rootKey;
+    return std::nullopt;
+}
+
+std::string format_search_failure(const AliceSearch::EvaluatorIdentity& identity,
+                                  const AliceSearch::Result&            result) {
+    std::ostringstream out;
+    out << "Alice search evaluator failed backend=" << identity.backend
+        << " code=" << AliceSearch::failure_code_name(result.failure.code)
+        << " stage=" << AliceSearch::failure_stage_name(result.failure.stage)
+        << " ply=" << result.failure.ply << " generation=" << identity.generation;
+    if (!identity.sha256.empty())
+        out << " sha256=" << identity.sha256;
+    out << " root_restored=" << (result.rootRestored ? "yes" : "no");
+    return out.str();
+}
+
+}  // namespace
 
 Engine::Engine(std::optional<std::filesystem::path>) :
     numaContext(NumaConfig::from_system(DefaultNumaPolicy)),
@@ -183,6 +492,14 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
              + (legacyEvaluator.last_error().empty() ? std::string(".")
                                                      : ": " + legacyEvaluator.last_error());
 
+    std::unique_ptr<LegacyAliceExact::Accumulator> legacyAccumulator;
+    if (useLegacyEvaluation)
+    {
+        legacyAccumulator = legacyEvaluator.make_accumulator(pos);
+        if (!legacyAccumulator)
+            return "Legacy Alice evaluation could not create its root accumulator.";
+    }
+
     verify_network();
     aliceSearchStop.store(false, std::memory_order_relaxed);
     alicePondering.store(limits.ponderMode, std::memory_order_relaxed);
@@ -245,96 +562,85 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
     const bool        isChess960  = pos.is_chess960();
     const bool        waitForStop = limits.infinite;
 
-    aliceSearchThread =
-      std::thread([this, rootMoves = std::move(rootMoves), aliceLimits, rootFen, rootState,
-                   isChess960, waitForStop, useLegacyEvaluation]() mutable {
-          StateInfo  searchRootState;
-          Position   searchPos;
-          const auto error = searchPos.set(rootFen, isChess960, &searchRootState);
-          assert(!error.has_value());
-          (void) error;
-          searchRootState = rootState;
+    aliceSearchThread = std::thread([this, rootMoves = std::move(rootMoves), aliceLimits, rootFen,
+                                     rootState, isChess960, waitForStop, useLegacyEvaluation,
+                                     legacyAccumulator = std::move(legacyAccumulator)]() mutable {
+        StateInfo  searchRootState;
+        Position   searchPos;
+        const auto error = searchPos.set(rootFen, isChess960, &searchRootState);
+        assert(!error.has_value());
+        (void) error;
+        searchRootState = rootState;
 
-          AliceSearch::Evaluator                         evaluator;
-          std::unique_ptr<LegacyAliceExact::Accumulator> legacyAccumulator;
-          if (useLegacyEvaluation)
-          {
-              legacyAccumulator = legacyEvaluator.make_accumulator(searchPos);
-              if (!legacyAccumulator)
-                  std::abort();
+        std::unique_ptr<AliceSearch::Evaluator> evaluator;
+        if (useLegacyEvaluation)
+            evaluator = std::make_unique<LegacySearchEvaluator>(
+              legacyEvaluator, std::move(legacyAccumulator), searchPos);
+        else
+            evaluator = std::make_unique<ZeroSearchEvaluator>(searchPos);
 
-              evaluator.value = [this, &legacyAccumulator](const Position& position) {
-                  const auto value = legacyEvaluator.evaluate(position, *legacyAccumulator, true);
-                  if (!value)
-                      std::abort();
-                  return *value;
-              };
-              evaluator.push = [this, &legacyAccumulator](const Position& position,
-                                                          const Dirties&  dirties) {
-                  legacyEvaluator.push(*legacyAccumulator, position, dirties);
-              };
-              evaluator.pop = [this, &legacyAccumulator]() {
-                  legacyEvaluator.pop(*legacyAccumulator);
-              };
-          }
-          else
-              evaluator.value = [](const Position&) { return VALUE_ZERO; };
+        const TimePoint started = now();
 
-          const TimePoint started = now();
+        if (updateContext.onStart)
+            updateContext.onStart();
 
-          if (updateContext.onStart)
-              updateContext.onStart();
+        const auto onIteration = [this, started, &searchPos](const AliceSearch::Result& result) {
+            std::string pv;
+            for (Move move : result.pv)
+            {
+                if (!pv.empty())
+                    pv += ' ';
+                pv += UCIEngine::move(move, searchPos.is_chess960());
+            }
 
-          const auto onIteration = [this, started, &searchPos](const AliceSearch::Result& result) {
-              std::string pv;
-              for (Move move : result.pv)
-              {
-                  if (!pv.empty())
-                      pv += ' ';
-                  pv += UCIEngine::move(move, searchPos.is_chess960());
-              }
+            const std::string wdl     = result.score > VALUE_DRAW ? "1000 0 0"
+                                      : result.score < VALUE_DRAW ? "0 0 1000"
+                                                                  : "0 1000 0";
+            const TimePoint   elapsed = std::max(TimePoint(1), now() - started);
 
-              const std::string wdl     = result.score > VALUE_DRAW ? "1000 0 0"
-                                        : result.score < VALUE_DRAW ? "0 0 1000"
-                                                                    : "0 1000 0";
-              const TimePoint   elapsed = std::max(TimePoint(1), now() - started);
+            InfoFull info;
+            info.depth    = result.depth;
+            info.selDepth = result.depth;
+            info.multiPV  = 1;
+            info.score    = Score(result.score, searchPos);
+            info.wdl      = wdl;
+            info.bound    = "";
+            info.timeMs   = usize(elapsed);
+            info.nodes    = usize(result.nodes);
+            info.nps      = usize(result.nodes * 1000 / u64(elapsed));
+            info.tbHits   = 0;
+            info.pv       = pv;
+            info.hashfull = 0;
 
-              InfoFull info;
-              info.depth    = result.depth;
-              info.selDepth = result.depth;
-              info.multiPV  = 1;
-              info.score    = Score(result.score, searchPos);
-              info.wdl      = wdl;
-              info.bound    = "";
-              info.timeMs   = usize(elapsed);
-              info.nodes    = usize(result.nodes);
-              info.nps      = usize(result.nodes * 1000 / u64(elapsed));
-              info.tbHits   = 0;
-              info.pv       = pv;
-              info.hashfull = 0;
+            if (updateContext.onUpdateFull)
+                updateContext.onUpdateFull(info);
+        };
 
-              if (updateContext.onUpdateFull)
-                  updateContext.onUpdateFull(info);
-          };
+        const AliceSearch::Result result = AliceSearch::search(
+          searchPos, rootMoves, aliceLimits, *evaluator, aliceSearchStop, onIteration);
 
-          const AliceSearch::Result result = AliceSearch::search(
-            searchPos, rootMoves, aliceLimits, evaluator, aliceSearchStop, onIteration);
+        if (result.completion == AliceSearch::Completion::FAILED)
+        {
+            if (onSearchError)
+                onSearchError(format_search_failure(evaluator->identity(), result));
+            return;
+        }
 
-          if (rootMoves.empty() && updateContext.onUpdateNoMoves)
-              updateContext.onUpdateNoMoves({0, Score(result.score, searchPos)});
+        if (rootMoves.empty() && updateContext.onUpdateNoMoves)
+            updateContext.onUpdateNoMoves({0, Score(result.score, searchPos)});
 
-          while (!aliceSearchStop.load(std::memory_order_relaxed)
-                 && (waitForStop || alicePondering.load(std::memory_order_relaxed)))
-              std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        while (!aliceSearchStop.load(std::memory_order_relaxed)
+               && (waitForStop || alicePondering.load(std::memory_order_relaxed)))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-          std::string bestmove = UCIEngine::move(result.bestMove, searchPos.is_chess960());
-          std::string ponder;
-          if (result.pv.size() > 1)
-              ponder = UCIEngine::move(result.pv[1], searchPos.is_chess960());
+        std::string bestmove = UCIEngine::move(result.bestMove, searchPos.is_chess960());
+        std::string ponder;
+        if (result.pv.size() > 1)
+            ponder = UCIEngine::move(result.pv[1], searchPos.is_chess960());
 
-          if (updateContext.onBestmove)
-              updateContext.onBestmove(bestmove, ponder);
-      });
+        if (updateContext.onBestmove)
+            updateContext.onBestmove(bestmove, ponder);
+    });
     return std::nullopt;
 }
 void Engine::stop() {
@@ -367,6 +673,10 @@ void Engine::set_on_bestmove(std::function<void(std::string_view, std::string_vi
 }
 
 void Engine::set_on_start(std::function<void()>&& f) { updateContext.onStart = std::move(f); }
+
+void Engine::set_on_search_error(std::function<void(std::string_view)>&& f) {
+    onSearchError = std::move(f);
+}
 
 void Engine::set_on_verify_network(std::function<void(std::string_view)>&& f) {
     onVerifyNetwork = std::move(f);
@@ -500,6 +810,62 @@ std::optional<std::string> Engine::trace_eval() const {
 
     sync_cout << "info string " << legacyEvaluator.status_line() << "\n"
               << "legacy_nnue raw " << *raw << " adjusted " << *adjusted << sync_endl;
+    return std::nullopt;
+}
+
+std::optional<std::string> Engine::verify_search_contract(std::string& report) {
+    wait_for_search_finished();
+
+    ContractCaseResult balanced;
+    if (auto error = run_search_contract_case(ContractFailurePoint::NONE, 2, false, balanced))
+        return "Alice search balanced contract case failed to start: " + *error;
+    if (balanced.result.completion != AliceSearch::Completion::COMPLETED
+        || !balanced.result.rootRestored || !balanced.rootMatches || balanced.depth != 0
+        || balanced.pushes == 0 || balanced.pushes != balanced.pops || balanced.evaluations == 0
+        || balanced.iterations != 2)
+        return "Alice search balanced contract case did not preserve its stack and root.";
+
+    auto verify_failure = [&](ContractFailurePoint point, AliceSearch::EvalStage expectedStage,
+                              u64 expectedEvaluations, u64 expectedPushes,
+                              u64 expectedPops) -> std::optional<std::string> {
+        ContractCaseResult result;
+        if (auto error = run_search_contract_case(point, 1, false, result))
+            return error;
+        if (result.result.completion != AliceSearch::Completion::FAILED
+            || result.result.failure.code != AliceSearch::EvalFailureCode::INTERNAL_INVARIANT
+            || result.result.failure.stage != expectedStage || !result.result.rootRestored
+            || !result.rootMatches || result.depth != 0 || result.iterations != 0
+            || result.evaluations != expectedEvaluations || result.pushes != expectedPushes
+            || result.pops != expectedPops)
+            return "injected " + std::string(AliceSearch::failure_stage_name(expectedStage))
+                 + " failure did not unwind exactly";
+        return std::nullopt;
+    };
+
+    if (auto error =
+          verify_failure(ContractFailurePoint::EVALUATE, AliceSearch::EvalStage::EVALUATE, 1, 1, 1))
+        return "Alice search contract rejected: " + *error + ".";
+    if (auto error =
+          verify_failure(ContractFailurePoint::PUSH, AliceSearch::EvalStage::PUSH, 0, 1, 0))
+        return "Alice search contract rejected: " + *error + ".";
+    if (auto error =
+          verify_failure(ContractFailurePoint::POP, AliceSearch::EvalStage::POP, 1, 1, 1))
+        return "Alice search contract rejected: " + *error + ".";
+
+    ContractCaseResult stopped;
+    if (auto error = run_search_contract_case(ContractFailurePoint::NONE, 2, true, stopped))
+        return "Alice search stopped contract case failed to start: " + *error;
+    if (stopped.result.completion != AliceSearch::Completion::STOPPED
+        || !stopped.result.rootRestored || !stopped.rootMatches || stopped.depth != 0
+        || stopped.evaluations != 0 || stopped.pushes != 0 || stopped.pops != 0
+        || stopped.iterations != 0)
+        return "Alice search stopped contract case was not distinct from failure.";
+
+    std::ostringstream out;
+    out << "alice_search contract verified cases 5 balanced_pushes " << balanced.pushes
+        << " balanced_pops " << balanced.pops << " balanced_evaluations " << balanced.evaluations
+        << " injected_failures 3 stopped_cases 1 root_restorations 5";
+    report = out.str();
     return std::nullopt;
 }
 

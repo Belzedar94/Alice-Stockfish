@@ -131,6 +131,13 @@ threat rows are widened before addition, PSQT buckets remain signed 32-bit, and
 dense inputs remain unsigned seven-bit. All SIMD results must match the scalar
 accumulators and raw dense outputs exactly before the command succeeds.
 
+The Alice-safe search already requires a concrete evaluator with
+failure-reporting `evaluate`, `push`, and `pop` operations. It distinguishes a
+normal stop from evaluator failure and proves exact unwind behavior with
+injected failures. AliceNative-v1 is not admitted through that interface until
+its generation-bound session and persistent frame stack pass the later runtime
+gates.
+
 ## 2. State and move semantics
 
 Every training and inference position must preserve, losslessly:

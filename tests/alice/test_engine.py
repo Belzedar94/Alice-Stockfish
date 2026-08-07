@@ -327,6 +327,16 @@ class EngineFixtureTests(unittest.TestCase):
             self.assertEqual(searches[0], ("bestmove a2a3 ponder a7a6", "a2a3 a7a6 b2b3"))
             self.assertNotIn("NNUE evaluation using", "\n".join(session.lines))
 
+    def test_search_evaluator_contract_fails_closed_and_unwinds(self) -> None:
+        result = run_engine("alice_search_verify_contract")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(
+            result.stdout,
+            r"alice_search contract verified cases 5 balanced_pushes \d+ "
+            r"balanced_pops \d+ balanced_evaluations \d+ injected_failures 3 "
+            r"stopped_cases 1 root_restorations 5",
+        )
+
     def test_safe_search_finds_an_alice_mate_in_one(self) -> None:
         fen = "8/6|Q1/8/8/8/8/k7/2K5 w - - 0 1"
         with UciSession() as session:
