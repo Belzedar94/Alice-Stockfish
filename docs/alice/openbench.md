@@ -12,7 +12,7 @@ service. It does not change the local exact-LOS contract in
 The engine-side build and bench contract is implemented and locally verified.
 An OpenBench build request may provide `EXE` and `EVALFILE` to a bare `make`
 invocation, and a freshly started resulting executable loads that exact network
-before a bare `bench`. The canonical bench signature is `104045` nodes on the
+before a bare `bench`. The canonical bench signature is `358993` nodes on the
 versioned eight-position Alice corpus.
 
 Alice has not yet been registered or scheduled on the official service. The
