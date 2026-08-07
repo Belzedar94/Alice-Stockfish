@@ -888,7 +888,8 @@ std::optional<std::string> Engine::verify_native_incremental(Depth depth, std::s
         << stats.maxPieceEvents << " max_threat_events " << stats.maxThreatEvents
         << " cache_checks " << stats.cacheChecks << " cache_adds " << stats.cachePieceAdds
         << " cache_removes " << stats.cachePieceRemoves << " cache_board_b_events "
-        << stats.cacheBoardBEvents << " simd_checks " << stats.simdChecks << " depth " << depth;
+        << stats.cacheBoardBEvents << " simd_checks " << stats.simdChecks
+        << " fixed_snapshot_checks " << stats.fixedSnapshotChecks << " depth " << depth;
     report = out.str();
     return std::nullopt;
 }

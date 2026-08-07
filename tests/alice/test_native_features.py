@@ -89,7 +89,8 @@ def incremental_reports(cases: list[tuple[str, int]]) -> list[dict[str, int]]:
         r"max_threat_events (?P<max_threat_events>\d+) cache_checks (?P<cache_checks>\d+) "
         r"cache_adds (?P<cache_adds>\d+) cache_removes (?P<cache_removes>\d+) "
         r"cache_board_b_events (?P<cache_board_b_events>\d+) "
-        r"simd_checks (?P<simd_checks>\d+) depth (?P<depth>\d+)$"
+        r"simd_checks (?P<simd_checks>\d+) "
+        r"fixed_snapshot_checks (?P<fixed_snapshot_checks>\d+) depth (?P<depth>\d+)$"
     )
     reports = [
         {name: int(value) for name, value in match.groupdict().items()}
@@ -274,6 +275,7 @@ class NativeFeatureTests(unittest.TestCase):
         self.assertEqual(reports[0]["max_piece_events"], 2)
         self.assertEqual(reports[0]["cache_checks"], 2 * reports[0]["positions"])
         self.assertEqual(reports[0]["simd_checks"], 2 * reports[0]["positions"])
+        self.assertEqual(reports[0]["fixed_snapshot_checks"], 2 * reports[0]["positions"])
         self.assertGreater(reports[0]["cache_adds"], 0)
         self.assertGreater(reports[0]["cache_removes"], 0)
         self.assertGreater(reports[0]["cache_board_b_events"], 0)

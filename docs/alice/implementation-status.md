@@ -163,7 +163,7 @@ network suite proves that the embedded list and fixture produce the same node
 count, and repeated fresh processes produce the same signature. This is a
 build-admission identity, not a strength measurement.
 
-## Native NNUE N0-N7 qualification milestone
+## Native NNUE N0-N7 and fixed-snapshot qualification milestone
 
 The native v1 manifest, identifiers, dimensions, relation order, component
 hashes, tensor order, and wire version are frozen in the public contract. A
@@ -187,6 +187,16 @@ The machine-readable trace command is:
 alice_native_trace
 alice_native_verify_incremental <depth 0..2>
 ```
+
+The semantic trace and the bounded runtime snapshot now share the same piece
+and threat enumerators. The runtime form stores at most 32 piece indices and
+1,024 threat indices per perspective in fixed-capacity arrays, sorts them in
+place, and preserves duplicate indices. It performs no dynamic allocation.
+Every visited node compares the complete fixed snapshot, king square, and king
+board with the diagnostic trace. The opening depth-two tree and directed roots
+therefore prove exact snapshot parity across 421 opening positions as well as
+captures, promotions, castling, and king transfers before the snapshot is
+admitted to a search session.
 
 The accumulator weights in this verification route are bounded deterministic
 fixtures; they are not a trained network and are not used by evaluation.

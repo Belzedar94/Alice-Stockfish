@@ -156,6 +156,7 @@ struct IncrementalVerificationStats {
     u64 cachePieceRemoves       = 0;
     u64 cacheBoardBEvents       = 0;
     u64 simdChecks              = 0;
+    u64 fixedSnapshotChecks     = 0;
 };
 
 struct PerspectiveTrace {
@@ -168,8 +169,50 @@ struct PerspectiveTrace {
 
 using PositionTrace = std::array<PerspectiveTrace, COLOR_NB>;
 
-PositionTrace build_trace(const Position& position);
-std::string   trace_json(const Position& position);
+constexpr usize MaximumPieceFeatures  = 32;
+constexpr usize MaximumThreatFeatures = 1024;
+
+template<usize Capacity>
+class FixedIndexList {
+   public:
+    bool push_back(IndexType index) noexcept {
+        if (used == Capacity)
+            return false;
+        indices[used++] = index;
+        return true;
+    }
+
+    void clear() noexcept { used = 0; }
+
+    usize size() const noexcept { return used; }
+    bool  empty() const noexcept { return used == 0; }
+
+    IndexType&       operator[](usize index) noexcept { return indices[index]; }
+    const IndexType& operator[](usize index) const noexcept { return indices[index]; }
+
+    IndexType*       begin() noexcept { return indices.data(); }
+    IndexType*       end() noexcept { return indices.data() + used; }
+    const IndexType* begin() const noexcept { return indices.data(); }
+    const IndexType* end() const noexcept { return indices.data() + used; }
+
+   private:
+    std::array<IndexType, Capacity> indices{};
+    usize                           used = 0;
+};
+
+struct PerspectiveFeatureSnapshot {
+    Color                                 perspective = WHITE;
+    Square                                kingSquare  = SQ_NONE;
+    Board                                 kingBoard   = BOARD_A;
+    FixedIndexList<MaximumPieceFeatures>  pieces;
+    FixedIndexList<MaximumThreatFeatures> threats;
+};
+
+using FeatureSnapshot = std::array<PerspectiveFeatureSnapshot, COLOR_NB>;
+
+PositionTrace              build_trace(const Position& position);
+std::optional<std::string> build_fixed_snapshot(const Position& position, FeatureSnapshot& result);
+std::string                trace_json(const Position& position);
 std::optional<std::string>
 verify_incremental(Position& position, Depth depth, IncrementalVerificationStats& stats);
 

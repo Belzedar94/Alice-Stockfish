@@ -521,22 +521,38 @@ std::optional<std::string> verify_transition(const NativeFeatureDelta&     delta
     return std::nullopt;
 }
 
-void append_piece_features(const Position& position, PerspectiveTrace& trace) {
+template<typename Sink>
+bool enumerate_piece_features(
+  const Position& position, Color perspective, Square kingSquare, Board kingBoard, Sink&& sink) {
     for (Square square = SQ_A1; square <= SQ_H8; ++square)
     {
         const Piece piece = position.piece_on(square);
         if (piece == NO_PIECE)
             continue;
 
-        const Board board = position.board_of(square);
-        trace.pieces.push_back(
-          {PieceSquareFeatures::make_index(trace.perspective, square, piece, board,
-                                           trace.kingSquare, trace.kingBoard),
-           piece, square, board, relation_of(board, trace.kingBoard)});
+        const Board     board = position.board_of(square);
+        const IndexType index =
+          PieceSquareFeatures::make_index(perspective, square, piece, board, kingSquare, kingBoard);
+        if (!sink(index, piece, square, board, relation_of(board, kingBoard)))
+            return false;
     }
+    return true;
 }
 
-void append_threat_features(const Position& position, PerspectiveTrace& trace) {
+void append_piece_features(const Position& position, PerspectiveTrace& trace) {
+    const bool complete = enumerate_piece_features(
+      position, trace.perspective, trace.kingSquare, trace.kingBoard,
+      [&](IndexType index, Piece piece, Square square, Board board, Relation relation) {
+          trace.pieces.push_back({index, piece, square, board, relation});
+          return true;
+      });
+    (void) complete;
+    assert(complete);
+}
+
+template<typename Sink>
+bool enumerate_threat_features(
+  const Position& position, Color perspective, Square kingSquare, Board kingBoard, Sink&& sink) {
     for (Board board : {BOARD_A, BOARD_B})
     {
         const Bitboard occupied           = position.occupancy_on(board);
@@ -546,7 +562,7 @@ void append_threat_features(const Position& position, PerspectiveTrace& trace) {
 
         for (Color relative : {WHITE, BLACK})
         {
-            const Color color = Color(trace.perspective ^ relative);
+            const Color color = Color(perspective ^ relative);
 
             {
                 const Piece    attacker             = make_piece(color, PAWN);
@@ -558,23 +574,30 @@ void append_threat_features(const Position& position, PerspectiveTrace& trace) {
                         const Square    from     = to - direction;
                         const Piece     attacked = position.piece_on(board, to);
                         const IndexType index    = ThreatFeatures::make_index(
-                          trace.perspective, attacker, from, to, attacked, board, trace.kingSquare,
-                          trace.kingBoard);
+                          perspective, attacker, from, to, attacked, board, kingSquare, kingBoard);
                         if (index < ThreatDimensions)
-                            trace.threats.push_back({index, attacker, from, attacked, to, board,
-                                                     relation_of(board, trace.kingBoard)});
+                        {
+                            if (!sink(index, attacker, from, attacked, to, board,
+                                                relation_of(board, kingBoard)))
+                                return false;
+                        }
                     }
+                    return true;
                 };
 
                 if (color == WHITE)
                 {
-                    process_pawn_attacks(shift<NORTH_EAST>(pawns) & pawnTargets, NORTH_EAST);
-                    process_pawn_attacks(shift<NORTH_WEST>(pawns) & pawnTargets, NORTH_WEST);
+                    if (!process_pawn_attacks(shift<NORTH_EAST>(pawns) & pawnTargets, NORTH_EAST)
+                        || !process_pawn_attacks(shift<NORTH_WEST>(pawns) & pawnTargets,
+                                                 NORTH_WEST))
+                        return false;
                 }
                 else
                 {
-                    process_pawn_attacks(shift<SOUTH_WEST>(pawns) & pawnTargets, SOUTH_WEST);
-                    process_pawn_attacks(shift<SOUTH_EAST>(pawns) & pawnTargets, SOUTH_EAST);
+                    if (!process_pawn_attacks(shift<SOUTH_WEST>(pawns) & pawnTargets, SOUTH_WEST)
+                        || !process_pawn_attacks(shift<SOUTH_EAST>(pawns) & pawnTargets,
+                                                 SOUTH_EAST))
+                        return false;
                 }
             }
 
@@ -594,16 +617,31 @@ void append_threat_features(const Position& position, PerspectiveTrace& trace) {
                         const Square    to       = pop_lsb(attacks);
                         const Piece     attacked = position.piece_on(board, to);
                         const IndexType index    = ThreatFeatures::make_index(
-                          trace.perspective, attacker, from, to, attacked, board, trace.kingSquare,
-                          trace.kingBoard);
+                          perspective, attacker, from, to, attacked, board, kingSquare, kingBoard);
                         if (index < ThreatDimensions)
-                            trace.threats.push_back({index, attacker, from, attacked, to, board,
-                                                     relation_of(board, trace.kingBoard)});
+                        {
+                            if (!sink(index, attacker, from, attacked, to, board,
+                                      relation_of(board, kingBoard)))
+                                return false;
+                        }
                     }
                 }
             }
         }
     }
+    return true;
+}
+
+void append_threat_features(const Position& position, PerspectiveTrace& trace) {
+    const bool complete = enumerate_threat_features(
+      position, trace.perspective, trace.kingSquare, trace.kingBoard,
+      [&](IndexType index, Piece attacker, Square from, Piece attacked, Square to, Board board,
+          Relation relation) {
+          trace.threats.push_back({index, attacker, from, attacked, to, board, relation});
+          return true;
+      });
+    (void) complete;
+    assert(complete);
 }
 
 const char* color_name(Color color) { return color == WHITE ? "white" : "black"; }
@@ -676,6 +714,75 @@ PositionTrace build_trace(const Position& position) {
     return result;
 }
 
+std::optional<std::string> build_fixed_snapshot(const Position& position, FeatureSnapshot& result) {
+    result = {};
+
+    if (position.count<KING>(WHITE) != 1 || position.count<KING>(BLACK) != 1)
+        return "Alice native feature snapshots require exactly one king per color.";
+
+    const int pieceCount = popcount(position.pieces());
+    if (pieceCount < 2 || pieceCount > int(MaximumPieceFeatures))
+        return "Alice native feature snapshots require between 2 and 32 pieces.";
+
+    for (Color perspective : {WHITE, BLACK})
+    {
+        PerspectiveFeatureSnapshot& snapshot = result[perspective];
+        snapshot.perspective                 = perspective;
+        snapshot.kingSquare                  = position.square<KING>(perspective);
+        snapshot.kingBoard                   = position.board_of(snapshot.kingSquare);
+
+        if (!enumerate_piece_features(
+              position, snapshot.perspective, snapshot.kingSquare, snapshot.kingBoard,
+              [&](IndexType index, Piece, Square, Board, Relation) {
+                  return index < PieceSquareDimensions && snapshot.pieces.push_back(index);
+              }))
+            return "Alice native fixed piece feature capacity or index range was exceeded.";
+
+        if (!enumerate_threat_features(
+              position, snapshot.perspective, snapshot.kingSquare, snapshot.kingBoard,
+              [&](IndexType index, Piece, Square, Piece, Square, Board, Relation) {
+                  return index < ThreatDimensions && snapshot.threats.push_back(index);
+              }))
+            return "Alice native fixed threat feature capacity or index range was exceeded.";
+
+        std::sort(snapshot.pieces.begin(), snapshot.pieces.end());
+        std::sort(snapshot.threats.begin(), snapshot.threats.end());
+    }
+
+    return std::nullopt;
+}
+
+namespace {
+
+std::optional<std::string> verify_fixed_snapshot(const Position&               position,
+                                                 const PositionTrace&          trace,
+                                                 IncrementalVerificationStats& stats) {
+    FeatureSnapshot snapshot;
+    if (auto error = build_fixed_snapshot(position, snapshot))
+        return error;
+
+    for (Color perspective : {WHITE, BLACK})
+    {
+        const auto& fixed = snapshot[perspective];
+        if (fixed.perspective != perspective || fixed.kingSquare != trace[perspective].kingSquare
+            || fixed.kingBoard != trace[perspective].kingBoard)
+            return "Alice native fixed snapshot identity differed from the semantic trace.";
+
+        const std::vector<IndexType> fixedPieces(fixed.pieces.begin(), fixed.pieces.end());
+        const std::vector<IndexType> fixedThreats(fixed.threats.begin(), fixed.threats.end());
+        if (fixedPieces != piece_indices(trace[perspective]))
+            return "Alice native fixed piece snapshot differed from the semantic trace.";
+        if (fixedThreats != threat_indices(trace[perspective]))
+            return "Alice native fixed threat snapshot differed from the semantic trace.";
+
+        ++stats.fixedSnapshotChecks;
+    }
+
+    return std::nullopt;
+}
+
+}  // namespace
+
 std::string trace_json(const Position& position) {
     const PositionTrace trace = build_trace(position);
     std::ostringstream  out;
@@ -731,6 +838,8 @@ verify_incremental(Position& position, Depth depth, IncrementalVerificationStats
     visit = [&](Depth remaining) -> std::optional<std::string> {
         ++stats.positions;
         const PositionTrace currentTrace = build_trace(position);
+        if (auto error = verify_fixed_snapshot(position, currentTrace, stats))
+            return error;
         if (auto error = verify_refresh_routes(position, currentTrace, *cache, stats))
             return error;
         if (remaining == 0)
