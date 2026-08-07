@@ -47,10 +47,12 @@ def parse_strict_json(payload: bytes) -> dict[str, object]:
     return value
 
 
-def parse_pair_pgn(payload: bytes) -> list[tuple[dict[str, str], list[str]]]:
+def parse_pair_pgn(
+    payload: bytes,
+) -> list[tuple[dict[str, str], list[str], str]]:
     text = payload.decode("ascii", errors="strict")
     lines = text.splitlines()
-    games: list[tuple[dict[str, str], list[str]]] = []
+    games: list[tuple[dict[str, str], list[str], str]] = []
     index = 0
     while index < len(lines):
         while index < len(lines) and not lines[index]:
@@ -75,9 +77,17 @@ def parse_pair_pgn(payload: bytes) -> list[tuple[dict[str, str], list[str]]]:
         tokens = [
             token
             for token in movetext.split()
-            if token not in RESULTS and not MOVE_NUMBER_RE.fullmatch(token)
+            if not MOVE_NUMBER_RE.fullmatch(token)
         ]
-        games.append((headers, tokens))
+        if (
+            not tokens
+            or tokens[-1] not in RESULTS
+            or any(token in RESULTS for token in tokens[:-1])
+        ):
+            raise ValueError(
+                "pair PGN movetext result is missing, misplaced, or repeated"
+            )
+        games.append((headers, tokens[:-1], tokens[-1]))
     if len(games) != 2:
         raise ValueError("pair PGN must contain exactly two games")
     return games
@@ -203,7 +213,7 @@ def validate_worker_response(
         moves = position.get("moves")
         if not isinstance(moves, list) or any(not isinstance(move, str) for move in moves):
             raise ValueError("final valid position moves must be strings")
-        headers, pgn_moves = pgn_games[index]
+        headers, pgn_moves, pgn_result = pgn_games[index]
         expected_white, expected_black = (
             expected_engine_names
             if index == 0
@@ -218,6 +228,7 @@ def validate_worker_response(
             or headers.get("SetUp") != "1"
             or headers.get("PlyCount") != str(len(moves))
             or pgn_moves != moves
+            or pgn_result != result_token
         ):
             raise ValueError("pair PGN contradicts the machine game evidence")
         expected_termination = game.get("termination")

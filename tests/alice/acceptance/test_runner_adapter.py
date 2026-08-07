@@ -176,6 +176,31 @@ class RunnerAdapterTests(unittest.TestCase):
                     response, 7, pair_directory, "fen", ENGINE_NAMES
                 )
 
+    def test_pgn_movetext_result_must_match_machine_evidence(self) -> None:
+        for replacement in ("1-0", ""):
+            with (
+                self.subTest(replacement=replacement or "missing"),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                pair_directory = Path(temporary) / "pair"
+                response = materialize_pair(pair_directory)
+                pgn_path = pair_directory / "games.pgn"
+                original = pgn_path.read_text(encoding="ascii")
+                pgn_path.write_text(
+                    original.replace("\n1/2-1/2\n\n", f"\n{replacement}\n\n", 1),
+                    encoding="ascii",
+                    newline="\n",
+                )
+                artifacts = response["artifacts"]
+                assert isinstance(artifacts, dict)
+                artifacts["games_pgn_sha256"] = sha256_file(pgn_path)
+                with self.assertRaisesRegex(
+                    ValueError, "movetext result|PGN contradicts"
+                ):
+                    validate_worker_response(
+                        response, 7, pair_directory, "fen", ENGINE_NAMES
+                    )
+
     def test_repeated_color_assignment_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             pair_directory = Path(temporary) / "pair"
