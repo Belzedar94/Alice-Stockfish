@@ -235,7 +235,8 @@ def verify_native_qualification(
         "file_engine_centipawn_difference",
         "incremental_full_mismatches",
     ):
-        if receipt.get(field) != 0:
+        value = receipt.get(field)
+        if type(value) is not int or value != 0:
             reasons.append(f"native qualification: {field} is not zero")
     for field in (
         "dataset_position_count",

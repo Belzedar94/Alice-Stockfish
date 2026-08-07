@@ -356,6 +356,37 @@ class ReleaseEvidenceTests(unittest.TestCase):
             any("network_parameter_nonzero_count" in reason for reason in receipt["blocking_reasons"])
         )
 
+    def test_boolean_mismatch_counters_block_release(self) -> None:
+        fields = (
+            "checkpoint_file_element_mismatches",
+            "file_engine_centipawn_difference",
+            "incremental_full_mismatches",
+        )
+        for field in fields:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                manifest, value, size = self.build_candidate(root)
+                qualification_path = Path(value["native_qualification"]["path"])
+                qualification = json.loads(
+                    qualification_path.read_text(encoding="utf-8")
+                )
+                qualification[field] = False
+                qualification_path.write_text(
+                    json.dumps(qualification), encoding="utf-8"
+                )
+                value["native_qualification"]["sha256"] = sha256_file(
+                    qualification_path
+                )
+                manifest.write_text(json.dumps(value), encoding="utf-8")
+                with mock.patch.object(
+                    alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+                ):
+                    receipt = alice_release_evidence.audit_release_candidate(manifest)
+            self.assertFalse(receipt["strength_release_authorized"])
+            self.assertTrue(
+                any(field in reason for reason in receipt["blocking_reasons"])
+            )
+
     def test_local_battery_for_another_network_blocks_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
