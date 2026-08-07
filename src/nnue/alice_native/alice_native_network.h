@@ -82,10 +82,10 @@ class WireValidator {
     std::string  lastError;
 };
 
-// Owns one fully parsed but qualification-only native parameter set. Loading
+// Owns one fully parsed native parameter set. Loading
 // requires a caller-trusted SHA-256 and commits with one pointer swap only
 // after same-handle authentication, parsing, and canonical traversal checks.
-// Normal search never reads this object in N7.
+// A move-only lease pins the immutable object for a complete search session.
 class QualificationNetwork {
    private:
     struct Parameters;
@@ -104,6 +104,7 @@ class QualificationNetwork {
         explicit         operator bool() const noexcept;
         ParameterView    parameter_view() const noexcept;
         u64              generation() const noexcept;
+        std::string_view normalized_path() const noexcept;
         std::string_view sha256() const noexcept;
         u32              version() const noexcept;
         u32              architecture() const noexcept;

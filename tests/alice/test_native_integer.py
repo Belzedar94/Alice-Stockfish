@@ -1,14 +1,17 @@
-"""Exact stage parity for qualification-only AliceNative-v1 inference."""
+"""Exact stage, fixed-session, and live-search parity for AliceNative-v1."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+import queue
 import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 from native_features_reference import position_trace
@@ -57,6 +60,65 @@ def default_engine_path() -> Path:
 
 
 ENGINE_PATH = default_engine_path()
+
+
+class UciSession:
+    def __init__(self, engine: Path) -> None:
+        self.process = subprocess.Popen(
+            [str(engine)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="ascii",
+            bufsize=1,
+        )
+        self.lines: list[str] = []
+        self.pending: queue.Queue[str] = queue.Queue()
+        self.reader = threading.Thread(target=self._read_output, daemon=True)
+        self.reader.start()
+
+    def _read_output(self) -> None:
+        assert self.process.stdout is not None
+        for line in self.process.stdout:
+            self.pending.put(line.rstrip("\r\n"))
+
+    def send(self, command: str) -> None:
+        assert self.process.stdin is not None
+        self.process.stdin.write(command + "\n")
+        self.process.stdin.flush()
+
+    def wait_for(self, pattern: str, timeout: float = 60.0) -> str:
+        expression = re.compile(pattern)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                remaining = max(0.0, deadline - time.monotonic())
+                line = self.pending.get(timeout=min(0.1, remaining))
+            except queue.Empty:
+                continue
+            self.lines.append(line)
+            if expression.search(line):
+                return line
+        raise AssertionError(
+            f"Timed out waiting for {pattern!r}.\n" + "\n".join(self.lines[-100:])
+        )
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            self.send("quit")
+            self.process.wait(timeout=10)
+        if self.process.stdin is not None:
+            self.process.stdin.close()
+        if self.process.stdout is not None:
+            self.process.stdout.close()
+        self.reader.join(timeout=1)
+
+    def __enter__(self) -> "UciSession":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
 
 def command_path(path: Path) -> str:
@@ -286,7 +348,7 @@ def loaded_incremental_reports(
         r"dense_simd_comparisons (?P<dense_simd_comparisons>\d+) "
         r"fixed_accumulator_checks (?P<fixed_accumulator_checks>\d+) "
         r"fixed_delta_updates (?P<fixed_delta_updates>\d+) "
-        r"undo_checks (?P<undo_checks>\d+) depth (?P<depth>\d+) search disabled$"
+        r"undo_checks (?P<undo_checks>\d+) depth (?P<depth>\d+) search available$"
     )
     reports = [
         {name: int(value) for name, value in match.groupdict().items()}
@@ -312,7 +374,7 @@ def loaded_incremental_reports(
         r"max_threat_events (?P<max_threat_events>\d+) "
         r"accumulator_checks (?P<accumulator_checks>\d+) "
         r"value_checks (?P<value_checks>\d+) undo_checks (?P<undo_checks>\d+) "
-        r"depth (?P<depth>\d+) search disabled$"
+        r"depth (?P<depth>\d+) search available$"
     )
     session_reports = [
         {name: int(value) for name, value in match.groupdict().items()}
@@ -486,11 +548,12 @@ class NativeIntegerTests(unittest.TestCase):
             zero = directory / "zero.nnue"
             write_zero_wire(zero)
             zero_sha = file_sha256(zero)
-            search = subprocess.run(
+
+            missing_native = subprocess.run(
                 [str(ENGINE_PATH)],
                 input="\n".join(
                     (
-                        f"alice_native_load_file {command_path(zero)} {zero_sha}",
+                        "setoption name Alice Evaluation value Native",
                         f"position fen {fen}",
                         "go depth 1",
                         "quit",
@@ -502,9 +565,87 @@ class NativeIntegerTests(unittest.TestCase):
                 encoding="ascii",
                 check=False,
             )
-            self.assertNotEqual(search.returncode, 0, search.stdout + search.stderr)
-            self.assertIn("Legacy Alice evaluation is enabled", search.stdout)
-            self.assertNotIn("bestmove", search.stdout)
+            self.assertNotEqual(
+                missing_native.returncode,
+                0,
+                missing_native.stdout + missing_native.stderr,
+            )
+            self.assertIn("parameters cannot be leased", missing_native.stdout)
+            self.assertNotIn("bestmove", missing_native.stdout)
+
+            with UciSession(ENGINE_PATH) as session:
+                session.send(f"setoption name Alice Native SHA256 value {zero_sha}")
+                session.wait_for(r"loading requires both Alice Native EvalFile and Alice Native SHA256")
+                session.send(
+                    f"setoption name Alice Native EvalFile value {zero.resolve().as_posix()}"
+                )
+                loaded = session.wait_for(
+                    r"Alice native qualification parameters loaded generation=1"
+                )
+                self.assertIn(f"sha256={zero_sha}", loaded)
+                self.assertIn("search=available", loaded)
+
+                session.send("setoption name Alice Evaluation value Native")
+                session.wait_for(r"Alice native qualification parameters loaded generation=1")
+                session.send(f"position fen {fen}")
+                session.send("eval")
+                evaluated = session.wait_for(r"^alice_native value 0 generation 1 sha256 ")
+                self.assertTrue(evaluated.endswith(zero_sha), evaluated)
+
+                session.send("go depth 1")
+                session.wait_for(r"^info depth 1 .* score cp 0 ")
+                session.wait_for(r"^bestmove ")
+
+                session.send("go infinite")
+                session.wait_for(r"^info depth 1 ")
+                session.send(
+                    f"alice_native_try_load_file {command_path(zero)} {zero_sha}"
+                )
+                rejected = session.wait_for(r"search lease is active")
+                self.assertIn("load rejected", rejected)
+                session.send("stop")
+                session.wait_for(r"^bestmove ")
+                session.send("alice_native_load_status")
+                preserved = session.wait_for(
+                    r"Alice native qualification parameters loaded generation=1"
+                )
+                self.assertIn(f"sha256={zero_sha}", preserved)
+
+                session.send("setoption name Use NNUE value false")
+                session.wait_for(r"Use NNUE disabled")
+                session.send("eval")
+                session.wait_for(r"^legacy_nnue raw 0 adjusted 0$")
+                session.send("setoption name Use NNUE value true")
+                session.wait_for(r"Alice native qualification parameters loaded generation=1")
+                session.send("eval")
+                session.wait_for(r"^alice_native value 0 generation 1 sha256 ")
+
+            stale_selection = subprocess.run(
+                [str(ENGINE_PATH)],
+                input="\n".join(
+                    (
+                        f"alice_native_load_file {command_path(zero)} {zero_sha}",
+                        f"setoption name Alice Native SHA256 value {zero_sha}",
+                        f"setoption name Alice Native EvalFile value {directory / 'missing.nnue'}",
+                        "setoption name Alice Evaluation value Native",
+                        f"position fen {fen}",
+                        "eval",
+                        "quit",
+                        "",
+                    )
+                ),
+                text=True,
+                capture_output=True,
+                encoding="ascii",
+                check=False,
+            )
+            self.assertNotEqual(
+                stale_selection.returncode,
+                0,
+                stale_selection.stdout + stale_selection.stderr,
+            )
+            self.assertIn("selected EvalFile is unavailable", stale_selection.stdout)
+            self.assertNotIn("alice_native value", stale_selection.stdout)
 
             missing = subprocess.run(
                 [str(ENGINE_PATH)],

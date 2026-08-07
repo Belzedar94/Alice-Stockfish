@@ -147,8 +147,8 @@ transactionally without altering its parent. `Dirties` is not an authority for
 native threats. The `alice_native_verify_search_session <depth 0..2>` command
 compares every current frame with a semantic full refresh, evaluates through
 the production integer body, and requires exact parent and root restoration.
-Normal search still cannot select this session until parameter leasing and
-active-reload rejection pass their own runtime gate.
+Normal search selects this session only through the explicit native backend and
+only after acquiring an authenticated parameter lease.
 
 The parameter object now provides a move-only lease containing its immutable
 pointer, generation, wire version, architecture, and SHA-256 identity. Session
@@ -157,8 +157,16 @@ attempt while any lease is active is rejected immediately before opening or
 parsing a file; the active pointer, generation, and SHA-256 remain unchanged.
 After release, the same authenticated object can be leased again. The
 `alice_native_verify_lease` command proves the rejection and reacquisition
-contract. Evaluation routing remains disabled until the selector and live UCI
-failure paths pass their dedicated gate.
+contract.
+
+`Alice Evaluation` is the single backend selector with `Legacy`, `Native`, and
+`Zero` values. `Use NNUE=false` remains a compatibility override for Zero.
+Native selection fails before search if no lease can be acquired or if the
+selected SHA-256 differs from the installed object. The search thread owns the
+lease for its complete lifetime and constructs the fixed session against its
+own root position. `eval` and search startup report the generation and SHA-256.
+Any initialization, stack, feature, accumulator, dense-arithmetic, identity, or
+static-value failure terminates the search without another evaluation backend.
 
 ## 2. State and move semantics
 

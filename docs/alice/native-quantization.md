@@ -204,8 +204,8 @@ selects the historical evaluator or another fallback.
 
 Read-only qualification commands expose network and tensor identities,
 stage-by-stage integer inference, and loaded full-refresh versus incremental
-comparisons. None of these paths makes the native backend available to normal
-search.
+comparisons. Normal search consumes only the immutable leased parameter object
+through the separately qualified fixed-frame session.
 
 The loader, identity status, tensor status, flat parameter probes, and
 full-refresh integer trace, and loaded incremental verifier are now implemented
@@ -217,9 +217,10 @@ normative inference stage. The incremental verifier also proves exact feature,
 PSQT, dense-stage, and undo equality over exhaustive and directed legal-move
 trees. AVX2 and SSE4.1/SSSE3 qualification routes independently execute the
 loaded feature, threat, PSQT, and dense affine integers and compare them with
-the scalar path, including signed arithmetic boundaries. No search accumulator
-or evaluation route consumes the installed object yet, so generation-keyed
-cache invalidation remains closed until its qualification lands.
+the scalar path, including signed arithmetic boundaries. The production search
+session pins one generation and SHA-256 with a move-only lease, uses fixed
+feature snapshots and wide transactional accumulators, and rejects replacement
+while active. No stale-generation cache or fallback evaluator is consulted.
 
 ## 6. Exact acceptance
 

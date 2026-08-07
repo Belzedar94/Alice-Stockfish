@@ -170,7 +170,7 @@ hashes, tensor order, and wire version are frozen in the public contract. A
 separate scalar inspection path now extracts full `SAME/OTHER` piece-square
 and board-local threat traces for both king perspectives. It uses explicit
 board-aware position queries and 32-bit threat indices, omits `PP_3Wide`, and
-does not connect native features to evaluation or to the historical
+remains independent of both the selected evaluator and the historical
 accumulator.
 
 Board-tagged piece and threat events are derived from complete semantic states.
@@ -246,7 +246,7 @@ preserves the active pointer, generation, whole-file identity, tensor
 identities, and parameter probes. The zero and axis-sentinel fixtures prove
 successful replacement; wrong SHA, wrong version, `-32768`, dense-envelope
 overflow, and missing-SHA cases prove fail-closed preservation. The
-qualification-only commands are:
+loading and diagnostic commands are:
 
 ```text
 alice_native_load_file <path> <expected-sha256>
@@ -312,10 +312,21 @@ rejected immediately while a lease is active, before file I/O, and preserves
 the installed pointer and identity. `alice_native_verify_lease` proves one
 rejected replacement followed by successful reacquisition of the same object.
 
-The installed object is not read by normal search, never selects the
-historical evaluator as a fallback, and reports `search=disabled`.
-The explicit evaluation selector and live search routing remain later
-exact-parity gates.
+The explicit `Alice Evaluation` selector offers `Legacy`, `Native`, and `Zero`.
+Selecting `Native` requires a successfully authenticated object and acquires a
+lease before the search thread starts. The session then supplies every static
+evaluation through the fixed frame stack. Initialization, feature, arithmetic,
+identity, stack, and value-range failures stop the search through the structured
+failure channel; no historical or zero fallback is possible. `eval`, load
+status, and search startup expose the native generation and SHA-256. The legacy
+`Use NNUE=false` setting remains a compatibility override for deterministic
+zero diagnostics.
+
+An interactive runtime test loads a complete all-zero native wire, verifies
+`eval`, completes `go depth 1`, starts `go infinite`, rejects a replacement
+while the live lease is active, stops promptly, emits a legal best move, and
+confirms that the original generation and SHA-256 remain installed. Loaded
+status and qualification reports now state `search=available`.
 
 ## Cross-platform verification
 

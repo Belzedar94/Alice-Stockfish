@@ -14,6 +14,22 @@ independent rules authority. The current correctness-first search can use its
 frozen Alice network through a strict compatibility bridge with exact
 full-refresh and incremental evaluation paths.
 
+AliceNative-v1 networks use a separate authenticated wire format with
+board-relative `SAME/OTHER` features and board-local threats. A native file is
+selected explicitly; an incompatible, corrupt, missing, or identity-mismatched
+file stops evaluation instead of selecting another backend:
+
+```text
+setoption name Alice Native SHA256 value <whole-file-sha256>
+setoption name Alice Native EvalFile value <path-to-native-network>
+setoption name Alice Evaluation value Native
+```
+
+`Alice Evaluation` also accepts `Legacy` and `Zero`. The historical
+`Use NNUE=false` setting remains a compatibility alias that forces the
+deterministic zero diagnostic backend. Native load and evaluation status
+includes the exact generation and SHA-256.
+
 ---
 
 <div align="center">

@@ -157,6 +157,9 @@ class Engine {
     std::atomic_bool alicePondering{false};
 
     std::optional<std::string> configure_legacy_network(const std::filesystem::path&);
+    std::optional<std::string> configure_native_network();
+    std::optional<Eval::NNUE::AliceNative::QualificationNetwork::Lease>
+    lease_native_network(std::string& error) const;
 };
 
 }  // namespace Stockfish

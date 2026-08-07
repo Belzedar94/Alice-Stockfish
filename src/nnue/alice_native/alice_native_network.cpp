@@ -1124,6 +1124,10 @@ u64 QualificationNetwork::Lease::generation() const noexcept {
     return pinned ? pinned->generation : 0;
 }
 
+std::string_view QualificationNetwork::Lease::normalized_path() const noexcept {
+    return pinned ? std::string_view(pinned->wire.normalizedPath) : std::string_view{};
+}
+
 std::string_view QualificationNetwork::Lease::sha256() const noexcept {
     return pinned ? std::string_view(pinned->wire.sha256) : std::string_view{};
 }
@@ -1476,7 +1480,7 @@ std::string QualificationNetwork::status_line() const {
         << " path=\"" << active->wire.normalizedPath << "\" bytes=" << active->wire.bytes
         << " sha256=" << active->wire.sha256 << " manifest_sha256=" << active->wire.manifestSha256
         << " version=" << hex32(active->wire.version)
-        << " architecture=" << hex32(active->wire.architecture) << " search=disabled";
+        << " architecture=" << hex32(active->wire.architecture) << " search=available";
     return out.str();
 }
 
@@ -2060,7 +2064,7 @@ QualificationNetwork::verify_session(Position& position, Depth depth, std::strin
         << runtime.threatRemoves << " max_piece_events " << runtime.maxPieceEvents
         << " max_threat_events " << runtime.maxThreatEvents << " accumulator_checks "
         << accumulatorChecks << " value_checks " << valueChecks << " undo_checks " << undoChecks
-        << " depth " << depth << " search disabled";
+        << " depth " << depth << " search available";
     report = out.str();
     return std::nullopt;
 }

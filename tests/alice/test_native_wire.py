@@ -262,7 +262,7 @@ class NativeWireTests(unittest.TestCase):
             self.assertEqual(statuses[2], statuses[4])
             self.assertEqual(statuses[2], statuses[5])
             self.assertIn(f"sha256={sentinel_sha}", statuses[2])
-            self.assertIn("search=disabled", statuses[2])
+            self.assertIn("search=available", statuses[2])
 
             tensor_statuses = [
                 line
