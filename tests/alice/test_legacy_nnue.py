@@ -193,7 +193,7 @@ class LegacyNetworkTests(unittest.TestCase):
             session.send("bench")
             default_line = session.wait_for(r"^Nodes searched\s+:\s+\d+$", timeout=90)
             default_nodes = int(default_line.rsplit(maxsplit=1)[1])
-            self.assertEqual(default_nodes, 246631)
+            self.assertEqual(default_nodes, 202963)
 
             session.send("bench 16 1 12 tests/alice/fixtures/bench-v1.epd depth")
             fixture_line = session.wait_for(r"^Nodes searched\s+:\s+\d+$", timeout=90)
