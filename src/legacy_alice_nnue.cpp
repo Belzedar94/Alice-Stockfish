@@ -534,9 +534,6 @@ std::optional<std::string> LegacyAliceExact::load(const std::filesystem::path& f
         return impl->lastError;
     };
 
-    if (path_string(file.filename()) != RequiredFileName)
-        return reject("EvalFile basename must be " + std::string(RequiredFileName) + ".");
-
     std::ifstream stream(file, std::ios::binary | std::ios::ate);
     if (!stream)
         return reject("Unable to open EvalFile: " + path_string(file) + ".");

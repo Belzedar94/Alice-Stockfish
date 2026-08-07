@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -199,6 +200,19 @@ class LegacyNetworkTests(unittest.TestCase):
             fixture_nodes = int(fixture_line.rsplit(maxsplit=1)[1])
             self.assertEqual(fixture_nodes, default_nodes)
 
+    def test_content_addressed_basename_loads_by_verified_bytes(self) -> None:
+        assert NETWORK_PATH is not None
+        with tempfile.TemporaryDirectory() as temporary:
+            cached_network = Path(temporary) / "9F9E5570"
+            shutil.copyfile(NETWORK_PATH, cached_network)
+            with UciSession() as session:
+                session.send(f"setoption name EvalFile value {cached_network}")
+                loaded = session.wait_for(
+                    rf'LegacyAliceExact loaded path="{re.escape(str(cached_network))}"',
+                    timeout=60,
+                )
+                self.assertIn("9F9E5570", loaded)
+
     def test_rejections_clear_the_previous_evaluator_and_exit_nonzero(self) -> None:
         assert NETWORK_PATH is not None
         missing = NETWORK_PATH.parent / "missing" / NETWORK_PATH.name
@@ -208,12 +222,6 @@ class LegacyNetworkTests(unittest.TestCase):
                 missing,
                 "Unable to open EvalFile",
                 (f"setoption name EvalFile value {NETWORK_PATH}",),
-            ),
-            (
-                "wrong-basename",
-                NETWORK_PATH.with_name("wrong-name.nnue"),
-                "basename must be",
-                (),
             ),
         ]
         for label, path, diagnostic, commands in cases:
@@ -285,7 +293,10 @@ class LegacyNetworkTests(unittest.TestCase):
             with UciSession() as session:
                 session.send("setoption name Alice_Frozen_Network value false")
                 session.send(f"setoption name EvalFile value {target}")
-                status = session.wait_for(r"LegacyAliceExact loaded", timeout=60)
+                status = session.wait_for(
+                    rf'LegacyAliceExact loaded path="{re.escape(str(target))}"',
+                    timeout=60,
+                )
                 self.assertIn("mode=format-compatible", status)
                 self.assertNotIn(self.document["network"]["sha256"], status)
                 session.send("position startpos")

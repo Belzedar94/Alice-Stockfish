@@ -8,7 +8,7 @@
 
 | Property | Value |
 | --- | --- |
-| File name | `alice_run2rl_e40_l09.nnue` |
+| Canonical source file name | `alice_run2rl_e40_l09.nnue` |
 | File size | 47,721,376 bytes |
 | SHA-256 | `9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9` |
 | NNUE serialization version | `0x7AF32F20` |
@@ -64,14 +64,16 @@ enabled` and returned `bestmove a2a3`. This proves that the frozen executable
 accepts and searches with the frozen file; it does not prove layer-aware
 evaluation.
 
-The legacy loader selects an entry from `EvalFile` when its basename begins
+The historical loader selects an entry from `EvalFile` when its basename begins
 with the current variant name or the variant's `nnueAlias`
 ([source](https://github.com/fairy-stockfish/Fairy-Stockfish/blob/4b1940a8d0f60eeb853de7e77af3b39ebf1b6f79/src/evaluate.cpp#L77-L103)).
 For Alice, `alice_run2rl_e40_l09.nnue` is a direct variant-name match. Alice's
 second `init()` clears the chess `nn-` alias, so a generic
-`nn-123456789abc.nnue` name is not an Alice alias. The compatibility bridge
-must not depend on accidental renaming; its manifest records both the selected
-path and the measured SHA-256.
+`nn-123456789abc.nnue` name is not an Alice alias. The modern compatibility
+bridge does not use that historical basename dispatch: content-addressed build
+systems may cache the file under its digest. It records the selected path but
+identifies the network from the parsed format and the SHA-256 of the bytes that
+were actually opened.
 
 ## Strict load policy
 
@@ -86,7 +88,7 @@ an arbitrary same-name file.
 | Wrong serialization version | Reject before allocating or reading weights. |
 | Wrong architecture hash | Reject; do not attempt partial or shape-based conversion. |
 | Truncated, corrupt, unreadable, or missing file | Reject with a non-zero outcome and a precise diagnostic. |
-| Basename does not match the Alice manifest or an explicit approved alias | Reject the configuration instead of silently disabling NNUE. |
+| Canonical or content-addressed basename with the exact frozen bytes | Apply the same version, architecture, structural, and SHA-256 checks; the path name is not identity. |
 | Multiple Alice-compatible entries are supplied | Reject ambiguity unless one entry is explicitly selected. |
 | `Use NNUE` is explicitly disabled | Permit only a clearly reported non-baseline diagnostic mode; it cannot satisfy compatibility or strength gates. |
 
@@ -106,8 +108,9 @@ The bridge is accepted only after all of the following pass on a fixed corpus:
    disabled in the correctness-first Alice search and is not an enabled path.
 3. The loaded path and SHA-256 remain stable across `ucinewgame`, position
    changes, thread-count changes, and repeated searches.
-4. Missing, corrupt, wrong-version, wrong-architecture, wrong-prefix, and
-   ambiguous-network probes all terminate without an evaluation fallback.
+4. Missing, corrupt, wrong-version, wrong-architecture, wrong-checksum, and
+   ambiguous-network probes all terminate without an evaluation fallback; an
+   exact content-addressed copy loads successfully.
 5. Layer-swapped position pairs are included and documented as expected
    legacy feature collisions, preventing board blindness from being mistaken
    for successful native coverage.

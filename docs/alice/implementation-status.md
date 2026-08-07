@@ -125,9 +125,10 @@ Verified compatibility evidence consists of:
 - exact full-refresh versus incremental equality over exhaustive subtrees that
   include captures, promotions, castling, king moves, and undo restoration;
 - an exact network-backed depth-one root result; and
-- non-zero rejection probes for a missing file, wrong basename, version,
-  architecture, transformer or layer-stack hash, frozen checksum, truncation,
-  and trailing data, including invalidation after a valid load.
+- successful loading of an exact content-addressed copy, plus non-zero
+  rejection probes for a missing file, wrong version, architecture,
+  transformer or layer-stack hash, frozen checksum, truncation, and trailing
+  data, including invalidation after a valid load.
 
 The public executable checks are:
 
