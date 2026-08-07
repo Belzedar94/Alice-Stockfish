@@ -84,11 +84,21 @@ std::optional<std::string> refresh_integer_accumulator(const ParameterView&    p
                                                        const PerspectiveTrace& trace,
                                                        IntegerAccumulator&     accumulator);
 
+std::optional<std::string> refresh_integer_accumulator(const ParameterView&              parameters,
+                                                       const PerspectiveFeatureSnapshot& snapshot,
+                                                       IntegerAccumulator& accumulator);
+
 std::optional<std::string> update_integer_accumulator(const ParameterView&    parameters,
                                                       const PerspectiveTrace& before,
                                                       const PerspectiveTrace& after,
                                                       IntegerAccumulator&     accumulator,
                                                       AccumulatorDeltaStats&  stats);
+
+std::optional<std::string> update_integer_accumulator(const ParameterView&              parameters,
+                                                      const PerspectiveFeatureSnapshot& before,
+                                                      const PerspectiveFeatureSnapshot& after,
+                                                      IntegerAccumulator&               accumulator,
+                                                      AccumulatorDeltaStats&            stats);
 
 std::optional<std::string> evaluate_integer(const ParameterView&         parameters,
                                             const Position&              position,

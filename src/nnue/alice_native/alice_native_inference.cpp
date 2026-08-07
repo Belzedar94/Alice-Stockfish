@@ -40,26 +40,31 @@ std::optional<std::string> validate_accumulator(const IntegerAccumulator& accumu
     return std::nullopt;
 }
 
-template<typename Feature, typename Update>
-void apply_feature_delta(const std::vector<Feature>& before,
-                         const std::vector<Feature>& after,
-                         Update&&                    update,
-                         u64&                        adds,
-                         u64&                        removes) {
+IndexType feature_index(IndexType index) { return index; }
+
+template<typename Feature>
+IndexType feature_index(const Feature& feature) {
+    return feature.index;
+}
+
+template<typename FeatureRange, typename Update>
+void apply_feature_delta(
+  const FeatureRange& before, const FeatureRange& after, Update&& update, u64& adds, u64& removes) {
     usize beforeIndex = 0;
     usize afterIndex  = 0;
     while (beforeIndex < before.size() || afterIndex < after.size())
     {
         if (afterIndex == after.size()
-            || (beforeIndex < before.size() && before[beforeIndex].index < after[afterIndex].index))
+            || (beforeIndex < before.size()
+                && feature_index(before[beforeIndex]) < feature_index(after[afterIndex])))
         {
-            update(before[beforeIndex++].index, -1);
+            update(feature_index(before[beforeIndex++]), -1);
             ++removes;
         }
         else if (beforeIndex == before.size()
-                 || after[afterIndex].index < before[beforeIndex].index)
+                 || feature_index(after[afterIndex]) < feature_index(before[beforeIndex]))
         {
-            update(after[afterIndex++].index, 1);
+            update(feature_index(after[afterIndex++]), 1);
             ++adds;
         }
         else
@@ -101,50 +106,57 @@ i32 activate(i32 value, int shift, bool square) {
     return i32(std::clamp<i64>(raw, 0, 127));
 }
 
-}  // namespace
-
-std::optional<std::string> refresh_integer_accumulator(const ParameterView&    parameters,
-                                                       const PerspectiveTrace& trace,
-                                                       IntegerAccumulator&     accumulator) {
+template<typename PieceRange, typename ThreatRange>
+std::optional<std::string> refresh_integer_accumulator_impl(const ParameterView& parameters,
+                                                            Color                perspective,
+                                                            const PieceRange&    pieces,
+                                                            const ThreatRange&   threats,
+                                                            IntegerAccumulator&  accumulator) {
     accumulator = {};
     for (usize lane = 0; lane < L1; ++lane)
         accumulator.values[lane] = parameters.ftBias[lane];
 
-    for (const auto& feature : trace.pieces)
+    for (const auto& feature : pieces)
     {
-        if (feature.index >= PieceSquareDimensions)
+        const IndexType index = feature_index(feature);
+        if (index >= PieceSquareDimensions)
             return "Alice native piece feature index is outside the loaded tensor.";
-        const u64 row = u64(feature.index) * L1;
+        const u64 row = u64(index) * L1;
         for (usize lane = 0; lane < L1; ++lane)
             accumulator.values[lane] += parameters.pieceSquareWeight[row + lane];
-        const u64 psqtRow = u64(feature.index) * PsqtBuckets;
+        const u64 psqtRow = u64(index) * PsqtBuckets;
         for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
             accumulator.psqt[bucket] += parameters.pieceSquarePsqt[psqtRow + bucket];
     }
 
-    for (const auto& feature : trace.threats)
+    for (const auto& feature : threats)
     {
-        if (feature.index >= ThreatDimensions)
+        const IndexType index = feature_index(feature);
+        if (index >= ThreatDimensions)
             return "Alice native threat feature index is outside the loaded tensor.";
-        const u64 row = u64(feature.index) * L1;
+        const u64 row = u64(index) * L1;
         for (usize lane = 0; lane < L1; ++lane)
             accumulator.values[lane] += parameters.threatWeight[row + lane];
-        const u64 psqtRow = u64(feature.index) * PsqtBuckets;
+        const u64 psqtRow = u64(index) * PsqtBuckets;
         for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
             accumulator.psqt[bucket] += parameters.threatPsqt[psqtRow + bucket];
     }
 
-    return validate_accumulator(accumulator, trace.perspective);
+    return validate_accumulator(accumulator, perspective);
 }
 
-std::optional<std::string> update_integer_accumulator(const ParameterView&    parameters,
-                                                      const PerspectiveTrace& before,
-                                                      const PerspectiveTrace& after,
-                                                      IntegerAccumulator&     accumulator,
-                                                      AccumulatorDeltaStats&  stats) {
+template<typename PieceRange, typename ThreatRange>
+std::optional<std::string> update_integer_accumulator_impl(const ParameterView&   parameters,
+                                                           Color                  perspective,
+                                                           const PieceRange&      beforePieces,
+                                                           const PieceRange&      afterPieces,
+                                                           const ThreatRange&     beforeThreats,
+                                                           const ThreatRange&     afterThreats,
+                                                           IntegerAccumulator&    accumulator,
+                                                           AccumulatorDeltaStats& stats) {
     stats = {};
     apply_feature_delta(
-      before.pieces, after.pieces,
+      beforePieces, afterPieces,
       [&](IndexType index, i32 sign) {
           const u64 row = u64(index) * L1;
           for (usize lane = 0; lane < L1; ++lane)
@@ -156,7 +168,7 @@ std::optional<std::string> update_integer_accumulator(const ParameterView&    pa
       stats.pieceAdds, stats.pieceRemoves);
 
     apply_feature_delta(
-      before.threats, after.threats,
+      beforeThreats, afterThreats,
       [&](IndexType index, i32 sign) {
           const u64 row = u64(index) * L1;
           for (usize lane = 0; lane < L1; ++lane)
@@ -167,7 +179,43 @@ std::optional<std::string> update_integer_accumulator(const ParameterView&    pa
       },
       stats.threatAdds, stats.threatRemoves);
 
-    return validate_accumulator(accumulator, after.perspective);
+    return validate_accumulator(accumulator, perspective);
+}
+
+}  // namespace
+
+std::optional<std::string> refresh_integer_accumulator(const ParameterView&    parameters,
+                                                       const PerspectiveTrace& trace,
+                                                       IntegerAccumulator&     accumulator) {
+    return refresh_integer_accumulator_impl(parameters, trace.perspective, trace.pieces,
+                                            trace.threats, accumulator);
+}
+
+std::optional<std::string> refresh_integer_accumulator(const ParameterView&              parameters,
+                                                       const PerspectiveFeatureSnapshot& snapshot,
+                                                       IntegerAccumulator& accumulator) {
+    return refresh_integer_accumulator_impl(parameters, snapshot.perspective, snapshot.pieces,
+                                            snapshot.threats, accumulator);
+}
+
+std::optional<std::string> update_integer_accumulator(const ParameterView&    parameters,
+                                                      const PerspectiveTrace& before,
+                                                      const PerspectiveTrace& after,
+                                                      IntegerAccumulator&     accumulator,
+                                                      AccumulatorDeltaStats&  stats) {
+    return update_integer_accumulator_impl(parameters, after.perspective, before.pieces,
+                                           after.pieces, before.threats, after.threats, accumulator,
+                                           stats);
+}
+
+std::optional<std::string> update_integer_accumulator(const ParameterView&              parameters,
+                                                      const PerspectiveFeatureSnapshot& before,
+                                                      const PerspectiveFeatureSnapshot& after,
+                                                      IntegerAccumulator&               accumulator,
+                                                      AccumulatorDeltaStats&            stats) {
+    return update_integer_accumulator_impl(parameters, after.perspective, before.pieces,
+                                           after.pieces, before.threats, after.threats, accumulator,
+                                           stats);
 }
 
 std::optional<std::string> evaluate_integer(const ParameterView&         parameters,

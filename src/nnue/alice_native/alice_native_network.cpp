@@ -1542,16 +1542,26 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
     if (depth < 0 || depth > 2)
         return "Alice native loaded incremental verification depth must be between 0 and 2.";
 
-    const Parameters*    parameters         = active.get();
-    const u64            verifiedGeneration = active->generation;
-    const std::string    rootFen            = position.fen();
-    const Key            rootKey            = position.key();
-    const PositionTrace  rootTrace          = build_trace(position);
+    const Parameters*   parameters         = active.get();
+    const ParameterView parameterView      = make_parameter_view(*parameters);
+    const u64           verifiedGeneration = active->generation;
+    const std::string   rootFen            = position.fen();
+    const Key           rootKey            = position.key();
+    const PositionTrace rootTrace          = build_trace(position);
+    FeatureSnapshot     rootSnapshot;
+    if (auto error = build_fixed_snapshot(position, rootSnapshot))
+        return error;
     LoadedAccumulatorSet rootAccumulators;
+    LoadedAccumulatorSet rootFixedAccumulators;
     for (Color perspective : {WHITE, BLACK})
+    {
         if (auto error = refresh_loaded_accumulator(*parameters, rootTrace[perspective],
                                                     rootAccumulators[perspective]))
             return error;
+        if (auto error = refresh_integer_accumulator(parameterView, rootSnapshot[perspective],
+                                                     rootFixedAccumulators[perspective]))
+            return error;
+    }
     SimdLoadedAccumulatorSet rootSimdAccumulators;
     if (loaded_simd_available())
         for (Color perspective : {WHITE, BLACK})
@@ -1559,16 +1569,20 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
                                             rootSimdAccumulators[perspective]);
 
     std::function<std::optional<std::string>(
-      Depth, const PositionTrace&, const LoadedAccumulatorSet&, const SimdLoadedAccumulatorSet&)>
+      Depth, const PositionTrace&, const FeatureSnapshot&, const LoadedAccumulatorSet&,
+      const LoadedAccumulatorSet&, const SimdLoadedAccumulatorSet&)>
       visit;
     visit =
       [&](
         Depth remaining, const PositionTrace& incrementalTrace,
+        const FeatureSnapshot&          incrementalSnapshot,
         const LoadedAccumulatorSet&     incrementalAccumulators,
+        const LoadedAccumulatorSet&     incrementalFixedAccumulators,
         const SimdLoadedAccumulatorSet& incrementalSimdAccumulators) -> std::optional<std::string> {
         ++stats.positions;
 
         LoadedAccumulatorSet     refreshedAccumulators;
+        LoadedAccumulatorSet     refreshedFixedAccumulators;
         SimdLoadedAccumulatorSet refreshedSimdAccumulators;
         for (Color perspective : {WHITE, BLACK})
         {
@@ -1582,6 +1596,21 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
                 return "Alice native loaded incremental accumulator mismatch at " + position.fen()
                      + ".";
             ++stats.accumulatorComparisons;
+            if (auto error =
+                  refresh_integer_accumulator(parameterView, incrementalSnapshot[perspective],
+                                              refreshedFixedAccumulators[perspective]))
+                return error;
+            if (incrementalFixedAccumulators[perspective].values
+                  != refreshedFixedAccumulators[perspective].values
+                || incrementalFixedAccumulators[perspective].psqt
+                     != refreshedFixedAccumulators[perspective].psqt
+                || refreshedFixedAccumulators[perspective].values
+                     != refreshedAccumulators[perspective].values
+                || refreshedFixedAccumulators[perspective].psqt
+                     != refreshedAccumulators[perspective].psqt)
+                return "Alice native fixed snapshot accumulator mismatch at " + position.fen()
+                     + ".";
+            ++stats.fixedAccumulatorChecks;
             if (loaded_simd_available())
             {
                 refresh_loaded_simd_accumulator(*parameters, incrementalTrace[perspective],
@@ -1636,12 +1665,17 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
             Dirties   dirties;
             position.do_move(move, state, position.gives_check(move), dirties, nullptr, nullptr);
 
-            const PositionTrace        newTrace              = build_trace(position);
-            LoadedAccumulatorSet       childAccumulators     = incrementalAccumulators;
-            SimdLoadedAccumulatorSet   childSimdAccumulators = incrementalSimdAccumulators;
-            std::optional<std::string> error;
+            const PositionTrace        newTrace = build_trace(position);
+            FeatureSnapshot            newSnapshot;
+            auto                       snapshotError = build_fixed_snapshot(position, newSnapshot);
+            LoadedAccumulatorSet       childAccumulators      = incrementalAccumulators;
+            LoadedAccumulatorSet       childFixedAccumulators = incrementalFixedAccumulators;
+            SimdLoadedAccumulatorSet   childSimdAccumulators  = incrementalSimdAccumulators;
+            std::optional<std::string> error                  = snapshotError;
             for (Color perspective : {WHITE, BLACK})
             {
+                if (error)
+                    break;
                 const auto& oldPerspective = incrementalTrace[perspective];
                 const auto& newPerspective = newTrace[perspective];
                 if (oldPerspective.kingSquare != newPerspective.kingSquare
@@ -1653,6 +1687,9 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
                     if (!error && loaded_simd_available())
                         refresh_loaded_simd_accumulator(*parameters, newPerspective,
                                                         childSimdAccumulators[perspective]);
+                    if (!error)
+                        error = refresh_integer_accumulator(parameterView, newSnapshot[perspective],
+                                                            childFixedAccumulators[perspective]);
                 }
                 else
                 {
@@ -1661,13 +1698,22 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
                     if (!error && loaded_simd_available())
                         update_loaded_simd_accumulator(*parameters, oldPerspective, newPerspective,
                                                        childSimdAccumulators[perspective]);
+                    if (!error)
+                    {
+                        AccumulatorDeltaStats fixedDelta;
+                        error = update_integer_accumulator(
+                          parameterView, incrementalSnapshot[perspective], newSnapshot[perspective],
+                          childFixedAccumulators[perspective], fixedDelta);
+                        ++stats.fixedDeltaUpdates;
+                    }
                 }
                 if (error)
                     break;
             }
             ++stats.transitions;
             if (!error)
-                error = visit(remaining - 1, newTrace, childAccumulators, childSimdAccumulators);
+                error = visit(remaining - 1, newTrace, newSnapshot, childAccumulators,
+                              childFixedAccumulators, childSimdAccumulators);
 
             position.undo_move(move);
             ++stats.undoChecks;
@@ -1680,7 +1726,8 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
         return std::nullopt;
     };
 
-    auto error = visit(depth, rootTrace, rootAccumulators, rootSimdAccumulators);
+    auto error = visit(depth, rootTrace, rootSnapshot, rootAccumulators, rootFixedAccumulators,
+                       rootSimdAccumulators);
     if (position.fen() != rootFen || position.key() != rootKey)
         return "Alice native loaded incremental verification did not restore the root position.";
     if (active.get() != parameters || active->generation != verifiedGeneration)

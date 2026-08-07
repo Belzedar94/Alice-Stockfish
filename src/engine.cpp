@@ -950,8 +950,9 @@ std::optional<std::string> Engine::verify_loaded_native_incremental(Depth       
         << " accumulator_comparisons " << stats.accumulatorComparisons
         << " integer_stage_comparisons " << stats.integerStageComparisons
         << " feature_simd_comparisons " << stats.featureSimdComparisons
-        << " dense_simd_comparisons " << stats.denseSimdComparisons << " undo_checks "
-        << stats.undoChecks << " depth " << depth << " search disabled";
+        << " dense_simd_comparisons " << stats.denseSimdComparisons << " fixed_accumulator_checks "
+        << stats.fixedAccumulatorChecks << " fixed_delta_updates " << stats.fixedDeltaUpdates
+        << " undo_checks " << stats.undoChecks << " depth " << depth << " search disabled";
     report = out.str();
     return std::nullopt;
 }

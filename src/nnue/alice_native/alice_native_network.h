@@ -53,6 +53,8 @@ struct LoadedIncrementalVerificationStats {
     u64 integerStageComparisons = 0;
     u64 featureSimdComparisons  = 0;
     u64 denseSimdComparisons    = 0;
+    u64 fixedAccumulatorChecks  = 0;
+    u64 fixedDeltaUpdates       = 0;
     u64 undoChecks              = 0;
 };
 

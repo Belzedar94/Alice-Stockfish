@@ -272,7 +272,11 @@ comparisons over 21 positions with zero mismatches.
 The scalar refresh, sorted-delta, range-checking, and dense inference body is
 owned by `alice_native_inference.*`. The JSON trace and loaded incremental
 verifier call that same implementation; the trace only serializes its returned
-accumulators and stages. The independent Python evaluator remains separate.
+accumulators and stages. The same production body now accepts either semantic
+trace records or fixed-capacity runtime snapshots. At every loaded-network node,
+the fixed full refresh and fixed sorted delta are compared element by element
+with the semantic route before and after undo. The independent Python evaluator
+remains separate.
 
 The loaded-network verifier carries the authenticated feature and PSQT
 accumulators through every legal transition. It applies sorted multiset

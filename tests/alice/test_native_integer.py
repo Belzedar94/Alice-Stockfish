@@ -263,6 +263,8 @@ def loaded_incremental_reports(
         r"integer_stage_comparisons (?P<integer_stage_comparisons>\d+) "
         r"feature_simd_comparisons (?P<feature_simd_comparisons>\d+) "
         r"dense_simd_comparisons (?P<dense_simd_comparisons>\d+) "
+        r"fixed_accumulator_checks (?P<fixed_accumulator_checks>\d+) "
+        r"fixed_delta_updates (?P<fixed_delta_updates>\d+) "
         r"undo_checks (?P<undo_checks>\d+) depth (?P<depth>\d+) search disabled$"
     )
     reports = [
@@ -470,6 +472,10 @@ class NativeIntegerTests(unittest.TestCase):
                 report["feature_simd_comparisons"], 2 * report["positions"]
             )
             self.assertEqual(report["dense_simd_comparisons"], report["positions"])
+            self.assertEqual(
+                report["fixed_accumulator_checks"], 2 * report["positions"]
+            )
+            self.assertGreaterEqual(report["fixed_delta_updates"], report["transitions"])
             self.assertEqual(report["undo_checks"], report["transitions"])
 
         opening = reports[0]
