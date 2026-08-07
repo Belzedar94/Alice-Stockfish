@@ -322,6 +322,33 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertFalse(receipt["publication_performed"])
         self.assertEqual(receipt["blocking_reasons"], [])
 
+    def test_triple_bench_requires_the_canonical_node_count(self) -> None:
+        for signature in ("error", "Nodes searched : 162583"):
+            with (
+                self.subTest(signature=signature),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                manifest, value, size = self.build_candidate(root)
+                bench_reference = value["binaries"][0]["triple_bench"]
+                bench_path = Path(bench_reference["path"])
+                bench = json.loads(bench_path.read_text(encoding="utf-8"))
+                bench["signatures"] = [signature] * 3
+                bench_path.write_bytes(canonical_json_bytes(bench))
+                bench_reference["sha256"] = sha256_file(bench_path)
+                manifest.write_text(json.dumps(value), encoding="utf-8")
+                with mock.patch.object(
+                    alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+                ):
+                    receipt = alice_release_evidence.audit_release_candidate(manifest)
+            self.assertFalse(receipt["strength_release_authorized"])
+            self.assertTrue(
+                any(
+                    "triple bench is not reproducible" in reason
+                    for reason in receipt["blocking_reasons"]
+                )
+            )
+
     def test_fallback_observation_blocks_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

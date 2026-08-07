@@ -24,6 +24,7 @@ else:
 
 
 EXPECTED_NATIVE_SIZE = 220_315_747
+CANONICAL_BENCH_NODES = 162_582
 FROZEN_LEGACY_BINARY_SHA256 = (
     "b70afe03ec9a67258cd7b5b848c46fc9e5c83f53b9f2825e9a5946feefb59599"
 )
@@ -258,6 +259,17 @@ def verify_triple_bench(
     reasons: list[str],
 ) -> None:
     signatures = receipt.get("signatures")
+    canonical_signatures = []
+    if isinstance(signatures, list):
+        for value in signatures:
+            if not isinstance(value, str):
+                canonical_signatures.append(False)
+                continue
+            match = re.fullmatch(r"Nodes searched\s*:\s*([0-9]+)", value.strip())
+            canonical_signatures.append(
+                match is not None
+                and match.group(1) == str(CANONICAL_BENCH_NODES)
+            )
     if (
         receipt.get("schema") != "alice-triple-bench-v1"
         or receipt.get("binary_sha256") != binary_sha256
@@ -266,6 +278,7 @@ def verify_triple_bench(
         or len(signatures) != 3
         or any(not isinstance(value, str) or not value for value in signatures)
         or len(set(signatures)) != 1
+        or canonical_signatures != [True, True, True]
     ):
         reasons.append(f"{role}: triple bench is not reproducible")
 
