@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -204,6 +205,7 @@ def prepare_snapshots(
 
     network_snapshots: dict[tuple[str, str], Path] = {}
     engine_inventory = []
+    normalized_engines = []
     for index, item in enumerate(engines):
         if not isinstance(item, dict):
             raise ValueError("engine definition must be an object")
@@ -222,6 +224,14 @@ def prepare_snapshots(
         item["cwd"] = str(binary_snapshot.parent)
 
         evaluator = item.get("evaluator")
+        options = item.get("options")
+        if (
+            not isinstance(options, dict)
+            or any(not isinstance(key, str) for key in options)
+            or any(not isinstance(value, str) for value in options.values())
+        ):
+            raise ValueError("engine options must be a string-to-string object")
+        normalized_options = dict(options)
         network_sha = str(item.get("network_sha256", ""))
         network_snapshot = None
         if evaluator in ("Legacy", "Native"):
@@ -249,21 +259,42 @@ def prepare_snapshots(
             else:
                 network_snapshot = network_snapshots[network_key]
             item["network_path"] = str(network_snapshot)
-            options = item.get("options")
-            if not isinstance(options, dict):
-                raise ValueError("engine options must be an object")
             if evaluator == "Legacy":
                 options["EvalFile"] = str(network_snapshot)
+                normalized_options["EvalFile"] = f"sha256:{network_sha}"
             else:
                 options["Alice Native EvalFile"] = str(network_snapshot)
+                normalized_options["Alice Native EvalFile"] = f"sha256:{network_sha}"
+        options_sha256 = hashlib.sha256(
+            canonical_json_bytes(normalized_options)
+        ).hexdigest()
         engine_inventory.append(
             {
                 "role": "contender" if index == 0 else "reference",
                 "binary_sha256": binary_sha,
                 "network_sha256": network_sha or None,
                 "evaluator": evaluator,
+                "options_sha256": options_sha256,
             }
         )
+        normalized_engines.append(
+            {
+                "role": "contender" if index == 0 else "reference",
+                "name": item.get("name"),
+                "binary_sha256": binary_sha,
+                "network_sha256": network_sha or None,
+                "evaluator": evaluator,
+                "options": normalized_options,
+            }
+        )
+
+    normalized_worker_configuration = {
+        key: value for key, value in worker_definition.items() if key != "engines"
+    }
+    normalized_worker_configuration["engines"] = normalized_engines
+    normalized_worker_configuration_sha256 = hashlib.sha256(
+        canonical_json_bytes(normalized_worker_configuration)
+    ).hexdigest()
 
     worker_definition_snapshot = inputs / "worker-definition.json"
     write_create_only_json(worker_definition_snapshot, worker_definition)
@@ -276,6 +307,7 @@ def prepare_snapshots(
         "pair_core_sha256": core_sha,
         "source_worker_definition_sha256": worker_definition_source_sha,
         "worker_definition_sha256": sha256_file(worker_definition_snapshot),
+        "normalized_worker_configuration_sha256": normalized_worker_configuration_sha256,
         "engines": engine_inventory,
     }
     write_create_only_json(inputs / "inventory.json", inventory)

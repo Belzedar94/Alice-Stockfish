@@ -31,6 +31,31 @@ def write_json(path: Path, value: dict[str, object]) -> None:
     write_create_only_json(path, value)
 
 
+def write_test_binary(path: Path, role: str) -> None:
+    executable_format, architecture = alice_release_evidence.BINARY_ROLE_REQUIREMENTS[
+        role
+    ]
+    if executable_format == "windows-x86-64":
+        payload = bytearray(128)
+        payload[:2] = b"MZ"
+        payload[60:64] = (64).to_bytes(4, "little")
+        payload[64:68] = b"PE\x00\x00"
+        payload[68:70] = (0x8664).to_bytes(2, "little")
+        payload[88:90] = (0x20B).to_bytes(2, "little")
+        platform_marker = " on MinGW64"
+    else:
+        payload = bytearray(64)
+        payload[:4] = b"\x7fELF"
+        payload[4] = 2
+        payload[5] = 1
+        payload[18:20] = (62).to_bytes(2, "little")
+        platform_marker = " on Linux"
+    payload.extend(
+        f"\x00{role}\x00{architecture}\x00{platform_marker}\x00".encode("ascii")
+    )
+    path.write_bytes(payload)
+
+
 def control_receipt(
     control: str, mode: str, network_sha256: str
 ) -> dict[str, object]:
@@ -68,18 +93,21 @@ def control_receipt(
             "pair_core_sha256": "5" * 64,
             "source_worker_definition_sha256": "6" * 64,
             "worker_definition_sha256": "7" * 64,
+            "normalized_worker_configuration_sha256": "c" * 64,
             "engines": [
                 {
                     "role": "contender",
                     "binary_sha256": "8" * 64,
                     "network_sha256": network_sha256,
                     "evaluator": "Native",
+                    "options_sha256": "d" * 64,
                 },
                 {
                     "role": "reference",
-                    "binary_sha256": "a" * 64,
-                    "network_sha256": "b" * 64,
+                    "binary_sha256": alice_release_evidence.FROZEN_LEGACY_BINARY_SHA256,
+                    "network_sha256": alice_release_evidence.FROZEN_LEGACY_NETWORK_SHA256,
                     "evaluator": "Legacy",
+                    "options_sha256": "e" * 64,
                 },
             ],
         },
@@ -110,6 +138,20 @@ def control_receipt(
 
 
 class ReleaseEvidenceTests(unittest.TestCase):
+    def mutate_aggregate(
+        self,
+        path: Path,
+        mutation,
+    ) -> None:
+        aggregate = json.loads(path.read_text(encoding="utf-8"))
+        for control, item in aggregate["controls"].items():
+            embedded = item["receipt"]
+            mutation(embedded)
+            receipt_sha = hashlib.sha256(canonical_json_bytes(embedded)).hexdigest()
+            item["receipt_sha256"] = receipt_sha
+            aggregate["inputs"]["control_receipt_sha256"][control] = receipt_sha
+        path.write_bytes(canonical_json_bytes(aggregate))
+
     def build_candidate(self, root: Path) -> tuple[Path, dict[str, object], int]:
         source_commit = "a" * 40
         network = root / "alice.nnue"
@@ -154,9 +196,9 @@ class ReleaseEvidenceTests(unittest.TestCase):
             )
 
         binaries = []
-        for index, role in enumerate(sorted(alice_release_evidence.BINARY_ROLES)):
+        for role in sorted(alice_release_evidence.BINARY_ROLES):
             binary = root / f"{role}.bin"
-            binary.write_bytes(f"binary {index}\n".encode("ascii"))
+            write_test_binary(binary, role)
             binary_sha = sha256_file(binary)
             bench = root / f"{role}-bench.json"
             write_json(
@@ -299,6 +341,83 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertFalse(receipt["strength_release_authorized"])
         self.assertTrue(
             any("does not bind the candidate native network" in reason for reason in receipt["blocking_reasons"])
+        )
+
+    def test_local_batteries_with_different_uci_options_block_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            fixed_path = Path(value["fixed_final_receipt"]["path"])
+
+            def change_options(receipt: dict[str, object]) -> None:
+                receipt["inputs"]["engines"][0]["options_sha256"] = "f" * 64
+                receipt["inputs"]["normalized_worker_configuration_sha256"] = (
+                    "0" * 64
+                )
+
+            self.mutate_aggregate(fixed_path, change_options)
+            value["fixed_final_receipt"]["sha256"] = sha256_file(fixed_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "do not share one pinned input identity" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_zero_reference_blocks_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+
+            def select_zero_reference(receipt: dict[str, object]) -> None:
+                reference_engine = receipt["inputs"]["engines"][1]
+                reference_engine["evaluator"] = "Zero"
+                reference_engine["network_sha256"] = None
+
+            for field in ("exact_los_receipt", "fixed_final_receipt"):
+                path = Path(value[field]["path"])
+                self.mutate_aggregate(path, select_zero_reference)
+                value[field]["sha256"] = sha256_file(path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "frozen historical reference" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_reused_binary_sha_across_release_roles_blocks_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            first, second = value["binaries"][:2]
+            first_path = Path(first["artifact"]["path"])
+            second_path = Path(second["artifact"]["path"])
+            second_path.write_bytes(first_path.read_bytes())
+            reused_sha = sha256_file(second_path)
+            second["artifact"]["sha256"] = reused_sha
+            for field in ("triple_bench", "load_failures"):
+                evidence_path = Path(second[field]["path"])
+                evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                evidence["binary_sha256"] = reused_sha
+                evidence_path.write_bytes(canonical_json_bytes(evidence))
+                second[field]["sha256"] = sha256_file(evidence_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "binary SHA-256 is reused" in reason
+                for reason in receipt["blocking_reasons"]
+            )
         )
 
     def test_openbench_shadow_for_another_candidate_blocks_release(self) -> None:

@@ -90,9 +90,16 @@ INVENTORY_FIELDS = {
     "pair_core_sha256",
     "source_worker_definition_sha256",
     "worker_definition_sha256",
+    "normalized_worker_configuration_sha256",
     "engines",
 }
-ENGINE_IDENTITY_FIELDS = {"role", "binary_sha256", "network_sha256", "evaluator"}
+ENGINE_IDENTITY_FIELDS = {
+    "role",
+    "binary_sha256",
+    "network_sha256",
+    "evaluator",
+    "options_sha256",
+}
 
 
 def utc_now() -> str:
@@ -156,6 +163,9 @@ def validate_input_inventory(
         binary_sha256 = engine.get("binary_sha256")
         if not isinstance(binary_sha256, str) or not SHA256_RE.fullmatch(binary_sha256):
             raise ValueError(f"{control} engine binary identity is not canonical")
+        options_sha256 = engine.get("options_sha256")
+        if not isinstance(options_sha256, str) or not SHA256_RE.fullmatch(options_sha256):
+            raise ValueError(f"{control} engine option identity is not canonical")
         evaluator = engine.get("evaluator")
         network_sha256 = engine.get("network_sha256")
         if evaluator not in ("Legacy", "Native", "Zero"):
@@ -175,6 +185,9 @@ def input_identity(inventory: dict[str, object]) -> dict[str, object]:
         "book_sha256": inventory["book_sha256"],
         "pair_worker_sha256": inventory["pair_worker_sha256"],
         "pair_core_sha256": inventory["pair_core_sha256"],
+        "normalized_worker_configuration_sha256": inventory[
+            "normalized_worker_configuration_sha256"
+        ],
         "engines": inventory["engines"],
     }
 

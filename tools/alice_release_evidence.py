@@ -24,9 +24,21 @@ else:
 
 
 EXPECTED_NATIVE_SIZE = 220_315_747
+FROZEN_LEGACY_BINARY_SHA256 = (
+    "b70afe03ec9a67258cd7b5b848c46fc9e5c83f53b9f2825e9a5946feefb59599"
+)
+FROZEN_LEGACY_NETWORK_SHA256 = (
+    "9f9e557015a55c0a6981db64e1f3044dedb91fd8a8c1a6d4f3c45d0eee91fbd9"
+)
 BINARY_ROLES = frozenset(
     {"windows-bmi2", "windows-avx2", "linux-bmi2", "linux-avx2"}
 )
+BINARY_ROLE_REQUIREMENTS = {
+    "windows-bmi2": ("windows-x86-64", "x86-64-bmi2"),
+    "windows-avx2": ("windows-x86-64", "x86-64-avx2"),
+    "linux-bmi2": ("linux-x86-64", "x86-64-bmi2"),
+    "linux-avx2": ("linux-x86-64", "x86-64-avx2"),
+}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 QUALIFICATION_FIELDS = {
@@ -104,6 +116,71 @@ def verify_reference(
         reasons.append(f"{label}: SHA-256 mismatch")
         return path, expected
     return path, expected
+
+
+def executable_format(path: Path) -> str | None:
+    with path.open("rb") as stream:
+        header = stream.read(64)
+        if (
+            len(header) >= 20
+            and header[:4] == b"\x7fELF"
+            and header[4] == 2
+            and header[5] == 1
+            and int.from_bytes(header[18:20], "little") == 62
+        ):
+            return "linux-x86-64"
+        if len(header) >= 64 and header[:2] == b"MZ":
+            pe_offset = int.from_bytes(header[60:64], "little")
+            stream.seek(pe_offset)
+            pe_header = stream.read(26)
+            if (
+                len(pe_header) == 26
+                and pe_header[:4] == b"PE\x00\x00"
+                and int.from_bytes(pe_header[4:6], "little") == 0x8664
+                and int.from_bytes(pe_header[24:26], "little") == 0x20B
+            ):
+                return "windows-x86-64"
+    return None
+
+
+def file_contains(path: Path, needle: bytes) -> bool:
+    overlap = max(0, len(needle) - 1)
+    previous = b""
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            value = previous + chunk
+            if needle in value:
+                return True
+            previous = value[-overlap:] if overlap else b""
+    return False
+
+
+def verify_binary_role(path: Path, role: str, reasons: list[str]) -> None:
+    expected_format, expected_architecture = BINARY_ROLE_REQUIREMENTS[role]
+    actual_format = executable_format(path)
+    if actual_format != expected_format:
+        reasons.append(
+            f"{role}: executable format is {actual_format or 'unsupported'}, "
+            f"expected {expected_format}"
+        )
+    if not file_contains(path, expected_architecture.encode("ascii")):
+        reasons.append(
+            f"{role}: binary does not embed architecture {expected_architecture}"
+        )
+    platform_markers = (
+        (b" on MinGW64", b" on Microsoft Windows 64-bit")
+        if expected_format == "windows-x86-64"
+        else (b" on Linux",)
+    )
+    if not any(file_contains(path, marker) for marker in platform_markers):
+        reasons.append(f"{role}: binary does not embed the expected compiler platform")
+    other_architecture = (
+        "x86-64-avx2" if expected_architecture == "x86-64-bmi2" else "x86-64-bmi2"
+    )
+    if file_contains(path, other_architecture.encode("ascii")):
+        reasons.append(
+            f"{role}: binary also embeds incompatible architecture {other_architecture}"
+        )
 
 
 def verify_acceptance(
@@ -353,6 +430,11 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
         for label, identity in acceptance_identities.items():
             engines = identity.get("engines")
             contender = engines[0] if isinstance(engines, list) and engines else None
+            reference = (
+                engines[1]
+                if isinstance(engines, list) and len(engines) == 2
+                else None
+            )
             if (
                 not isinstance(contender, dict)
                 or contender.get("evaluator") != "Native"
@@ -361,12 +443,22 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
                 reasons.append(
                     f"{label} local battery does not bind the candidate native network"
                 )
+            if (
+                not isinstance(reference, dict)
+                or reference.get("evaluator") != "Legacy"
+                or reference.get("network_sha256") != FROZEN_LEGACY_NETWORK_SHA256
+                or reference.get("binary_sha256") != FROZEN_LEGACY_BINARY_SHA256
+            ):
+                reasons.append(
+                    f"{label} local battery does not bind the frozen historical reference"
+                )
     binaries = manifest.get("binaries")
     if not isinstance(binaries, list) or len(binaries) != 4:
         reasons.append("binaries: exactly four release roles are required")
         binaries = []
     seen_roles: set[str] = set()
     seen_paths: set[Path] = set()
+    seen_binary_sha256: set[str] = set()
     binary_sha256_by_role: dict[str, str] = {}
     for index, binary in enumerate(binaries):
         label = f"binaries[{index}]"
@@ -388,6 +480,11 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
             if binary_path in seen_paths:
                 reasons.append(f"{role}: artifact path is reused")
             seen_paths.add(binary_path)
+            verify_binary_role(binary_path, role, reasons)
+        if binary_sha is not None:
+            if binary_sha in seen_binary_sha256:
+                reasons.append(f"{role}: binary SHA-256 is reused across release roles")
+            seen_binary_sha256.add(binary_sha)
         if binary_path is not None and binary_sha is not None:
             artifacts[role] = {"sha256": binary_sha, "size": binary_path.stat().st_size}
             binary_sha256_by_role[role] = binary_sha

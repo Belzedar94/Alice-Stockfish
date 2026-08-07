@@ -111,6 +111,62 @@ class RunControlTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "frozen legacy basename"):
                 prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
 
+    def test_normalized_worker_identity_binds_options_but_not_time_control(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            definition, _network, _network_sha = self.legacy_snapshot_fixture(
+                parent, FROZEN_LEGACY_NETWORK_NAME
+            )
+            worker_definition_path = Path(definition["pair_worker"]["definition"])
+
+            first_evidence = parent / "evidence-first"
+            first_evidence.mkdir()
+            _worker, _rewritten, _book, first_inventory = prepare_snapshots(
+                definition, first_evidence, "1" * 64, "2" * 64
+            )
+
+            worker_definition = json.loads(
+                worker_definition_path.read_text(encoding="utf-8")
+            )
+            for engine in worker_definition["engines"]:
+                engine["time_control"] = "10+0.1"
+            worker_definition_path.write_text(
+                json.dumps(worker_definition), encoding="utf-8"
+            )
+            definition["pair_worker"]["definition_sha256"] = sha256(
+                worker_definition_path
+            )
+            second_evidence = parent / "evidence-second"
+            second_evidence.mkdir()
+            _worker, _rewritten, _book, second_inventory = prepare_snapshots(
+                definition, second_evidence, "3" * 64, "4" * 64
+            )
+            self.assertEqual(
+                first_inventory["normalized_worker_configuration_sha256"],
+                second_inventory["normalized_worker_configuration_sha256"],
+            )
+
+            worker_definition["engines"][0]["options"]["Move Overhead"] = "250"
+            worker_definition_path.write_text(
+                json.dumps(worker_definition), encoding="utf-8"
+            )
+            definition["pair_worker"]["definition_sha256"] = sha256(
+                worker_definition_path
+            )
+            third_evidence = parent / "evidence-third"
+            third_evidence.mkdir()
+            _worker, _rewritten, _book, third_inventory = prepare_snapshots(
+                definition, third_evidence, "5" * 64, "6" * 64
+            )
+            self.assertNotEqual(
+                second_inventory["normalized_worker_configuration_sha256"],
+                third_inventory["normalized_worker_configuration_sha256"],
+            )
+            self.assertNotEqual(
+                second_inventory["engines"][0]["options_sha256"],
+                third_inventory["engines"][0]["options_sha256"],
+            )
+
     def test_fixed_ltc_runs_through_two_persistent_processes(self) -> None:
         worker = ROOT / "tests/alice/acceptance/fake_pair_worker.py"
         with tempfile.TemporaryDirectory() as temporary:

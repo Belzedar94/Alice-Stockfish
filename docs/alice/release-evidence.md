@@ -21,11 +21,25 @@ The qualification receipt must identify a trained run, positive dataset and
 comparison sample sizes, a positive nonzero-parameter count, and zero
 checkpoint/file, file/engine, and incremental/full mismatches.
 Both local batteries must bind the same pinned inputs, select the native
-evaluator, and identify the exact candidate network.
+evaluator, and identify the exact candidate network. Their normalized worker
+configuration identity includes every UCI option and every worker-level
+setting while replacing only the intentionally different time control and
+snapshot paths with stable content identities. The reference side must be the
+frozen historical executable
+`b70afe03ec9a67258cd7b5b848c46fc9e5c83f53b9f2825e9a5946feefb59599`
+using the frozen legacy network
+`9f9e557015a55c0a6981db64e1f3044dedb91fd8a8c1a6d4f3c45d0eee91fbd9`;
+the structural zero evaluator cannot satisfy either strength gate.
 The OpenBench shadow receipt must repeat the candidate source commit and
 network SHA-256. Every preset must also name a release binary role and the
 matching binary SHA-256 from the candidate manifest; a clean audit from any
 other source, network, or binary cannot authorize the candidate.
+
+The four release artifacts must have four distinct SHA-256 identities. The
+auditor reads each executable header and requires x86-64 PE for Windows roles
+or x86-64 ELF for Linux roles. It also verifies the embedded Stockfish
+compilation architecture (`x86-64-bmi2` or `x86-64-avx2`) and rejects a binary
+that embeds the incompatible release architecture.
 
 Audit a manifest with:
 

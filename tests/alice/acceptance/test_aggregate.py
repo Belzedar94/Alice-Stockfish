@@ -50,18 +50,21 @@ def control_receipt(control: str, mode: str) -> dict[str, object]:
             "pair_core_sha256": "5" * 64,
             "source_worker_definition_sha256": "6" * 64,
             "worker_definition_sha256": "7" * 64,
+            "normalized_worker_configuration_sha256": "c" * 64,
             "engines": [
                 {
                     "role": "contender",
                     "binary_sha256": "8" * 64,
                     "network_sha256": "9" * 64,
                     "evaluator": "Native",
+                    "options_sha256": "d" * 64,
                 },
                 {
                     "role": "reference",
                     "binary_sha256": "a" * 64,
                     "network_sha256": "b" * 64,
                     "evaluator": "Legacy",
+                    "options_sha256": "e" * 64,
                 },
             ],
         },
@@ -156,6 +159,18 @@ class AggregateReceiptTests(unittest.TestCase):
                 write_create_only_json(paths["STC"], bad)
                 with self.assertRaisesRegex(ValueError, message):
                     aggregate_receipts("bad-battery", "exact-los", paths)
+
+    def test_controls_with_different_uci_options_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self.materialize(root, "exact-los")
+            bad = control_receipt("STC", "exact-los")
+            bad["inputs"]["engines"][0]["options_sha256"] = "f" * 64
+            bad["inputs"]["normalized_worker_configuration_sha256"] = "0" * 64
+            paths["STC"].unlink()
+            write_create_only_json(paths["STC"], bad)
+            with self.assertRaisesRegex(ValueError, "pinned input identity"):
+                aggregate_receipts("bad-options", "exact-los", paths)
 
 
 if __name__ == "__main__":
