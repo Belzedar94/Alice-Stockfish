@@ -166,9 +166,26 @@ def validate_pair_worker_definition(
 
     engines: list[dict[str, object]] = []
     names: list[str] = []
-    for item in engine_values:
+    base_engine_fields = {
+        "path",
+        "binary_sha256",
+        "cwd",
+        "name",
+        "evaluator",
+        "network_sha256",
+        "time_control",
+        "options",
+    }
+    for index, item in enumerate(engine_values):
         if not isinstance(item, dict):
             raise ValueError("engine definition must be an object")
+        evaluator = item.get("evaluator")
+        if evaluator not in ("Legacy", "Native", "Zero"):
+            raise ValueError("engine evaluator must be Legacy, Native, or Zero")
+        expected_fields = set(base_engine_fields)
+        if evaluator in ("Legacy", "Native"):
+            expected_fields.add("network_path")
+        require_exact_fields(item, expected_fields, f"engines[{index}]")
         name = item.get("name")
         if (
             not isinstance(name, str)

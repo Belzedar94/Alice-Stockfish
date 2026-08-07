@@ -236,6 +236,29 @@ class RunControlTests(unittest.TestCase):
                 prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
             self.assertEqual(list(evidence.iterdir()), [])
 
+    def test_snapshot_rejects_extra_per_engine_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            definition, _network, _network_sha = self.legacy_snapshot_fixture(
+                parent, FROZEN_LEGACY_NETWORK_NAME
+            )
+            worker_definition_path = Path(definition["pair_worker"]["definition"])
+            worker_definition = json.loads(
+                worker_definition_path.read_text(encoding="utf-8")
+            )
+            worker_definition["engines"][0]["arguments"] = ["--unexpected"]
+            worker_definition_path.write_text(
+                json.dumps(worker_definition), encoding="utf-8"
+            )
+            definition["pair_worker"]["definition_sha256"] = sha256(
+                worker_definition_path
+            )
+            evidence = parent / "evidence"
+            evidence.mkdir()
+            with self.assertRaisesRegex(ValueError, "fields mismatch"):
+                prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
+            self.assertEqual(list(evidence.iterdir()), [])
+
     def test_fixed_ltc_runs_through_two_persistent_processes(self) -> None:
         worker = ROOT / "tests/alice/acceptance/fake_pair_worker.py"
         with tempfile.TemporaryDirectory() as temporary:

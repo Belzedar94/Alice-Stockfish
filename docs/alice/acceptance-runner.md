@@ -34,13 +34,13 @@ The frozen Legacy source must retain the canonical basename
 directory as `snapshots/networks/<sha256>/` and preserves that basename; a
 renamed Legacy source is rejected before any worker starts.
 
-The controller rejects unknown definition fields, duplicate JSON keys,
-noncanonical hashes, a policy time-control mismatch, a reused evidence root,
-evidence rooted on `D:`, non-unique or PGN-unsafe engine names, and any engine
-that does not specify exactly `Threads=1` and `Hash=512`. Each persistent
-process authenticates declared UCI options, binary and network bytes,
-evaluator identity, and the evaluator's reported SHA-256 before it plays a
-preflight pair.
+The controller rejects unknown outer or per-engine definition fields,
+duplicate JSON keys, noncanonical hashes, a policy time-control mismatch, a
+reused evidence root, evidence rooted on `D:`, non-unique or PGN-unsafe engine
+names, and any engine that does not specify exactly `Threads=1` and `Hash=512`.
+Each persistent process authenticates declared UCI options, binary and network
+bytes, evaluator identity, and the evaluator's reported SHA-256 before it
+plays a preflight pair.
 
 Per-pair evidence is admitted only after the response, result-core hash, PGN
 hash, result-file hash, terminal classifications, contender scores, root FEN,
