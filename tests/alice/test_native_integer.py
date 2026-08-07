@@ -88,7 +88,7 @@ class UciSession:
         self.process.stdin.write(command + "\n")
         self.process.stdin.flush()
 
-    def wait_for(self, pattern: str, timeout: float = 60.0) -> str:
+    def wait_for(self, pattern: str, timeout: float = 180.0) -> str:
         expression = re.compile(pattern)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:

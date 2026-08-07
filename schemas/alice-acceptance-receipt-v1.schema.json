@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-acceptance-receipt-v1.schema.json",
+  "$defs": {
+    "control": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt": {"$ref": "alice-control-receipt-v1.schema.json"},
+        "receipt_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": [
+        "receipt_sha256",
+        "receipt"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {"type": "object"},
+    "conclusion": {"enum": ["PASS", "FIXED_COMPLETE"]},
+    "controls": {
+      "additionalProperties": false,
+      "properties": {
+        "LTC": {"$ref": "#/$defs/control"},
+        "STC": {"$ref": "#/$defs/control"},
+        "VSTC": {"$ref": "#/$defs/control"}
+      },
+      "required": ["VSTC", "STC", "LTC"],
+      "type": "object"
+    },
+    "inputs": {"type": "object"},
+    "mode": {"enum": ["exact-los", "fixed-final"]},
+    "run_id": {"minLength": 1, "type": "string"},
+    "schema": {"const": "alice-acceptance-receipt-v1"},
+    "status": {"const": "finalized"},
+    "strength_gate_eligible": {"const": true},
+    "times": {"type": "object"}
+  },
+  "required": [
+    "schema",
+    "run_id",
+    "mode",
+    "status",
+    "times",
+    "inputs",
+    "controls",
+    "conclusion",
+    "artifacts",
+    "strength_gate_eligible"
+  ],
+  "type": "object"
+}

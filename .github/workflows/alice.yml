@@ -17,6 +17,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  acceptance-contracts:
+    name: Acceptance contracts (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+            python: python3
+          - name: Windows
+            os: windows-2022
+            python: python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify acceptance contracts
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: >-
+          ${{ matrix.python }} -B -m unittest discover
+          -s tests/alice/acceptance -p test_*.py -v
+
   linux-release:
     name: Linux ${{ matrix.arch }}
     runs-on: ubuntu-24.04

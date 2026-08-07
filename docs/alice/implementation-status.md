@@ -328,6 +328,31 @@ while the live lease is active, stops promptly, emits a legal best move, and
 confirms that the original generation and SHA-256 remain installed. Loaded
 status and qualification reports now state `search=available`.
 
+## Operational acceptance milestone
+
+The Alice-safe search emits an exact machine terminal record for checkmate,
+stalemate, and rule draws before `bestmove (none)`. The strict paired runner
+rejects a missing, malformed, contradictory, or move-followed terminal record;
+the safety ply limit is a policy abort rather than a scored draw.
+
+The repository now contains the single statistical authority for local
+acceptance. It uses deterministic book cycles, two persistent pair processes,
+attempt-ordinal admission, pair-atomic classifications, pentanomial LOS,
+create-only artifacts, a seal-before-drain transition, independent attempted
+and scored 64,000-game caps, and separate exact-LOS and 400/300/200 policies.
+The three-control aggregator requires zero abort evidence.
+
+The controller test runs a complete 200-game fixed LTC sample through two
+persistent deterministic test processes. This proves orchestration, artifact
+hashing, admission, sealing, and receipt construction; it is not a strength
+result and uses no trained network. The release-evidence auditor likewise
+performs no publication and remains blocked without a trained AliceNative-v1
+network, G1-G8 receipts, both local batteries, four release binaries, triple
+bench, negative load probes, and official OpenBench shadow evidence.
+
+The training storage preflight performs exactly one read-only available-space
+query and requires 500 GiB. It neither starts training nor performs cleanup.
+
 ## Cross-platform verification
 
 The repository verification workflow builds BMI2 and AVX2 binaries on Linux

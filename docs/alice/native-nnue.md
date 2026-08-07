@@ -200,6 +200,11 @@ No incremental path may infer a board from square occupancy alone.
 
 ## 3. Native record pipeline
 
+Generation and training are additionally gated by the single-query
+[training storage preflight](training-storage.md). Cleanup and space recovery
+remain outside this repository. A failed or below-threshold query stops the
+stage without modifying the target volume.
+
 The canonical pipeline is one directional chain:
 
 1. The generator writes a versioned Alice record containing the lossless state,

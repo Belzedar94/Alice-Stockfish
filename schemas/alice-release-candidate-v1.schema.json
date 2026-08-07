@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-release-candidate-v1.schema.json",
+  "$defs": {
+    "reference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {"minLength": 1, "type": "string"},
+        "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["path", "sha256"],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "binaries": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact": {"$ref": "#/$defs/reference"},
+          "load_failures": {"$ref": "#/$defs/reference"},
+          "role": {
+            "enum": ["windows-bmi2", "windows-avx2", "linux-bmi2", "linux-avx2"]
+          },
+          "triple_bench": {"$ref": "#/$defs/reference"}
+        },
+        "required": ["role", "artifact", "triple_bench", "load_failures"],
+        "type": "object"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "type": "array"
+    },
+    "exact_los_receipt": {"$ref": "#/$defs/reference"},
+    "fixed_final_receipt": {"$ref": "#/$defs/reference"},
+    "native_qualification": {"$ref": "#/$defs/reference"},
+    "network": {"$ref": "#/$defs/reference"},
+    "openbench_shadow_receipt": {"$ref": "#/$defs/reference"},
+    "release_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "schema": {"const": "alice-release-candidate-v1"},
+    "source_commit": {"pattern": "^[0-9a-f]{40}$", "type": "string"}
+  },
+  "required": [
+    "schema",
+    "release_id",
+    "source_commit",
+    "network",
+    "native_qualification",
+    "exact_los_receipt",
+    "fixed_final_receipt",
+    "openbench_shadow_receipt",
+    "binaries"
+  ],
+  "type": "object"
+}

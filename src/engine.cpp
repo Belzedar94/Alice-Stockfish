@@ -724,6 +724,22 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
         if (rootMoves.empty() && updateContext.onUpdateNoMoves)
             updateContext.onUpdateNoMoves({0, Score(result.score, searchPos)});
 
+        if (result.terminal != AliceSearch::Terminal::NONE)
+        {
+            std::string_view gameResult = "1/2-1/2";
+            std::string_view reason     = "rule_draw";
+            if (result.terminal == AliceSearch::Terminal::CHECKMATE)
+            {
+                gameResult = searchPos.side_to_move() == WHITE ? "0-1" : "1-0";
+                reason     = "checkmate";
+            }
+            else if (result.terminal == AliceSearch::Terminal::STALEMATE)
+                reason = "stalemate";
+
+            sync_cout << "info string alice_result result=" << gameResult << " reason=" << reason
+                      << sync_endl;
+        }
+
         while (!aliceSearchStop.load(std::memory_order_relaxed)
                && (waitForStop || alicePondering.load(std::memory_order_relaxed)))
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

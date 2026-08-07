@@ -109,6 +109,13 @@ Unexplained aborts must be zero. Any FEN, legal-move, transfer-board, color-swap
 or result-accounting mismatch fails the shadow audit and suspends interpretation
 of that preset. The audit must be repeated from a clean sample after correction.
 
+The Alice runner suppresses the anomalous game from its `Finished game` result
+stream, writes its machine failure class to PGN, and exits nonzero after drain.
+Its color mate therefore cannot form a reported pentanomial pair. A shadow
+inversion has the same invalidating behavior. Any clean pairs already produced
+belong only to the failed audit identifier; they are never combined with the
+replacement audit.
+
 ## 6. Admission sequence
 
 Alice production admission proceeds in this order:

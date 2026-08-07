@@ -1,0 +1,16 @@
+{
+  "schema": "alice-fixed-final-policy-v1",
+  "commit_order": "attempt-ordinal",
+  "conclusion": "FIXED_COMPLETE",
+  "contender_is_engine1": true,
+  "early_stop": false,
+  "engine_threads": 1,
+  "external_adjudication": "disabled",
+  "hash_mib": 512,
+  "pair_workers": 2,
+  "presets": {
+    "LTC": {"base_ms": 30000, "increment_ms": 300, "target_admitted_games": 200},
+    "STC": {"base_ms": 10000, "increment_ms": 100, "target_admitted_games": 300},
+    "VSTC": {"base_ms": 2000, "increment_ms": 20, "target_admitted_games": 400}
+  }
+}

@@ -30,6 +30,25 @@ setoption name Alice Evaluation value Native
 deterministic zero diagnostic backend. Native load and evaluation status
 includes the exact generation and SHA-256.
 
+## Verification and release state
+
+Rules, executable, native-wire, integer-inference, and acceptance-contract tests
+are part of the repository workflow. Run one local acceptance control from a
+pinned definition and a new evidence directory:
+
+```text
+python -m tools.alice_acceptance \
+  --definition <absolute-definition.json> \
+  --evidence-root <new-absolute-directory>
+```
+
+The exact-LOS and fixed 400/300/200 batteries are separate. A release remains
+blocked until a trained AliceNative-v1 network, exact parity receipts, both
+local batteries, four release binaries, triple bench, negative load probes,
+and official OpenBench shadow audits are all present. The public contracts and
+commands are listed in the
+[engineering dossier](docs/alice/README.md).
+
 ---
 
 <div align="center">

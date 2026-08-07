@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-pair-worker-response-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "additionalProperties": false,
+      "properties": {
+        "games_pgn_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        "result_jsonl_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["games_pgn_sha256", "result_jsonl_sha256"],
+      "type": "object"
+    },
+    "pair_ordinal": {"minimum": 0, "type": "integer"},
+    "result": {"$ref": "alice-pair-result-v1.schema.json"},
+    "schema": {"const": "alice-pair-worker-response-v1"}
+  },
+  "required": ["schema", "pair_ordinal", "result", "artifacts"],
+  "type": "object"
+}

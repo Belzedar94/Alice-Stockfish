@@ -1,0 +1,394 @@
+"""Audit an Alice release candidate without publishing or modifying artifacts."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import re
+import sys
+
+if __package__:
+    from .alice_acceptance.aggregate import (
+        aggregate_input_identity,
+        validate_aggregate_receipt,
+    )
+    from .alice_acceptance.evidence import sha256_file, write_create_only_json
+    from .alice_acceptance.runner_adapter import parse_strict_json
+else:
+    from alice_acceptance.aggregate import (
+        aggregate_input_identity,
+        validate_aggregate_receipt,
+    )
+    from alice_acceptance.evidence import sha256_file, write_create_only_json
+    from alice_acceptance.runner_adapter import parse_strict_json
+
+
+EXPECTED_NATIVE_SIZE = 220_315_747
+BINARY_ROLES = frozenset(
+    {"windows-bmi2", "windows-avx2", "linux-bmi2", "linux-avx2"}
+)
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+QUALIFICATION_FIELDS = {
+    "schema",
+    "status",
+    "network_sha256",
+    "network_kind",
+    "training_run_id",
+    "dataset_manifest_sha256",
+    "dataset_position_count",
+    "checkpoint_sha256",
+    "export_receipt_sha256",
+    "checkpoint_file_element_count",
+    "checkpoint_file_element_mismatches",
+    "file_engine_position_count",
+    "file_engine_centipawn_difference",
+    "incremental_full_position_count",
+    "incremental_full_mismatches",
+    "network_parameter_nonzero_count",
+    "gates",
+}
+
+
+def load_object(path: Path) -> dict[str, object]:
+    return parse_strict_json(path.read_bytes())
+
+
+def exact_fields(value: dict[str, object], expected: set[str], label: str) -> None:
+    if set(value) != expected:
+        raise ValueError(f"{label} fields do not match the contract")
+
+
+def verify_reference(
+    value: object,
+    label: str,
+    reasons: list[str],
+) -> tuple[Path | None, str | None]:
+    if not isinstance(value, dict):
+        reasons.append(f"{label}: reference is not an object")
+        return None, None
+    try:
+        exact_fields(value, {"path", "sha256"}, label)
+    except ValueError as error:
+        reasons.append(str(error))
+        return None, None
+    path_value = value.get("path")
+    expected = value.get("sha256")
+    if not isinstance(path_value, str) or not Path(path_value).is_absolute():
+        reasons.append(f"{label}: path is not absolute")
+        return None, None
+    if not isinstance(expected, str) or not SHA256_RE.fullmatch(expected):
+        reasons.append(f"{label}: SHA-256 is not canonical")
+        return None, None
+    path = Path(path_value).resolve()
+    if not path.is_file():
+        reasons.append(f"{label}: file is missing")
+        return None, expected
+    if sha256_file(path) != expected:
+        reasons.append(f"{label}: SHA-256 mismatch")
+        return path, expected
+    return path, expected
+
+
+def verify_acceptance(
+    receipt: dict[str, object], mode: str, label: str, reasons: list[str]
+) -> dict[str, object] | None:
+    try:
+        validate_aggregate_receipt(receipt, mode)
+    except ValueError as error:
+        reasons.append(f"{label}: {error}")
+        return None
+    return aggregate_input_identity(receipt)
+
+
+def verify_native_qualification(
+    receipt: dict[str, object], network_sha256: str, reasons: list[str]
+) -> None:
+    required_gates = {f"G{index}" for index in range(1, 9)}
+    gates = receipt.get("gates")
+    if (
+        set(receipt) != QUALIFICATION_FIELDS
+        or receipt.get("schema") != "alice-native-qualification-v1"
+        or receipt.get("status") != "qualified"
+        or receipt.get("network_sha256") != network_sha256
+        or receipt.get("network_kind") != "trained"
+        or not isinstance(receipt.get("training_run_id"), str)
+        or not ID_RE.fullmatch(str(receipt.get("training_run_id")))
+        or not isinstance(gates, dict)
+        or set(gates) != required_gates
+        or any(value != "PASS" for value in gates.values())
+    ):
+        reasons.append("native qualification: trained G1-G8 evidence is incomplete")
+    for field in (
+        "dataset_manifest_sha256",
+        "checkpoint_sha256",
+        "export_receipt_sha256",
+    ):
+        value = receipt.get(field)
+        if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
+            reasons.append(f"native qualification: {field} is missing")
+    for field in (
+        "checkpoint_file_element_mismatches",
+        "file_engine_centipawn_difference",
+        "incremental_full_mismatches",
+    ):
+        if receipt.get(field) != 0:
+            reasons.append(f"native qualification: {field} is not zero")
+    for field in (
+        "dataset_position_count",
+        "checkpoint_file_element_count",
+        "file_engine_position_count",
+        "incremental_full_position_count",
+        "network_parameter_nonzero_count",
+    ):
+        value = receipt.get(field)
+        if type(value) is not int or value <= 0:
+            reasons.append(f"native qualification: {field} is not positive")
+
+
+def verify_triple_bench(
+    receipt: dict[str, object],
+    binary_sha256: str,
+    network_sha256: str,
+    role: str,
+    reasons: list[str],
+) -> None:
+    signatures = receipt.get("signatures")
+    if (
+        receipt.get("schema") != "alice-triple-bench-v1"
+        or receipt.get("binary_sha256") != binary_sha256
+        or receipt.get("network_sha256") != network_sha256
+        or not isinstance(signatures, list)
+        or len(signatures) != 3
+        or any(not isinstance(value, str) or not value for value in signatures)
+        or len(set(signatures)) != 1
+    ):
+        reasons.append(f"{role}: triple bench is not reproducible")
+
+
+def verify_load_failures(
+    receipt: dict[str, object],
+    binary_sha256: str,
+    network_sha256: str,
+    role: str,
+    reasons: list[str],
+) -> None:
+    cases = receipt.get("cases")
+    expected_cases = {"missing", "corrupt", "incompatible"}
+    if (
+        receipt.get("schema") != "alice-load-failure-matrix-v1"
+        or receipt.get("binary_sha256") != binary_sha256
+        or receipt.get("network_sha256") != network_sha256
+        or not isinstance(cases, dict)
+        or set(cases) != expected_cases
+    ):
+        reasons.append(f"{role}: load-failure matrix is incomplete")
+        return
+    for name, case in cases.items():
+        if (
+            not isinstance(case, dict)
+            or case.get("exit_nonzero") is not True
+            or case.get("fallback_observed") is not False
+            or case.get("search_result_published") is not False
+        ):
+            reasons.append(f"{role}: {name} load failure did not fail closed")
+
+
+def verify_openbench_shadow(receipt: dict[str, object], reasons: list[str]) -> None:
+    presets = receipt.get("presets")
+    if (
+        receipt.get("schema") != "alice-openbench-shadow-receipt-v1"
+        or receipt.get("service") != "https://belzedar.duckdns.org"
+        or receipt.get("status") != "PASS"
+        or not isinstance(presets, dict)
+        or set(presets) != {"VSTC", "STC", "LTC"}
+    ):
+        reasons.append("OpenBench shadow evidence is incomplete")
+        return
+    for preset, result in presets.items():
+        if (
+            not isinstance(result, dict)
+            or result.get("pairs") != 200
+            or result.get("inversions") != 0
+            or result.get("invalid_pairs") != 0
+            or result.get("adjudication") != ["800/4", "40/8/10"]
+        ):
+            reasons.append(f"OpenBench shadow preset {preset} is not clean")
+
+
+def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
+    manifest = load_object(manifest_path)
+    exact_fields(
+        manifest,
+        {
+            "schema",
+            "release_id",
+            "source_commit",
+            "network",
+            "native_qualification",
+            "exact_los_receipt",
+            "fixed_final_receipt",
+            "openbench_shadow_receipt",
+            "binaries",
+        },
+        "release candidate",
+    )
+    if manifest.get("schema") != "alice-release-candidate-v1":
+        raise ValueError("unsupported release-candidate schema")
+    release_id = manifest.get("release_id")
+    source_commit = manifest.get("source_commit")
+    if not isinstance(release_id, str) or not ID_RE.fullmatch(release_id):
+        raise ValueError("release_id does not match the frozen syntax")
+    if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise ValueError("source_commit must be a full lowercase commit identity")
+
+    reasons: list[str] = []
+    artifacts: dict[str, object] = {}
+    network_path, network_sha = verify_reference(manifest.get("network"), "network", reasons)
+    if network_path is not None and network_sha is not None:
+        artifacts["network"] = {
+            "sha256": network_sha,
+            "size": network_path.stat().st_size,
+        }
+        if network_path.stat().st_size != EXPECTED_NATIVE_SIZE:
+            reasons.append("network: byte size does not match AliceNative-v1")
+
+    receipt_specs = (
+        ("native_qualification", manifest.get("native_qualification")),
+        ("exact_los_receipt", manifest.get("exact_los_receipt")),
+        ("fixed_final_receipt", manifest.get("fixed_final_receipt")),
+        ("openbench_shadow_receipt", manifest.get("openbench_shadow_receipt")),
+    )
+    loaded_receipts: dict[str, dict[str, object]] = {}
+    receipt_hashes: dict[str, str] = {}
+    for label, reference in receipt_specs:
+        path, expected = verify_reference(reference, label, reasons)
+        if path is not None and expected is not None:
+            try:
+                loaded_receipts[label] = load_object(path)
+                receipt_hashes[label] = expected
+            except (UnicodeDecodeError, ValueError) as error:
+                reasons.append(f"{label}: invalid JSON: {error}")
+
+    if network_sha is not None and "native_qualification" in loaded_receipts:
+        verify_native_qualification(
+            loaded_receipts["native_qualification"], network_sha, reasons
+        )
+    acceptance_identities: dict[str, dict[str, object]] = {}
+    if "exact_los_receipt" in loaded_receipts:
+        identity = verify_acceptance(
+            loaded_receipts["exact_los_receipt"],
+            "exact-los",
+            "exact LOS receipt",
+            reasons,
+        )
+        if identity is not None:
+            acceptance_identities["exact"] = identity
+    if "fixed_final_receipt" in loaded_receipts:
+        identity = verify_acceptance(
+            loaded_receipts["fixed_final_receipt"],
+            "fixed-final",
+            "fixed final receipt",
+            reasons,
+        )
+        if identity is not None:
+            acceptance_identities["fixed"] = identity
+    if (
+        "exact" in acceptance_identities
+        and "fixed" in acceptance_identities
+        and acceptance_identities["exact"] != acceptance_identities["fixed"]
+    ):
+        reasons.append("local batteries do not share one pinned input identity")
+    if network_sha is not None:
+        for label, identity in acceptance_identities.items():
+            engines = identity.get("engines")
+            contender = engines[0] if isinstance(engines, list) and engines else None
+            if (
+                not isinstance(contender, dict)
+                or contender.get("evaluator") != "Native"
+                or contender.get("network_sha256") != network_sha
+            ):
+                reasons.append(
+                    f"{label} local battery does not bind the candidate native network"
+                )
+    if "openbench_shadow_receipt" in loaded_receipts:
+        verify_openbench_shadow(loaded_receipts["openbench_shadow_receipt"], reasons)
+
+    binaries = manifest.get("binaries")
+    if not isinstance(binaries, list) or len(binaries) != 4:
+        reasons.append("binaries: exactly four release roles are required")
+        binaries = []
+    seen_roles: set[str] = set()
+    seen_paths: set[Path] = set()
+    for index, binary in enumerate(binaries):
+        label = f"binaries[{index}]"
+        if not isinstance(binary, dict):
+            reasons.append(f"{label}: entry is not an object")
+            continue
+        try:
+            exact_fields(binary, {"role", "artifact", "triple_bench", "load_failures"}, label)
+        except ValueError as error:
+            reasons.append(str(error))
+            continue
+        role = binary.get("role")
+        if not isinstance(role, str) or role not in BINARY_ROLES or role in seen_roles:
+            reasons.append(f"{label}: release role is missing or duplicated")
+            continue
+        seen_roles.add(role)
+        binary_path, binary_sha = verify_reference(binary.get("artifact"), role, reasons)
+        if binary_path is not None:
+            if binary_path in seen_paths:
+                reasons.append(f"{role}: artifact path is reused")
+            seen_paths.add(binary_path)
+        if binary_path is not None and binary_sha is not None:
+            artifacts[role] = {"sha256": binary_sha, "size": binary_path.stat().st_size}
+        bench_path, _bench_sha = verify_reference(
+            binary.get("triple_bench"), f"{role} triple bench", reasons
+        )
+        load_path, _load_sha = verify_reference(
+            binary.get("load_failures"), f"{role} load failures", reasons
+        )
+        if bench_path is not None and binary_sha is not None and network_sha is not None:
+            try:
+                verify_triple_bench(
+                    load_object(bench_path), binary_sha, network_sha, role, reasons
+                )
+            except (UnicodeDecodeError, ValueError) as error:
+                reasons.append(f"{role}: invalid triple-bench JSON: {error}")
+        if load_path is not None and binary_sha is not None and network_sha is not None:
+            try:
+                verify_load_failures(
+                    load_object(load_path), binary_sha, network_sha, role, reasons
+                )
+            except (UnicodeDecodeError, ValueError) as error:
+                reasons.append(f"{role}: invalid load-failure JSON: {error}")
+    if seen_roles != BINARY_ROLES:
+        reasons.append("binaries: the four platform and architecture roles are incomplete")
+
+    reasons = sorted(set(reasons))
+    authorized = not reasons
+    return {
+        "schema": "alice-release-evidence-v1",
+        "release_id": release_id,
+        "source_commit": source_commit,
+        "status": "ready" if authorized else "blocked",
+        "strength_release_authorized": authorized,
+        "blocking_reasons": reasons,
+        "artifacts": artifacts,
+        "receipt_sha256": receipt_hashes,
+        "publication_performed": False,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    receipt = audit_release_candidate(args.manifest.resolve())
+    write_create_only_json(args.output, receipt)
+    return 0 if receipt["strength_release_authorized"] else 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())

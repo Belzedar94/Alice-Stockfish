@@ -382,9 +382,26 @@ class EngineFixtureTests(unittest.TestCase):
             bestmove = session.wait_for(r"^bestmove ")
             self.assertEqual(bestmove, "bestmove (none)")
             self.assertTrue(any("score mate 0" in line for line in session.lines))
+            self.assertIn(
+                "info string alice_result result=1-0 reason=checkmate",
+                session.lines,
+            )
 
             session.send("eval")
             session.wait_for(r"^legacy_nnue raw 0 adjusted 0$")
+
+    def test_rule_draw_reports_an_explicit_terminal_record(self) -> None:
+        rule_draw = START_FEN.replace(" 0 1", " 100 1")
+        with UciSession() as session:
+            session.send("setoption name Use NNUE value false")
+            session.send(f"position fen {rule_draw}")
+            session.send("go depth 3")
+            terminal = session.wait_for(r"^info string alice_result ")
+            self.assertEqual(
+                terminal,
+                "info string alice_result result=1/2-1/2 reason=rule_draw",
+            )
+            self.assertEqual(session.wait_for(r"^bestmove "), "bestmove (none)")
 
     def test_normal_search_without_a_network_fails_closed(self) -> None:
         result = run_engine("position startpos", "go depth 1")

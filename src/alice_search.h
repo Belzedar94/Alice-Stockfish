@@ -106,6 +106,13 @@ enum class Completion : u8 {
     FAILED
 };
 
+enum class Terminal : u8 {
+    NONE,
+    CHECKMATE,
+    STALEMATE,
+    RULE_DRAW
+};
+
 std::string_view failure_code_name(EvalFailureCode code) noexcept;
 std::string_view failure_stage_name(EvalStage stage) noexcept;
 
@@ -116,6 +123,7 @@ struct Result {
     u64             nodes    = 0;
     Search::PVMoves pv;
     Completion      completion = Completion::COMPLETED;
+    Terminal        terminal   = Terminal::NONE;
     EvalFailure     failure;
     bool            rootRestored = true;
 };

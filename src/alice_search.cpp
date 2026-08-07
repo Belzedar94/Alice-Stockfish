@@ -115,7 +115,16 @@ class Searcher {
 
         if (rootMoves.empty())
         {
-            completed.score = pos.checkers() ? mated_in(0) : VALUE_DRAW;
+            completed.score    = pos.checkers() ? mated_in(0) : VALUE_DRAW;
+            completed.terminal = pos.checkers() ? Terminal::CHECKMATE : Terminal::STALEMATE;
+            finalize(completed);
+            return completed;
+        }
+
+        if (pos.is_draw(0))
+        {
+            completed.score    = VALUE_DRAW;
+            completed.terminal = Terminal::RULE_DRAW;
             finalize(completed);
             return completed;
         }

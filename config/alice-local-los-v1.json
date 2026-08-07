@@ -1,0 +1,20 @@
+{
+  "schema": "alice-local-los-policy-v1",
+  "commit_order": "attempt-ordinal",
+  "contender_is_engine1": true,
+  "engine_threads": 1,
+  "external_adjudication": "disabled",
+  "hash_mib": 512,
+  "los_display": "format-percent-.1f",
+  "los_formula": "paired-normal-v1",
+  "maximum_scored_games": 64000,
+  "maximum_attempted_games": 64000,
+  "minimum_scored_games_exclusive": 100,
+  "pair_workers": 2,
+  "presets": {
+    "LTC": {"base_ms": 30000, "increment_ms": 300},
+    "STC": {"base_ms": 10000, "increment_ms": 100},
+    "VSTC": {"base_ms": 2000, "increment_ms": 20}
+  },
+  "stop_extremes": ["0.0", "100.0"]
+}
