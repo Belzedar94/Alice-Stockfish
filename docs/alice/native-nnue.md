@@ -131,6 +131,12 @@ threat rows are widened before addition, PSQT buckets remain signed 32-bit, and
 dense inputs remain unsigned seven-bit. All SIMD results must match the scalar
 accumulators and raw dense outputs exactly before the command succeeds.
 
+`alice_native_inference.*` is the single production owner of scalar refresh,
+sorted multiset updates, accumulator validation, product pooling, phase
+selection, dense arithmetic, activation, skip, and final scaling. Diagnostic
+JSON serializes the stages returned by that body instead of recomputing them.
+The independent Python reference remains a separate implementation.
+
 The Alice-safe search already requires a concrete evaluator with
 failure-reporting `evaluate`, `push`, and `pop` operations. It distinguishes a
 normal stop from evaluator failure and proves exact unwind behavior with

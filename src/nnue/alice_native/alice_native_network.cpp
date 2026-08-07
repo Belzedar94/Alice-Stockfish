@@ -31,6 +31,7 @@
 #include "../../position.h"
 #include "../simd.h"
 #include "alice_native_features.h"
+#include "alice_native_inference.h"
 
 namespace Stockfish::Eval::NNUE::AliceNative {
 
@@ -566,12 +567,30 @@ void write_feature_indices(std::ostream& out, const std::vector<Feature>& featur
     out << ']';
 }
 
-struct LoadedAccumulator {
-    std::array<i64, L1>          values{};
-    std::array<i64, PsqtBuckets> psqt{};
-};
+using LoadedAccumulator    = IntegerAccumulator;
+using LoadedAccumulatorSet = IntegerAccumulatorSet;
 
-using LoadedAccumulatorSet = std::array<LoadedAccumulator, COLOR_NB>;
+template<typename Parameters>
+ParameterView make_parameter_view(const Parameters& parameters) {
+    ParameterView view;
+    view.ftBias            = parameters.ftBias.data();
+    view.threatWeight      = parameters.threatWeight.get();
+    view.threatPsqt        = parameters.threatPsqt.get();
+    view.pieceSquareWeight = parameters.pieceSquareWeight.get();
+    view.pieceSquarePsqt   = parameters.pieceSquarePsqt.get();
+    for (usize stack = 0; stack < LayerStacks; ++stack)
+    {
+        const auto& source      = parameters.dense[stack];
+        auto&       destination = view.dense[stack];
+        destination.fc0Bias     = source.fc0Bias.data();
+        destination.fc0Weight   = source.fc0Weight.data();
+        destination.fc1Bias     = source.fc1Bias.data();
+        destination.fc1Weight   = source.fc1Weight.data();
+        destination.fc2Bias     = source.fc2Bias.data();
+        destination.fc2Weight   = source.fc2Weight.data();
+    }
+    return view;
+}
 
 struct alignas(CacheLineSize) SimdLoadedAccumulator {
     alignas(CacheLineSize) std::array<i16, L1> values{};
@@ -580,80 +599,11 @@ struct alignas(CacheLineSize) SimdLoadedAccumulator {
 
 using SimdLoadedAccumulatorSet = std::array<SimdLoadedAccumulator, COLOR_NB>;
 
-struct NativeIntegerStages {
-    Color                                         sideToMove = WHITE;
-    usize                                         pieceCount = 0;
-    usize                                         phase      = 0;
-    std::array<std::array<i32, L1 / 2>, COLOR_NB> transformed{};
-    std::array<i32, L1>                           denseInput{};
-    std::array<i32, L2>                           z0{};
-    std::array<i32, L2>                           s0{};
-    std::array<i32, L2>                           r0{};
-    std::array<i32, L3>                           z1{};
-    std::array<i32, L3>                           s1{};
-    std::array<i32, L3>                           r1{};
-    i32                                           z2            = 0;
-    i32                                           skip          = 0;
-    i32                                           fwdOut        = 0;
-    i32                                           positionalRaw = 0;
-    i32                                           psqtRaw       = 0;
-    i32                                           positional    = 0;
-    i32                                           psqt          = 0;
-    i32                                           value         = 0;
-};
-
-std::optional<std::string> validate_loaded_accumulator(const LoadedAccumulator& accumulator,
-                                                       Color                    perspective) {
-    for (usize lane = 0; lane < L1; ++lane)
-        if (accumulator.values[lane] < std::numeric_limits<i16>::min()
-            || accumulator.values[lane] > std::numeric_limits<i16>::max())
-            return "Alice native feature accumulator exceeds signed i16 at perspective "
-                 + std::to_string(int(perspective)) + " lane " + std::to_string(lane) + ": "
-                 + std::to_string(accumulator.values[lane]);
-
-    for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-        if (accumulator.psqt[bucket] < std::numeric_limits<i32>::min()
-            || accumulator.psqt[bucket] > std::numeric_limits<i32>::max())
-            return "Alice native PSQT accumulator exceeds signed i32 at perspective "
-                 + std::to_string(int(perspective)) + " bucket " + std::to_string(bucket) + ": "
-                 + std::to_string(accumulator.psqt[bucket]);
-
-    return std::nullopt;
-}
-
 template<typename Parameters>
 std::optional<std::string> refresh_loaded_accumulator(const Parameters&       parameters,
                                                       const PerspectiveTrace& trace,
                                                       LoadedAccumulator&      accumulator) {
-    accumulator = {};
-    for (usize lane = 0; lane < L1; ++lane)
-        accumulator.values[lane] = parameters.ftBias[lane];
-
-    for (const auto& feature : trace.pieces)
-    {
-        if (feature.index >= PieceSquareDimensions)
-            return "Alice native piece feature index is outside the loaded tensor.";
-        const u64 row = u64(feature.index) * L1;
-        for (usize lane = 0; lane < L1; ++lane)
-            accumulator.values[lane] += parameters.pieceSquareWeight[row + lane];
-        const u64 psqtRow = u64(feature.index) * PsqtBuckets;
-        for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-            accumulator.psqt[bucket] += parameters.pieceSquarePsqt[psqtRow + bucket];
-    }
-
-    for (const auto& feature : trace.threats)
-    {
-        if (feature.index >= ThreatDimensions)
-            return "Alice native threat feature index is outside the loaded tensor.";
-        const u64 row = u64(feature.index) * L1;
-        for (usize lane = 0; lane < L1; ++lane)
-            accumulator.values[lane] += parameters.threatWeight[row + lane];
-        const u64 psqtRow = u64(feature.index) * PsqtBuckets;
-        for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-            accumulator.psqt[bucket] += parameters.threatPsqt[psqtRow + bucket];
-    }
-
-    return validate_loaded_accumulator(accumulator, trace.perspective);
+    return refresh_integer_accumulator(make_parameter_view(parameters), trace, accumulator);
 }
 
 template<typename Feature, typename Update>
@@ -862,42 +812,16 @@ std::optional<std::string> update_loaded_accumulator(const Parameters&       par
                                                      const PerspectiveTrace& after,
                                                      LoadedAccumulator&      accumulator,
                                                      LoadedIncrementalVerificationStats& stats) {
-    u64 pieceAdds     = 0;
-    u64 pieceRemoves  = 0;
-    u64 threatAdds    = 0;
-    u64 threatRemoves = 0;
-
-    apply_loaded_feature_delta(
-      before.pieces, after.pieces,
-      [&](IndexType index, i32 sign) {
-          const u64 row = u64(index) * L1;
-          for (usize lane = 0; lane < L1; ++lane)
-              accumulator.values[lane] += sign * i64(parameters.pieceSquareWeight[row + lane]);
-          const u64 psqtRow = u64(index) * PsqtBuckets;
-          for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-              accumulator.psqt[bucket] += sign * i64(parameters.pieceSquarePsqt[psqtRow + bucket]);
-      },
-      pieceAdds, pieceRemoves);
-
-    apply_loaded_feature_delta(
-      before.threats, after.threats,
-      [&](IndexType index, i32 sign) {
-          const u64 row = u64(index) * L1;
-          for (usize lane = 0; lane < L1; ++lane)
-              accumulator.values[lane] += sign * i64(parameters.threatWeight[row + lane]);
-          const u64 psqtRow = u64(index) * PsqtBuckets;
-          for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-              accumulator.psqt[bucket] += sign * i64(parameters.threatPsqt[psqtRow + bucket]);
-      },
-      threatAdds, threatRemoves);
-
-    stats.pieceAdds += pieceAdds;
-    stats.pieceRemoves += pieceRemoves;
-    stats.threatAdds += threatAdds;
-    stats.threatRemoves += threatRemoves;
-    stats.maxPieceEvents  = std::max(stats.maxPieceEvents, pieceAdds + pieceRemoves);
-    stats.maxThreatEvents = std::max(stats.maxThreatEvents, threatAdds + threatRemoves);
-    return validate_loaded_accumulator(accumulator, after.perspective);
+    AccumulatorDeltaStats delta;
+    auto error = update_integer_accumulator(make_parameter_view(parameters), before, after,
+                                            accumulator, delta);
+    stats.pieceAdds += delta.pieceAdds;
+    stats.pieceRemoves += delta.pieceRemoves;
+    stats.threatAdds += delta.threatAdds;
+    stats.threatRemoves += delta.threatRemoves;
+    stats.maxPieceEvents  = std::max(stats.maxPieceEvents, delta.pieceAdds + delta.pieceRemoves);
+    stats.maxThreatEvents = std::max(stats.maxThreatEvents, delta.threatAdds + delta.threatRemoves);
+    return error;
 }
 
 template<typename Parameters>
@@ -905,124 +829,7 @@ std::optional<std::string> evaluate_loaded_integer(const Parameters&           p
                                                    const Position&             position,
                                                    const LoadedAccumulatorSet& accumulators,
                                                    NativeIntegerStages&        stages) {
-    stages            = {};
-    stages.pieceCount = popcount(position.pieces());
-    if (stages.pieceCount < 2 || stages.pieceCount > 32)
-        return "Alice native integer evaluation requires between 2 and 32 pieces.";
-
-    for (Color perspective : {WHITE, BLACK})
-    {
-        if (auto error = validate_loaded_accumulator(accumulators[perspective], perspective))
-            return error;
-        for (usize lane = 0; lane < L1 / 2; ++lane)
-        {
-            const i32 left = std::clamp<i32>(i32(accumulators[perspective].values[lane]), 0, 255);
-            const i32 right =
-              std::clamp<i32>(i32(accumulators[perspective].values[lane + L1 / 2]), 0, 255);
-            stages.transformed[perspective][lane] = left * right / 512;
-        }
-    }
-
-    stages.sideToMove = position.side_to_move();
-    for (usize lane = 0; lane < L1 / 2; ++lane)
-    {
-        stages.denseInput[lane]          = stages.transformed[stages.sideToMove][lane];
-        stages.denseInput[lane + L1 / 2] = stages.transformed[~stages.sideToMove][lane];
-    }
-
-    stages.phase       = (stages.pieceCount - 1) / 4;
-    const auto& dense  = parameters.dense[stages.phase];
-    const auto  affine = [](const i8* weights, const i32* biases, usize outputs, usize inputs,
-                           const i32* values, i32* result, std::string_view label,
-                           bool requireI16) -> std::optional<std::string> {
-        for (usize output = 0; output < outputs; ++output)
-        {
-            i64 total = biases[output];
-            for (usize input = 0; input < inputs; ++input)
-                total += i64(weights[output * inputs + input]) * values[input];
-            if (total < std::numeric_limits<i32>::min() || total > std::numeric_limits<i32>::max())
-                return std::string(label) + " exceeds signed i32 at row " + std::to_string(output)
-                     + ": " + std::to_string(total);
-            if (requireI16
-                && (total < std::numeric_limits<i16>::min()
-                    || total > std::numeric_limits<i16>::max()))
-                return std::string(label) + " exceeds signed i16 at row " + std::to_string(output)
-                     + ": " + std::to_string(total);
-            result[output] = i32(total);
-        }
-        return std::nullopt;
-    };
-    const auto activate = [](i32 value, int shift, bool square) {
-        const i64 raw =
-          square ? i64(value) * value / (i64(1) << (2 * shift + 7)) : value / (i64(1) << shift);
-        return i32(std::clamp<i64>(raw, 0, 127));
-    };
-
-    if (auto error = affine(dense.fc0Weight.data(), dense.fc0Bias.data(), L2, L1,
-                            stages.denseInput.data(), stages.z0.data(), "fc0", true))
-        return error;
-    std::array<i32, 64> y1{};
-    for (usize output = 0; output < L2; ++output)
-    {
-        stages.s0[output] = activate(stages.z0[output], 7, true);
-        stages.r0[output] = activate(stages.z0[output], 7, false);
-        y1[output]        = stages.s0[output];
-        y1[L2 + output]   = stages.r0[output];
-    }
-
-    if (auto error = affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(), y1.data(),
-                            stages.z1.data(), "fc1", true))
-        return error;
-    std::array<i32, 128> y2{};
-    for (usize output = 0; output < L3; ++output)
-    {
-        stages.s1[output]        = activate(stages.z1[output], 6, true);
-        stages.r1[output]        = activate(stages.z1[output], 6, false);
-        y2[output]               = stages.s0[output];
-        y2[L2 + output]          = stages.r0[output];
-        y2[2 * L2 + output]      = stages.s1[output];
-        y2[2 * L2 + L3 + output] = stages.r1[output];
-    }
-
-    if (auto error = affine(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, y2.size(), y2.data(),
-                            &stages.z2, "fc2", false))
-        return error;
-    const i64 skip64   = i64(stages.z0[30]) - stages.z0[31];
-    const i64 fwdOut64 = i64(stages.z2) + skip64;
-    if (fwdOut64 < std::numeric_limits<i32>::min() || fwdOut64 > std::numeric_limits<i32>::max())
-        return "fwdOut exceeds signed i32: " + std::to_string(fwdOut64);
-    stages.skip   = i32(skip64);
-    stages.fwdOut = i32(fwdOut64);
-
-    const i64 positionalRaw64 = fwdOut64 * 9600 / 16384;
-    const i64 psqtDifference  = accumulators[stages.sideToMove].psqt[stages.phase]
-                             - accumulators[~stages.sideToMove].psqt[stages.phase];
-    const i64 psqtRaw64 = psqtDifference / 2;
-    if (positionalRaw64 < std::numeric_limits<i32>::min()
-        || positionalRaw64 > std::numeric_limits<i32>::max())
-        return "positionalRaw16 exceeds signed i32: " + std::to_string(positionalRaw64);
-    if (psqtRaw64 < std::numeric_limits<i32>::min() || psqtRaw64 > std::numeric_limits<i32>::max())
-        return "psqtRaw16 exceeds signed i32: " + std::to_string(psqtRaw64);
-    stages.positionalRaw = i32(positionalRaw64);
-    stages.psqtRaw       = i32(psqtRaw64);
-    stages.positional    = stages.positionalRaw / 16;
-    stages.psqt          = stages.psqtRaw / 16;
-    const i64 value64    = i64(stages.positional) + stages.psqt;
-    if (value64 < std::numeric_limits<i32>::min() || value64 > std::numeric_limits<i32>::max())
-        return "native value exceeds signed i32: " + std::to_string(value64);
-    stages.value = i32(value64);
-    return std::nullopt;
-}
-
-bool same_integer_stages(const NativeIntegerStages& left, const NativeIntegerStages& right) {
-    return left.sideToMove == right.sideToMove && left.pieceCount == right.pieceCount
-        && left.phase == right.phase && left.transformed == right.transformed
-        && left.denseInput == right.denseInput && left.z0 == right.z0 && left.s0 == right.s0
-        && left.r0 == right.r0 && left.z1 == right.z1 && left.s1 == right.s1 && left.r1 == right.r1
-        && left.z2 == right.z2 && left.skip == right.skip && left.fwdOut == right.fwdOut
-        && left.positionalRaw == right.positionalRaw && left.psqtRaw == right.psqtRaw
-        && left.positional == right.positional && left.psqt == right.psqt
-        && left.value == right.value;
+    return evaluate_integer(make_parameter_view(parameters), position, accumulators, stages);
 }
 
 constexpr std::string_view dense_simd_backend() {
@@ -1653,185 +1460,25 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
     if (auto error = verify_dense_simd(*active, qualificationStages, denseSimdVerified))
         return error;
 
-    std::array<std::array<i16, L1>, COLOR_NB>          accumulators{};
-    std::array<std::array<i32, PsqtBuckets>, COLOR_NB> psqtAccumulators{};
-
-    for (Color perspective : {WHITE, BLACK})
-    {
-        std::array<i64, L1>          lanes{};
-        std::array<i64, PsqtBuckets> psqt{};
-        for (usize lane = 0; lane < L1; ++lane)
-            lanes[lane] = active->ftBias[lane];
-
-        for (const auto& feature : trace[perspective].pieces)
-        {
-            if (feature.index >= PieceSquareDimensions)
-                return "Alice native piece feature index is outside the loaded tensor.";
-            const u64 row = u64(feature.index) * L1;
-            for (usize lane = 0; lane < L1; ++lane)
-                lanes[lane] += active->pieceSquareWeight[row + lane];
-            const u64 psqtRow = u64(feature.index) * PsqtBuckets;
-            for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-                psqt[bucket] += active->pieceSquarePsqt[psqtRow + bucket];
-        }
-        for (const auto& feature : trace[perspective].threats)
-        {
-            if (feature.index >= ThreatDimensions)
-                return "Alice native threat feature index is outside the loaded tensor.";
-            const u64 row = u64(feature.index) * L1;
-            for (usize lane = 0; lane < L1; ++lane)
-                lanes[lane] += active->threatWeight[row + lane];
-            const u64 psqtRow = u64(feature.index) * PsqtBuckets;
-            for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-                psqt[bucket] += active->threatPsqt[psqtRow + bucket];
-        }
-
-        for (usize lane = 0; lane < L1; ++lane)
-        {
-            if (lanes[lane] < std::numeric_limits<i16>::min()
-                || lanes[lane] > std::numeric_limits<i16>::max())
-                return "Alice native feature accumulator exceeds signed i16 at perspective "
-                     + std::to_string(perspective) + " lane " + std::to_string(lane) + ": "
-                     + std::to_string(lanes[lane]);
-            accumulators[perspective][lane] = i16(lanes[lane]);
-        }
-        for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-        {
-            if (psqt[bucket] < std::numeric_limits<i32>::min()
-                || psqt[bucket] > std::numeric_limits<i32>::max())
-                return "Alice native PSQT accumulator exceeds signed i32 at perspective "
-                     + std::to_string(perspective) + " bucket " + std::to_string(bucket) + ": "
-                     + std::to_string(psqt[bucket]);
-            psqtAccumulators[perspective][bucket] = i32(psqt[bucket]);
-        }
-    }
-
-    std::array<std::array<i32, L1 / 2>, COLOR_NB> transformed{};
-    for (Color perspective : {WHITE, BLACK})
-        for (usize lane = 0; lane < L1 / 2; ++lane)
-        {
-            const i32 left  = std::clamp<i32>(accumulators[perspective][lane], 0, 255);
-            const i32 right = std::clamp<i32>(accumulators[perspective][lane + L1 / 2], 0, 255);
-            transformed[perspective][lane] = left * right / 512;
-        }
-
-    const Color         sideToMove = position.side_to_move();
-    std::array<i32, L1> denseInput{};
-    for (usize lane = 0; lane < L1 / 2; ++lane)
-    {
-        denseInput[lane]          = transformed[sideToMove][lane];
-        denseInput[lane + L1 / 2] = transformed[~sideToMove][lane];
-    }
-
-    const usize phase  = (pieceCount - 1) / 4;
-    const auto& dense  = active->dense[phase];
-    const auto  affine = [](const i8* weights, const i32* biases, usize outputs, usize inputs,
-                           const i32* values, i32* result, std::string_view label,
-                           bool requireI16) -> std::optional<std::string> {
-        for (usize output = 0; output < outputs; ++output)
-        {
-            i64 total = biases[output];
-            for (usize input = 0; input < inputs; ++input)
-                total += i64(weights[output * inputs + input]) * values[input];
-            if (total < std::numeric_limits<i32>::min() || total > std::numeric_limits<i32>::max())
-                return std::string(label) + " exceeds signed i32 at row " + std::to_string(output)
-                     + ": " + std::to_string(total);
-            if (requireI16
-                && (total < std::numeric_limits<i16>::min()
-                    || total > std::numeric_limits<i16>::max()))
-                return std::string(label) + " exceeds signed i16 at row " + std::to_string(output)
-                     + ": " + std::to_string(total);
-            result[output] = i32(total);
-        }
-        return std::nullopt;
-    };
-    const auto activate = [](i32 value, int shift, bool square) {
-        const i64 raw =
-          square ? i64(value) * value / (i64(1) << (2 * shift + 7)) : value / (i64(1) << shift);
-        return i32(std::clamp<i64>(raw, 0, 127));
-    };
-
-    std::array<i32, L2> z0{};
-    if (auto error = affine(dense.fc0Weight.data(), dense.fc0Bias.data(), L2, L1, denseInput.data(),
-                            z0.data(), "fc0", true))
-        return error;
-    std::array<i32, L2> s0{};
-    std::array<i32, L2> r0{};
-    std::array<i32, 64> y1{};
-    for (usize output = 0; output < L2; ++output)
-    {
-        s0[output]      = activate(z0[output], 7, true);
-        r0[output]      = activate(z0[output], 7, false);
-        y1[output]      = s0[output];
-        y1[L2 + output] = r0[output];
-    }
-
-    std::array<i32, L3> z1{};
-    if (auto error = affine(dense.fc1Weight.data(), dense.fc1Bias.data(), L3, y1.size(), y1.data(),
-                            z1.data(), "fc1", true))
-        return error;
-    std::array<i32, L3>  s1{};
-    std::array<i32, L3>  r1{};
-    std::array<i32, 128> y2{};
-    for (usize output = 0; output < L3; ++output)
-    {
-        s1[output]               = activate(z1[output], 6, true);
-        r1[output]               = activate(z1[output], 6, false);
-        y2[output]               = s0[output];
-        y2[L2 + output]          = r0[output];
-        y2[2 * L2 + output]      = s1[output];
-        y2[2 * L2 + L3 + output] = r1[output];
-    }
-
-    std::array<i32, 1> z2{};
-    if (auto error = affine(dense.fc2Weight.data(), dense.fc2Bias.data(), 1, y2.size(), y2.data(),
-                            z2.data(), "fc2", false))
-        return error;
-    const i64 skip64   = i64(z0[30]) - z0[31];
-    const i64 fwdOut64 = i64(z2[0]) + skip64;
-    if (fwdOut64 < std::numeric_limits<i32>::min() || fwdOut64 > std::numeric_limits<i32>::max())
-        return "fwdOut exceeds signed i32: " + std::to_string(fwdOut64);
-    const i32 skip   = i32(skip64);
-    const i32 fwdOut = i32(fwdOut64);
-
-    const i64 positionalRaw64 = fwdOut64 * 9600 / 16384;
-    const i64 psqtDifference =
-      i64(psqtAccumulators[sideToMove][phase]) - psqtAccumulators[~sideToMove][phase];
-    const i64 psqtRaw64 = psqtDifference / 2;
-    if (positionalRaw64 < std::numeric_limits<i32>::min()
-        || positionalRaw64 > std::numeric_limits<i32>::max())
-        return "positionalRaw16 exceeds signed i32: " + std::to_string(positionalRaw64);
-    if (psqtRaw64 < std::numeric_limits<i32>::min() || psqtRaw64 > std::numeric_limits<i32>::max())
-        return "psqtRaw16 exceeds signed i32: " + std::to_string(psqtRaw64);
-    const i32 positionalRaw16 = i32(positionalRaw64);
-    const i32 psqtRaw16       = i32(psqtRaw64);
-    const i32 positionalValue = positionalRaw16 / 16;
-    const i32 psqtValue       = psqtRaw16 / 16;
-    const i32 nativeValue     = positionalValue + psqtValue;
-
-    for (Color perspective : {WHITE, BLACK})
-    {
-        for (usize lane = 0; lane < L1; ++lane)
-            if (qualificationAccumulators[perspective].values[lane]
-                != accumulators[perspective][lane])
-                return "Alice native qualification refresh disagrees with the integer trace.";
-        for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
-            if (qualificationAccumulators[perspective].psqt[bucket]
-                != psqtAccumulators[perspective][bucket])
-                return "Alice native qualification PSQT refresh disagrees with the integer trace.";
-    }
-    if (qualificationStages.sideToMove != sideToMove || qualificationStages.pieceCount != pieceCount
-        || qualificationStages.phase != phase || qualificationStages.transformed != transformed
-        || qualificationStages.denseInput != denseInput || qualificationStages.z0 != z0
-        || qualificationStages.s0 != s0 || qualificationStages.r0 != r0
-        || qualificationStages.z1 != z1 || qualificationStages.s1 != s1
-        || qualificationStages.r1 != r1 || qualificationStages.z2 != z2[0]
-        || qualificationStages.skip != skip || qualificationStages.fwdOut != fwdOut
-        || qualificationStages.positionalRaw != positionalRaw16
-        || qualificationStages.psqtRaw != psqtRaw16
-        || qualificationStages.positional != positionalValue
-        || qualificationStages.psqt != psqtValue || qualificationStages.value != nativeValue)
-        return "Alice native qualification stages disagree with the integer trace.";
+    const Color sideToMove      = qualificationStages.sideToMove;
+    const usize phase           = qualificationStages.phase;
+    const auto& accumulators    = qualificationAccumulators;
+    const auto& transformed     = qualificationStages.transformed;
+    const auto& denseInput      = qualificationStages.denseInput;
+    const auto& z0              = qualificationStages.z0;
+    const auto& s0              = qualificationStages.s0;
+    const auto& r0              = qualificationStages.r0;
+    const auto& z1              = qualificationStages.z1;
+    const auto& s1              = qualificationStages.s1;
+    const auto& r1              = qualificationStages.r1;
+    const i32   z2              = qualificationStages.z2;
+    const i32   skip            = qualificationStages.skip;
+    const i32   fwdOut          = qualificationStages.fwdOut;
+    const i32   positionalRaw16 = qualificationStages.positionalRaw;
+    const i32   psqtRaw16       = qualificationStages.psqtRaw;
+    const i32   positionalValue = qualificationStages.positional;
+    const i32   psqtValue       = qualificationStages.psqt;
+    const i32   nativeValue     = qualificationStages.value;
 
     std::ostringstream out;
     out << "{\"architecture\":\"" << ArchitectureId << "\",\"generation\":" << active->generation
@@ -1854,13 +1501,13 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
         write_feature_indices(out, trace[perspective].threats);
     }
     out << "],\"featureAccumulator\":[";
-    write_integer_array(out, accumulators[WHITE]);
+    write_integer_array(out, accumulators[WHITE].values);
     out << ',';
-    write_integer_array(out, accumulators[BLACK]);
+    write_integer_array(out, accumulators[BLACK].values);
     out << "],\"psqtAccumulator\":[";
-    write_integer_array(out, psqtAccumulators[WHITE]);
+    write_integer_array(out, accumulators[WHITE].psqt);
     out << ',';
-    write_integer_array(out, psqtAccumulators[BLACK]);
+    write_integer_array(out, accumulators[BLACK].psqt);
     out << "],\"transformedByPerspective\":[";
     write_integer_array(out, transformed[WHITE]);
     out << ',';
@@ -1879,7 +1526,7 @@ std::optional<std::string> QualificationNetwork::integer_trace(const Position& p
     write_integer_array(out, s1);
     out << ",\"fc1Linear\":";
     write_integer_array(out, r1);
-    out << ",\"fc2Raw\":" << z2[0] << ",\"skip\":" << skip << ",\"fwdOut\":" << fwdOut
+    out << ",\"fc2Raw\":" << z2 << ",\"skip\":" << skip << ",\"fwdOut\":" << fwdOut
         << ",\"positionalRaw16\":" << positionalRaw16 << ",\"psqtRaw16\":" << psqtRaw16
         << ",\"positionalValue\":" << positionalValue << ",\"psqtValue\":" << psqtValue
         << ",\"nativeNnueValue\":" << nativeValue << '}';
