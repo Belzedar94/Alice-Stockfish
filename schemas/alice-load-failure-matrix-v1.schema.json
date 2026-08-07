@@ -2,25 +2,31 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-load-failure-matrix-v1.schema.json",
   "$defs": {
+    "reference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {"minLength": 1, "type": "string"},
+        "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["path", "sha256"],
+      "type": "object"
+    },
     "case": {
       "additionalProperties": false,
       "properties": {
-        "command_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        "command": {"$ref": "#/$defs/reference"},
         "diagnostic_code": {"type": "string"},
         "exit_code": {"not": {"const": 0}, "type": "integer"},
         "fallback_observed": {"const": false},
-        "input_descriptor_sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "type": "string"
-        },
-        "input_sha256": {
+        "input_descriptor": {"$ref": "#/$defs/reference"},
+        "input": {
           "oneOf": [
-            {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+            {"$ref": "#/$defs/reference"},
             {"type": "null"}
           ]
         },
         "mutation": {"type": "string"},
-        "output_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        "output": {"$ref": "#/$defs/reference"},
         "probe_kind": {"enum": ["missing", "corrupt", "incompatible"]},
         "search_result_published": {"const": false},
         "source_network_sha256": {
@@ -31,11 +37,11 @@
       "required": [
         "probe_kind",
         "source_network_sha256",
-        "input_descriptor_sha256",
-        "input_sha256",
+        "input_descriptor",
+        "input",
         "mutation",
-        "command_sha256",
-        "output_sha256",
+        "command",
+        "output",
         "diagnostic_code",
         "exit_code",
         "fallback_observed",
@@ -56,7 +62,7 @@
             {
               "properties": {
                 "diagnostic_code": {"const": "ALICE_NETWORK_CORRUPT"},
-                "input_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+                "input": {"$ref": "#/$defs/reference"},
                 "mutation": {"const": "deterministic-byte-flip"},
                 "probe_kind": {"const": "corrupt"}
               }
@@ -69,7 +75,7 @@
             {
               "properties": {
                 "diagnostic_code": {"const": "ALICE_NETWORK_INCOMPATIBLE"},
-                "input_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+                "input": {"$ref": "#/$defs/reference"},
                 "mutation": {"const": "architecture-word-mismatch"},
                 "probe_kind": {"const": "incompatible"}
               }
@@ -82,7 +88,7 @@
             {
               "properties": {
                 "diagnostic_code": {"const": "ALICE_NETWORK_MISSING"},
-                "input_sha256": {"type": "null"},
+                "input": {"type": "null"},
                 "mutation": {"const": "absent-path"},
                 "probe_kind": {"const": "missing"}
               }

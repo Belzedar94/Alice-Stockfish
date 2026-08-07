@@ -37,6 +37,9 @@ class ContractFileTests(unittest.TestCase):
         openbench_shadow_schema = load_contract(
             "schemas/alice-openbench-shadow-receipt-v1.schema.json"
         )
+        openbench_shadow_configuration_schema = load_contract(
+            "schemas/alice-openbench-shadow-configuration-v1.schema.json"
+        )
         load_failure_schema = load_contract(
             "schemas/alice-load-failure-matrix-v1.schema.json"
         )
@@ -83,6 +86,14 @@ class ContractFileTests(unittest.TestCase):
         self.assertEqual(
             openbench_shadow_schema["properties"]["schema"]["const"],
             "alice-openbench-shadow-receipt-v1",
+        )
+        self.assertEqual(
+            openbench_shadow_configuration_schema["properties"]["schema"]["const"],
+            "alice-openbench-shadow-configuration-v1",
+        )
+        self.assertEqual(
+            openbench_shadow_configuration_schema["properties"]["book_token"]["const"],
+            "ALICE",
         )
         self.assertEqual(
             load_failure_schema["properties"]["schema"]["const"],

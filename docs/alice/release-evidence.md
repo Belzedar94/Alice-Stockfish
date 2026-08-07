@@ -15,16 +15,17 @@ A candidate manifest must bind:
 - missing, corrupt, and incompatible network probes for every binary.
 
 Each negative load probe must exit nonzero, publish no search result, and show
-that no alternate evaluator ran. Each case records its exact probe kind, source
-network SHA-256, input-descriptor SHA-256, mutated-input SHA-256 where bytes
-exist, frozen mutation recipe, command SHA-256, output SHA-256, normalized
-diagnostic code, and numeric exit code. Missing input uses `absent-path` and no
-input-byte hash; corrupt input uses `deterministic-byte-flip`; incompatible
-input uses `architecture-word-mismatch`. The three descriptor, command, and
-output identities must be distinct, and the two mutated inputs must differ
-from both each other and the candidate network. Checksums are verified against
-the bytes on disk; the native network must have the exact AliceNative-v1 wire
-size.
+that no alternate evaluator ran. Every case references the exact input
+descriptor, command receipt, output receipt, and mutated input where bytes
+exist by absolute path and SHA-256. The auditor reopens those bytes, recomputes
+every digest, and checks the cross-references among all three receipts. Missing
+input uses `absent-path`, names a path that must still be absent at audit time,
+and has no input artifact. Corrupt input is the source network with byte zero
+XORed by `0x01`; incompatible input is the source network with byte four XORed
+by `0x01`. The auditor streams both files and accepts no other byte difference.
+The three descriptor, command, and output identities must be distinct, and the
+two mutated inputs must differ from both each other and the candidate network.
+The native network must have the exact AliceNative-v1 wire size.
 The qualification receipt must identify a trained run, positive dataset and
 comparison sample sizes, a positive nonzero-parameter count, and zero
 checkpoint/file, file/engine, and incremental/full mismatches.
@@ -47,8 +48,15 @@ extended artifact map cannot enter either strength aggregate, and the two
 identities must be distinct.
 The OpenBench shadow receipt must repeat the candidate source commit and
 network SHA-256. Every preset must also name a release binary role and the
-matching binary SHA-256 from the candidate manifest; a clean audit from any
-other source, network, or binary cannot authorize the candidate.
+matching binary SHA-256 from the candidate manifest. It references a canonical
+configuration artifact whose bytes and SHA-256 are recomputed by the auditor.
+That artifact fixes the official service, preset, candidate identities,
+`ALICE` book and frozen book hash, runner hash, `Threads=1`, `Hash=512`,
+`Move Overhead=10`, exact timing, color-swapped pairing, `cpuflags=[]`, and the
+two OpenBench adjudication rules. The three preset configurations must be
+distinct and must share one runner identity. A clean audit from any other
+source, network, binary, book, runner, option set, timing, pairing, or worker
+policy cannot authorize the candidate.
 
 The four release artifacts must have four distinct SHA-256 identities. The
 auditor reads each executable header and requires x86-64 PE for Windows roles

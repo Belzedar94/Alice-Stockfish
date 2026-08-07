@@ -241,19 +241,64 @@ class ReleaseEvidenceTests(unittest.TestCase):
             )
             failures = root / f"{role}-failures.json"
             cases = {}
-            for index, (name, (mutation, diagnostic_code)) in enumerate(
-                alice_release_evidence.LOAD_FAILURE_PROBES.items(), start=1
+            for name, (mutation, diagnostic_code) in (
+                alice_release_evidence.LOAD_FAILURE_PROBES.items()
             ):
+                input_path = root / f"{role}-{name}-input.nnue"
+                input_sha = None
+                if name != "missing":
+                    payload = bytearray(network.read_bytes())
+                    payload[0 if name == "corrupt" else 4] ^= 0x01
+                    input_path.write_bytes(payload)
+                    input_sha = sha256_file(input_path)
+                descriptor = root / f"{role}-{name}-input.json"
+                write_json(
+                    descriptor,
+                    {
+                        "schema": "alice-load-probe-input-v1",
+                        "probe_kind": name,
+                        "source_network_sha256": network_sha,
+                        "input_path": str(input_path.resolve()),
+                        "input_sha256": input_sha,
+                        "mutation": mutation,
+                    },
+                )
+                descriptor_reference = reference(descriptor)
+                command = root / f"{role}-{name}-command.json"
+                write_json(
+                    command,
+                    {
+                        "schema": "alice-load-probe-command-v1",
+                        "probe_kind": name,
+                        "binary_sha256": binary_sha,
+                        "source_network_sha256": network_sha,
+                        "input_descriptor_sha256": descriptor_reference["sha256"],
+                        "input_sha256": input_sha,
+                    },
+                )
+                command_reference = reference(command)
+                output = root / f"{role}-{name}-output.json"
+                write_json(
+                    output,
+                    {
+                        "schema": "alice-load-probe-output-v1",
+                        "probe_kind": name,
+                        "binary_sha256": binary_sha,
+                        "command_sha256": command_reference["sha256"],
+                        "diagnostic_code": diagnostic_code,
+                        "exit_code": 3,
+                        "fallback_observed": False,
+                        "search_result_published": False,
+                    },
+                )
                 cases[name] = {
                     "probe_kind": name,
                     "source_network_sha256": network_sha,
-                    "input_descriptor_sha256": f"{index}" * 64,
-                    "input_sha256": None
-                    if name == "missing"
-                    else ("a" if name == "corrupt" else "b") * 64,
+                    "input_descriptor": descriptor_reference,
+                    "input": None if name == "missing" else reference(input_path),
                     "mutation": mutation,
-                    "command_sha256": f"{index + 3}" * 64,
-                    "output_sha256": f"{index + 6}" * 64,
+                    "command": command_reference,
+                    "output": reference(output),
                     "diagnostic_code": diagnostic_code,
                     "exit_code": 3,
                     "fallback_observed": False,
@@ -288,6 +333,37 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
         shadow = root / "shadow.json"
         shadow_binary = binaries[0]
+        shadow_presets = {}
+        for control in ("VSTC", "STC", "LTC"):
+            configuration = root / f"shadow-{control.lower()}-configuration.json"
+            write_json(
+                configuration,
+                {
+                    "schema": "alice-openbench-shadow-configuration-v1",
+                    "service": "https://belzedar.duckdns.org",
+                    "preset": control,
+                    "source_commit": source_commit,
+                    "network_sha256": network_sha,
+                    "binary_role": shadow_binary["role"],
+                    "binary_sha256": shadow_binary["artifact"]["sha256"],
+                    "book_token": "ALICE",
+                    "book_sha256": alice_release_evidence.FROZEN_ALICE_BOOK_SHA256,
+                    "runner_sha256": "9" * 64,
+                    "engine_options": alice_release_evidence.SHADOW_ENGINE_OPTIONS,
+                    "timing": alice_release_evidence.SHADOW_TIMING[control],
+                    "worker": alice_release_evidence.SHADOW_WORKER_CONFIGURATION,
+                    "adjudication": ["800/4", "40/8/10"],
+                },
+            )
+            shadow_presets[control] = {
+                "binary_role": shadow_binary["role"],
+                "binary_sha256": shadow_binary["artifact"]["sha256"],
+                "configuration": reference(configuration),
+                "pairs": 200,
+                "inversions": 0,
+                "invalid_pairs": 0,
+                "adjudication": ["800/4", "40/8/10"],
+            }
         write_json(
             shadow,
             {
@@ -296,17 +372,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 "status": "PASS",
                 "source_commit": source_commit,
                 "network_sha256": network_sha,
-                "presets": {
-                    control: {
-                        "binary_role": shadow_binary["role"],
-                        "binary_sha256": shadow_binary["artifact"]["sha256"],
-                        "pairs": 200,
-                        "inversions": 0,
-                        "invalid_pairs": 0,
-                        "adjudication": ["800/4", "40/8/10"],
-                    }
-                    for control in ("VSTC", "STC", "LTC")
-                },
+                "presets": shadow_presets,
             },
         )
 
@@ -406,6 +472,76 @@ class ReleaseEvidenceTests(unittest.TestCase):
             any(
                 "corrupt load-failure evidence" in reason
                 or "distinct executions" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_load_failure_artifact_hashes_are_recomputed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            first = value["binaries"][0]
+            failures = json.loads(
+                Path(first["load_failures"]["path"]).read_text(encoding="utf-8")
+            )
+            output_path = Path(failures["cases"]["corrupt"]["output"]["path"])
+            output_path.write_bytes(b"tampered probe evidence\n")
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "corrupt output: SHA-256 mismatch" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_load_failure_mutation_is_recomputed_from_network_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            first = value["binaries"][0]
+            failures_path = Path(first["load_failures"]["path"])
+            failures = json.loads(failures_path.read_text(encoding="utf-8"))
+            case = failures["cases"]["corrupt"]
+            input_path = Path(case["input"]["path"])
+            wrong_payload = bytearray(Path(value["network"]["path"]).read_bytes())
+            wrong_payload[2] ^= 0x01
+            input_path.write_bytes(wrong_payload)
+            case["input"]["sha256"] = sha256_file(input_path)
+
+            descriptor_path = Path(case["input_descriptor"]["path"])
+            descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+            descriptor["input_sha256"] = case["input"]["sha256"]
+            descriptor_path.write_bytes(canonical_json_bytes(descriptor))
+            case["input_descriptor"]["sha256"] = sha256_file(descriptor_path)
+
+            command_path = Path(case["command"]["path"])
+            command = json.loads(command_path.read_text(encoding="utf-8"))
+            command["input_descriptor_sha256"] = case["input_descriptor"]["sha256"]
+            command["input_sha256"] = case["input"]["sha256"]
+            command_path.write_bytes(canonical_json_bytes(command))
+            case["command"]["sha256"] = sha256_file(command_path)
+
+            output_path = Path(case["output"]["path"])
+            output = json.loads(output_path.read_text(encoding="utf-8"))
+            output["command_sha256"] = case["command"]["sha256"]
+            output_path.write_bytes(canonical_json_bytes(output))
+            case["output"]["sha256"] = sha256_file(output_path)
+
+            failures_path.write_bytes(canonical_json_bytes(failures))
+            first["load_failures"]["sha256"] = sha256_file(failures_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "does not match the frozen deterministic-byte-flip recipe" in reason
                 for reason in receipt["blocking_reasons"]
             )
         )
@@ -707,6 +843,35 @@ class ReleaseEvidenceTests(unittest.TestCase):
                     for reason in receipt["blocking_reasons"]
                 )
             )
+
+    def test_openbench_shadow_configuration_is_recomputed_and_frozen(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            shadow_path = Path(value["openbench_shadow_receipt"]["path"])
+            shadow = json.loads(shadow_path.read_text(encoding="utf-8"))
+            configuration_reference = shadow["presets"]["VSTC"]["configuration"]
+            configuration_path = Path(configuration_reference["path"])
+            configuration = json.loads(
+                configuration_path.read_text(encoding="utf-8")
+            )
+            configuration["timing"]["base_ms"] = 2_001
+            configuration_path.write_bytes(canonical_json_bytes(configuration))
+            configuration_reference["sha256"] = sha256_file(configuration_path)
+            shadow_path.write_bytes(canonical_json_bytes(shadow))
+            value["openbench_shadow_receipt"]["sha256"] = sha256_file(shadow_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "VSTC configuration does not match the frozen preset" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
 
 
 if __name__ == "__main__":

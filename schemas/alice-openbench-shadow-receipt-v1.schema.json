@@ -2,6 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-openbench-shadow-receipt-v1.schema.json",
   "$defs": {
+    "reference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {"minLength": 1, "type": "string"},
+        "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["path", "sha256"],
+      "type": "object"
+    },
     "preset": {
       "additionalProperties": false,
       "properties": {
@@ -10,6 +19,7 @@
           "enum": ["windows-bmi2", "windows-avx2", "linux-bmi2", "linux-avx2"]
         },
         "binary_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        "configuration": {"$ref": "#/$defs/reference"},
         "invalid_pairs": {"const": 0},
         "inversions": {"const": 0},
         "pairs": {"const": 200}
@@ -17,6 +27,7 @@
       "required": [
         "binary_role",
         "binary_sha256",
+        "configuration",
         "pairs",
         "inversions",
         "invalid_pairs",

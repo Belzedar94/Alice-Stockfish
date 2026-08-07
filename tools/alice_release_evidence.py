@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 import re
 import sys
@@ -12,14 +13,22 @@ if __package__:
         aggregate_input_identity,
         validate_aggregate_receipt,
     )
-    from .alice_acceptance.evidence import sha256_file, write_create_only_json
+    from .alice_acceptance.evidence import (
+        canonical_json_bytes,
+        sha256_file,
+        write_create_only_json,
+    )
     from .alice_acceptance.runner_adapter import parse_strict_json
 else:
     from alice_acceptance.aggregate import (
         aggregate_input_identity,
         validate_aggregate_receipt,
     )
-    from alice_acceptance.evidence import sha256_file, write_create_only_json
+    from alice_acceptance.evidence import (
+        canonical_json_bytes,
+        sha256_file,
+        write_create_only_json,
+    )
     from alice_acceptance.runner_adapter import parse_strict_json
 
 
@@ -30,6 +39,9 @@ FROZEN_LEGACY_BINARY_SHA256 = (
 )
 FROZEN_LEGACY_NETWORK_SHA256 = (
     "9f9e557015a55c0a6981db64e1f3044dedb91fd8a8c1a6d4f3c45d0eee91fbd9"
+)
+FROZEN_ALICE_BOOK_SHA256 = (
+    "bcd89d9fc3ea81feb95932eb64d6b6f15ad25cc04cdcc9e0440f097cffb8ccf6"
 )
 BINARY_ROLES = frozenset(
     {"windows-bmi2", "windows-avx2", "linux-bmi2", "linux-avx2"}
@@ -72,6 +84,7 @@ SHADOW_FIELDS = {
 SHADOW_PRESET_FIELDS = {
     "binary_role",
     "binary_sha256",
+    "configuration",
     "pairs",
     "inversions",
     "invalid_pairs",
@@ -86,11 +99,11 @@ LOAD_FAILURE_MATRIX_FIELDS = {
 LOAD_FAILURE_CASE_FIELDS = {
     "probe_kind",
     "source_network_sha256",
-    "input_descriptor_sha256",
-    "input_sha256",
+    "input_descriptor",
+    "input",
     "mutation",
-    "command_sha256",
-    "output_sha256",
+    "command",
+    "output",
     "diagnostic_code",
     "exit_code",
     "fallback_observed",
@@ -104,6 +117,55 @@ LOAD_FAILURE_PROBES = {
         "ALICE_NETWORK_INCOMPATIBLE",
     ),
 }
+LOAD_INPUT_DESCRIPTOR_FIELDS = {
+    "schema",
+    "probe_kind",
+    "source_network_sha256",
+    "input_path",
+    "input_sha256",
+    "mutation",
+}
+LOAD_COMMAND_FIELDS = {
+    "schema",
+    "probe_kind",
+    "binary_sha256",
+    "source_network_sha256",
+    "input_descriptor_sha256",
+    "input_sha256",
+}
+LOAD_OUTPUT_FIELDS = {
+    "schema",
+    "probe_kind",
+    "binary_sha256",
+    "command_sha256",
+    "diagnostic_code",
+    "exit_code",
+    "fallback_observed",
+    "search_result_published",
+}
+SHADOW_CONFIGURATION_FIELDS = {
+    "schema",
+    "service",
+    "preset",
+    "source_commit",
+    "network_sha256",
+    "binary_role",
+    "binary_sha256",
+    "book_token",
+    "book_sha256",
+    "runner_sha256",
+    "engine_options",
+    "timing",
+    "worker",
+    "adjudication",
+}
+SHADOW_TIMING = {
+    "VSTC": {"base_ms": 2_000, "increment_ms": 20},
+    "STC": {"base_ms": 10_000, "increment_ms": 100},
+    "LTC": {"base_ms": 30_000, "increment_ms": 300},
+}
+SHADOW_ENGINE_OPTIONS = {"Threads": "1", "Hash": "512", "Move Overhead": "10"}
+SHADOW_WORKER_CONFIGURATION = {"cpuflags": [], "pairing": "color-swapped-pairs"}
 
 
 def load_object(path: Path) -> dict[str, object]:
@@ -310,9 +372,53 @@ def verify_triple_bench(
         reasons.append(f"{role}: triple bench is not reproducible")
 
 
+def matches_frozen_mutation(source: Path, mutated: Path, probe_kind: str) -> bool:
+    """Compare a probe input with the source without loading a release net in memory."""
+
+    expected_offset = 0 if probe_kind == "corrupt" else 4
+    if (
+        source.stat().st_size != mutated.stat().st_size
+        or source.stat().st_size <= expected_offset
+    ):
+        return False
+    observed_offset = False
+    absolute_offset = 0
+    with source.open("rb") as source_stream, mutated.open("rb") as mutated_stream:
+        while True:
+            source_chunk = source_stream.read(1024 * 1024)
+            mutated_chunk = mutated_stream.read(1024 * 1024)
+            if len(source_chunk) != len(mutated_chunk):
+                return False
+            if not source_chunk:
+                return observed_offset
+            if absolute_offset <= expected_offset < absolute_offset + len(source_chunk):
+                expected_chunk = bytearray(source_chunk)
+                index = expected_offset - absolute_offset
+                expected_chunk[index] ^= 0x01
+                if mutated_chunk != bytes(expected_chunk):
+                    return False
+                observed_offset = True
+            elif mutated_chunk != source_chunk:
+                return False
+            absolute_offset += len(source_chunk)
+
+
+def load_evidence_object(
+    path: Path | None, label: str, reasons: list[str]
+) -> dict[str, object] | None:
+    if path is None:
+        return None
+    try:
+        return load_object(path)
+    except (UnicodeDecodeError, ValueError) as error:
+        reasons.append(f"{label}: invalid JSON: {error}")
+        return None
+
+
 def verify_load_failures(
     receipt: dict[str, object],
     binary_sha256: str,
+    network_path: Path,
     network_sha256: str,
     role: str,
     reasons: list[str],
@@ -351,36 +457,122 @@ def verify_load_failures(
                 f"{role}: {name} load-failure evidence is incomplete or did not fail closed"
             )
             continue
-        hash_fields = (
-            "input_descriptor_sha256",
-            "command_sha256",
-            "output_sha256",
+
+        descriptor_path, descriptor_sha = verify_reference(
+            case.get("input_descriptor"),
+            f"{role} {name} input descriptor",
+            reasons,
         )
-        if any(
-            not isinstance(case.get(field), str)
-            or not SHA256_RE.fullmatch(case[field])
-            for field in hash_fields
-        ):
-            reasons.append(f"{role}: {name} load-failure hashes are not canonical")
-            continue
-        input_sha256 = case.get("input_sha256")
+        command_path, command_sha = verify_reference(
+            case.get("command"), f"{role} {name} command", reasons
+        )
+        output_path, output_sha = verify_reference(
+            case.get("output"), f"{role} {name} output", reasons
+        )
+        input_path: Path | None = None
+        input_sha256: str | None = None
         if name == "missing":
-            if input_sha256 is not None:
+            if case.get("input") is not None:
                 reasons.append(
                     f"{role}: missing load probe unexpectedly identifies input bytes"
                 )
                 continue
-        elif (
-            not isinstance(input_sha256, str)
-            or not SHA256_RE.fullmatch(input_sha256)
-            or input_sha256 == network_sha256
-        ):
-            reasons.append(f"{role}: {name} load probe does not bind mutated input bytes")
-            continue
-        input_descriptors.add(case["input_descriptor_sha256"])
-        commands.add(case["command_sha256"])
-        outputs.add(case["output_sha256"])
-        if isinstance(input_sha256, str):
+        else:
+            input_path, input_sha256 = verify_reference(
+                case.get("input"), f"{role} {name} input", reasons
+            )
+            if (
+                input_path is None
+                or input_sha256 is None
+                or input_sha256 == network_sha256
+            ):
+                reasons.append(
+                    f"{role}: {name} load probe does not bind mutated input bytes"
+                )
+            elif not matches_frozen_mutation(network_path, input_path, name):
+                reasons.append(
+                    f"{role}: {name} input does not match the frozen {mutation} recipe"
+                )
+
+        descriptor = load_evidence_object(
+            descriptor_path, f"{role} {name} input descriptor", reasons
+        )
+        descriptor_input_path: Path | None = None
+        if descriptor is not None:
+            try:
+                exact_fields(
+                    descriptor,
+                    LOAD_INPUT_DESCRIPTOR_FIELDS,
+                    f"{role} {name} input descriptor",
+                )
+            except ValueError as error:
+                reasons.append(str(error))
+            path_value = descriptor.get("input_path")
+            if isinstance(path_value, str) and Path(path_value).is_absolute():
+                descriptor_input_path = Path(path_value).resolve()
+            expected_descriptor = {
+                "schema": "alice-load-probe-input-v1",
+                "probe_kind": name,
+                "source_network_sha256": network_sha256,
+                "input_path": path_value,
+                "input_sha256": input_sha256,
+                "mutation": mutation,
+            }
+            if descriptor != expected_descriptor:
+                reasons.append(f"{role}: {name} input descriptor is not canonical")
+            if name == "missing":
+                if descriptor_input_path is None or descriptor_input_path.exists():
+                    reasons.append(
+                        f"{role}: missing probe input path is not verifiably absent"
+                    )
+            elif descriptor_input_path != input_path:
+                reasons.append(
+                    f"{role}: {name} descriptor does not identify the mutated input"
+                )
+
+        command = load_evidence_object(command_path, f"{role} {name} command", reasons)
+        expected_command = {
+            "schema": "alice-load-probe-command-v1",
+            "probe_kind": name,
+            "binary_sha256": binary_sha256,
+            "source_network_sha256": network_sha256,
+            "input_descriptor_sha256": descriptor_sha,
+            "input_sha256": input_sha256,
+        }
+        if command is not None:
+            try:
+                exact_fields(command, LOAD_COMMAND_FIELDS, f"{role} {name} command")
+            except ValueError as error:
+                reasons.append(str(error))
+            if command != expected_command:
+                reasons.append(f"{role}: {name} command is not bound to its probe input")
+
+        output = load_evidence_object(output_path, f"{role} {name} output", reasons)
+        expected_output = {
+            "schema": "alice-load-probe-output-v1",
+            "probe_kind": name,
+            "binary_sha256": binary_sha256,
+            "command_sha256": command_sha,
+            "diagnostic_code": diagnostic_code,
+            "exit_code": case.get("exit_code"),
+            "fallback_observed": False,
+            "search_result_published": False,
+        }
+        if output is not None:
+            try:
+                exact_fields(output, LOAD_OUTPUT_FIELDS, f"{role} {name} output")
+            except ValueError as error:
+                reasons.append(str(error))
+            if output != expected_output:
+                reasons.append(f"{role}: {name} output is not bound to its command")
+
+        if descriptor_sha is not None:
+            input_descriptors.add(descriptor_sha)
+        if command_sha is not None:
+            commands.add(command_sha)
+        if output_sha is not None:
+            outputs.add(output_sha)
+        if input_sha256 is not None:
             mutated_inputs.add(input_sha256)
     if (
         len(input_descriptors) != 3
@@ -391,6 +583,55 @@ def verify_load_failures(
         reasons.append(
             f"{role}: load-failure probes do not bind three distinct executions"
         )
+
+
+def verify_shadow_configuration(
+    reference: object,
+    receipt: dict[str, object],
+    preset: str,
+    result: dict[str, object],
+    reasons: list[str],
+) -> tuple[str | None, str | None]:
+    label = f"OpenBench shadow preset {preset} configuration"
+    path, configuration_sha = verify_reference(reference, label, reasons)
+    configuration = load_evidence_object(path, label, reasons)
+    if configuration is None:
+        return configuration_sha, None
+    try:
+        exact_fields(configuration, SHADOW_CONFIGURATION_FIELDS, label)
+    except ValueError as error:
+        reasons.append(str(error))
+        return configuration_sha, None
+    runner_sha = configuration.get("runner_sha256")
+    expected = {
+        "schema": "alice-openbench-shadow-configuration-v1",
+        "service": receipt.get("service"),
+        "preset": preset,
+        "source_commit": receipt.get("source_commit"),
+        "network_sha256": receipt.get("network_sha256"),
+        "binary_role": result.get("binary_role"),
+        "binary_sha256": result.get("binary_sha256"),
+        "book_token": "ALICE",
+        "book_sha256": FROZEN_ALICE_BOOK_SHA256,
+        "runner_sha256": runner_sha,
+        "engine_options": SHADOW_ENGINE_OPTIONS,
+        "timing": SHADOW_TIMING[preset],
+        "worker": SHADOW_WORKER_CONFIGURATION,
+        "adjudication": ["800/4", "40/8/10"],
+    }
+    if (
+        configuration != expected
+        or not isinstance(runner_sha, str)
+        or not SHA256_RE.fullmatch(runner_sha)
+    ):
+        reasons.append(f"{label} does not match the frozen preset")
+        return configuration_sha, None
+    if (
+        hashlib.sha256(canonical_json_bytes(configuration)).hexdigest()
+        != configuration_sha
+    ):
+        reasons.append(f"{label} identity is not canonical")
+    return configuration_sha, runner_sha
 
 
 def verify_openbench_shadow(
@@ -419,6 +660,8 @@ def verify_openbench_shadow(
         reasons.append("OpenBench shadow evidence does not bind the candidate source commit")
     if receipt.get("network_sha256") != network_sha256:
         reasons.append("OpenBench shadow evidence does not bind the candidate network")
+    configuration_hashes: set[str] = set()
+    runner_hashes: set[str] = set()
     for preset, result in presets.items():
         if not isinstance(result, dict):
             reasons.append(f"OpenBench shadow preset {preset} is not an object")
@@ -453,6 +696,17 @@ def verify_openbench_shadow(
             or result.get("adjudication") != ["800/4", "40/8/10"]
         ):
             reasons.append(f"OpenBench shadow preset {preset} is not clean")
+        configuration_sha, runner_sha = verify_shadow_configuration(
+            result.get("configuration"), receipt, preset, result, reasons
+        )
+        if configuration_sha is not None:
+            configuration_hashes.add(configuration_sha)
+        if runner_sha is not None:
+            runner_hashes.add(runner_sha)
+    if len(configuration_hashes) != 3 or len(runner_hashes) != 1:
+        reasons.append(
+            "OpenBench shadow presets do not bind three frozen configurations and one runner"
+        )
 
 
 def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
@@ -622,10 +876,20 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
                 )
             except (UnicodeDecodeError, ValueError) as error:
                 reasons.append(f"{role}: invalid triple-bench JSON: {error}")
-        if load_path is not None and binary_sha is not None and network_sha is not None:
+        if (
+            load_path is not None
+            and binary_sha is not None
+            and network_path is not None
+            and network_sha is not None
+        ):
             try:
                 verify_load_failures(
-                    load_object(load_path), binary_sha, network_sha, role, reasons
+                    load_object(load_path),
+                    binary_sha,
+                    network_path,
+                    network_sha,
+                    role,
+                    reasons,
                 )
             except (UnicodeDecodeError, ValueError) as error:
                 reasons.append(f"{role}: invalid load-failure JSON: {error}")

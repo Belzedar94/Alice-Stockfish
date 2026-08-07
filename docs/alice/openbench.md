@@ -97,8 +97,14 @@ without manual worker intervention.
 
 The aggregate shadow receipt repeats the candidate source commit and network
 SHA-256. Each preset records the release binary role and exact binary SHA-256
-used for that audit. Release evidence rejects a receipt whose source, network,
-or binary does not match the candidate manifest.
+used for that audit and references its canonical configuration artifact.
+Release evidence reopens that artifact, recomputes its SHA-256, and requires
+the official service, `ALICE` book token and frozen book hash, one shared
+runner hash, exact candidate identities, `Threads=1`, `Hash=512`,
+`Move Overhead=10`, the preset timing, color-swapped pairing, `cpuflags=[]`,
+and both adjudication rules. The three configuration identities must be
+distinct. A source, network, binary, book, runner, option, timing, pairing, or
+worker-policy mismatch blocks the shadow gate.
 
 For each 200-pair audit, preserve and report:
 
