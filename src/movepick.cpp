@@ -198,15 +198,21 @@ ExtMove* MovePicker::score(const MoveList<Type>& ml) {
 
     Color us = pos.side_to_move();
 
-    [[maybe_unused]] Bitboard threatByLesser[KING + 1];
+    [[maybe_unused]] Bitboard threatByLesser[BOARD_NB][KING + 1];
     if constexpr (Type == QUIETS)
     {
-        threatByLesser[PAWN]   = 0;
-        threatByLesser[KNIGHT] = threatByLesser[BISHOP] = pos.attacks_by<PAWN>(~us);
-        threatByLesser[ROOK] =
-          pos.attacks_by<KNIGHT>(~us) | pos.attacks_by<BISHOP>(~us) | threatByLesser[KNIGHT];
-        threatByLesser[QUEEN] = pos.attacks_by<ROOK>(~us) | threatByLesser[ROOK];
-        threatByLesser[KING]  = 0;
+        for (Board b : {BOARD_A, BOARD_B})
+        {
+            threatByLesser[b][PAWN] = 0;
+            threatByLesser[b][KNIGHT] = threatByLesser[b][BISHOP] =
+              pos.attacks_by<PAWN>(~us, b);
+            threatByLesser[b][ROOK] = pos.attacks_by<KNIGHT>(~us, b)
+                                    | pos.attacks_by<BISHOP>(~us, b)
+                                    | threatByLesser[b][KNIGHT];
+            threatByLesser[b][QUEEN] =
+              pos.attacks_by<ROOK>(~us, b) | threatByLesser[b][ROOK];
+            threatByLesser[b][KING] = 0;
+        }
     }
 
     ExtMove* it = cur;
@@ -241,7 +247,10 @@ ExtMove* MovePicker::score(const MoveList<Type>& ml) {
 
             // penalty for moving to a square threatened by a lesser piece
             // or bonus for escaping an attack by a lesser piece.
-            int v = 20 * (bool(threatByLesser[pt] & from) - bool(threatByLesser[pt] & to));
+            const Board source  = pos.board_of(from);
+            const Board arrival = opposite(source);
+            int v = 20 * (bool(threatByLesser[source][pt] & from)
+                          - bool(threatByLesser[arrival][pt] & to));
             m.value += PieceValue[pt] * v;
 
 

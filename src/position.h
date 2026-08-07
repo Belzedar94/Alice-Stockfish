@@ -147,6 +147,8 @@ class Position {
     void     update_slider_blockers(Color c) const;
     template<PieceType Pt>
     Bitboard attacks_by(Color c) const;
+    template<PieceType Pt>
+    Bitboard attacks_by(Color c, Board b) const;
 
     // Properties of moves
     bool  legal(Move m) const;
@@ -354,6 +356,23 @@ inline Bitboard Position::attacks_by(Color c) const {
         Bitboard attackers = pieces(c, Pt);
         while (attackers)
             threats |= Attacks::attacks_bb<Pt>(pop_lsb(attackers), pieces());
+        return threats;
+    }
+}
+
+template<PieceType Pt>
+inline Bitboard Position::attacks_by(Color c, Board b) const {
+
+    if constexpr (Pt == PAWN)
+        return c == WHITE ? pawn_attacks_bb<WHITE>(pieces_on(b, WHITE, PAWN))
+                          : pawn_attacks_bb<BLACK>(pieces_on(b, BLACK, PAWN));
+    else
+    {
+        Bitboard threats   = 0;
+        Bitboard attackers = pieces_on(b, c, Pt);
+        Bitboard occupied  = occupancy_on(b);
+        while (attackers)
+            threats |= Attacks::attacks_bb<Pt>(pop_lsb(attackers), occupied);
         return threats;
     }
 }
