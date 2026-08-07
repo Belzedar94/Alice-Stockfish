@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-pair-request-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "evidence_directory": {"minLength": 1, "type": "string"},
+    "opening": {
+      "additionalProperties": false,
+      "properties": {
+        "book_line": {"minimum": 1, "type": "integer"},
+        "fen": {"minLength": 1, "type": "string"},
+        "fen_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        "raw_line_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["book_line", "raw_line_sha256", "fen", "fen_sha256"],
+      "type": "object"
+    },
+    "pair_ordinal": {"minimum": 0, "type": "integer"},
+    "schema": {"const": "alice-pair-request-v1"}
+  },
+  "required": ["schema", "pair_ordinal", "opening", "evidence_directory"],
+  "type": "object"
+}

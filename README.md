@@ -14,6 +14,42 @@ independent rules authority. The current correctness-first search can use its
 frozen Alice network through a strict compatibility bridge with exact
 full-refresh and incremental evaluation paths.
 
+AliceNative-v1 networks use a separate authenticated wire format with
+board-relative `SAME/OTHER` features and board-local threats. A native file is
+selected explicitly; an incompatible, corrupt, missing, or identity-mismatched
+file stops evaluation instead of selecting another backend:
+
+```text
+setoption name Alice Native SHA256 value <whole-file-sha256>
+setoption name Alice Native EvalFile value <path-to-native-network>
+setoption name Alice Evaluation value Native
+```
+
+`Alice Evaluation` also accepts `Legacy` and `Zero`. The historical
+`Use NNUE=false` setting remains a compatibility alias that forces the
+deterministic zero diagnostic backend. Native load and evaluation status
+includes the exact generation and SHA-256.
+
+## Verification and release state
+
+Rules, executable, native-wire, integer-inference, and acceptance-contract tests
+are part of the repository workflow. Run one local acceptance control from a
+pinned definition and a new evidence directory:
+
+```text
+python -m tools.alice_acceptance \
+  --definition <absolute-definition.json> \
+  --evidence-root <new-absolute-directory>
+```
+
+The exact-LOS and fixed 400/300/200 batteries are separate. Exact LOS at all
+three time controls comes first; the fixed battery is run only to measure Elo
+when preparing a release. A release remains blocked until a trained
+AliceNative-v1 network, exact parity receipts, both local batteries, four
+release binaries, triple bench, negative load probes, and official OpenBench
+shadow audits are all present. The public contracts and commands are listed in
+the [engineering dossier](docs/alice/README.md).
+
 ---
 
 <div align="center">

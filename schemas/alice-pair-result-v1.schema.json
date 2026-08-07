@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-pair-result-v1.schema.json",
+  "$defs": {
+    "classification": {
+      "enum": [
+        "SCORABLE_NATURAL",
+        "SCORABLE_CLOCK",
+        "OPERATIONAL_ABORT",
+        "PROTOCOL_ABORT",
+        "SEMANTIC_ABORT",
+        "EVIDENCE_ABORT",
+        "POLICY_ABORT",
+        "UNKNOWN_ABORT"
+      ]
+    },
+    "game": {
+      "additionalProperties": false,
+      "properties": {
+        "failure_code": {"type": "string"},
+        "failure_stage": {"type": "string"},
+        "final_valid_position": {
+          "additionalProperties": false,
+          "properties": {
+            "moves": {"items": {"type": "string"}, "type": "array"},
+            "root_fen": {"minLength": 1, "type": "string"}
+          },
+          "required": ["root_fen", "moves"],
+          "type": "object"
+        },
+        "game_number": {"enum": [1, 2]},
+        "offending_move": {"type": "string"},
+        "outcome_class": {"$ref": "#/$defs/classification"},
+        "reason": {"type": "string"},
+        "result": {"enum": ["1-0", "0-1", "1/2-1/2"]},
+        "termination": {"type": "string"}
+      },
+      "required": [
+        "game_number",
+        "result",
+        "outcome_class",
+        "reason",
+        "termination",
+        "failure_code",
+        "failure_stage",
+        "offending_move",
+        "final_valid_position"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "evidence_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "game_classes": {
+      "items": {"$ref": "#/$defs/classification"},
+      "maxItems": 2,
+      "minItems": 2,
+      "type": "array"
+    },
+    "game_scores": {
+      "items": {"enum": [0, 0.5, 1, null]},
+      "maxItems": 2,
+      "minItems": 2,
+      "type": "array"
+    },
+    "games": {
+      "items": {"$ref": "#/$defs/game"},
+      "maxItems": 2,
+      "minItems": 2,
+      "type": "array"
+    },
+    "ordinal": {"minimum": 0, "type": "integer"},
+    "schema": {"const": "alice-pair-result-v1"}
+  },
+  "required": [
+    "schema",
+    "ordinal",
+    "game_classes",
+    "game_scores",
+    "games",
+    "evidence_sha256"
+  ],
+  "type": "object"
+}

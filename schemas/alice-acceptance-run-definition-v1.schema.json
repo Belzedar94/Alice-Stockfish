@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-acceptance-run-definition-v1.schema.json",
+  "$defs": {
+    "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+  },
+  "additionalProperties": false,
+  "properties": {
+    "book": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {"minLength": 1, "type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "required": ["path", "sha256"],
+      "type": "object"
+    },
+    "control": {"enum": ["VSTC", "STC", "LTC"]},
+    "mode": {"enum": ["exact-los", "fixed-final"]},
+    "pair_worker": {
+      "additionalProperties": false,
+      "properties": {
+        "core": {"minLength": 1, "type": "string"},
+        "core_sha256": {"$ref": "#/$defs/sha256"},
+        "definition": {"minLength": 1, "type": "string"},
+        "definition_sha256": {"$ref": "#/$defs/sha256"},
+        "request_timeout_seconds": {"exclusiveMinimum": 0, "type": "number"},
+        "script": {"minLength": 1, "type": "string"},
+        "script_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "required": [
+        "script",
+        "script_sha256",
+        "core",
+        "core_sha256",
+        "definition",
+        "definition_sha256",
+        "request_timeout_seconds"
+      ],
+      "type": "object"
+    },
+    "run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "schema": {"const": "alice-acceptance-run-definition-v1"},
+    "seed": {"maximum": 18446744073709551615, "minimum": 0, "type": "integer"}
+  },
+  "required": ["schema", "run_id", "control", "mode", "seed", "book", "pair_worker"],
+  "type": "object"
+}

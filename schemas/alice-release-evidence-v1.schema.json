@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-release-evidence-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {"type": "object"},
+    "blocking_reasons": {"items": {"type": "string"}, "type": "array"},
+    "publication_performed": {"const": false},
+    "receipt_sha256": {"type": "object"},
+    "release_id": {"minLength": 1, "type": "string"},
+    "schema": {"const": "alice-release-evidence-v1"},
+    "source_commit": {"pattern": "^[0-9a-f]{40}$", "type": "string"},
+    "status": {"enum": ["ready", "blocked"]},
+    "strength_release_authorized": {"type": "boolean"}
+  },
+  "required": [
+    "schema",
+    "release_id",
+    "source_commit",
+    "status",
+    "strength_release_authorized",
+    "blocking_reasons",
+    "artifacts",
+    "receipt_sha256",
+    "publication_performed"
+  ],
+  "type": "object"
+}

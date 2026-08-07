@@ -35,6 +35,7 @@
 #include "misc.h"
 #include "history.h"
 #include "legacy_alice_nnue.h"
+#include "nnue/alice_native/alice_native_network.h"
 #include "nnue/network.h"
 #include "nnue/nnue_misc.h"
 #include "numa.h"
@@ -89,6 +90,7 @@ class Engine {
     void set_on_iter(std::function<void(const InfoIter&)>&&);
     void set_on_bestmove(std::function<void(std::string_view, std::string_view)>&&);
     void set_on_start(std::function<void()>&&);
+    void set_on_search_error(std::function<void(std::string_view)>&&);
     void set_on_verify_network(std::function<void(std::string_view)>&&);
 
     // network related
@@ -98,6 +100,23 @@ class Engine {
     // utility functions
 
     std::optional<std::string> trace_eval() const;
+    std::optional<std::string> verify_search_contract(std::string& report);
+    std::string                trace_native_features();
+    std::optional<std::string> verify_native_incremental(Depth depth, std::string& report);
+    std::optional<std::string>
+                               validate_native_wire(const std::filesystem::path&      file,
+                                                    const std::optional<std::string>& expectedSha256 = {});
+    std::string                native_wire_status() const;
+    std::optional<std::string> load_native_qualification(const std::filesystem::path& file,
+                                                         std::string_view expectedSha256);
+    std::string                native_qualification_status() const;
+    std::string                native_tensor_status() const;
+    std::optional<std::string>
+    probe_native_parameter(std::string_view tensor, u64 index, std::string& report) const;
+    std::optional<std::string> trace_native_integer(std::string& report);
+    std::optional<std::string> verify_loaded_native_incremental(Depth depth, std::string& report);
+    std::optional<std::string> verify_native_search_session(Depth depth, std::string& report);
+    std::optional<std::string> verify_native_lease(std::string& report);
     std::optional<std::string> verify_legacy_incremental(Depth depth, u64& positions);
 
     const OptionsMap& get_options() const;
@@ -125,8 +144,11 @@ class Engine {
     TranspositionTable                                tt;
     LazyNumaReplicatedSystemWide<Eval::NNUE::Network> network;
     LegacyAliceExact                                  legacyEvaluator;
+    Eval::NNUE::AliceNative::WireValidator            nativeWireValidator;
+    Eval::NNUE::AliceNative::QualificationNetwork     nativeQualification;
 
     Search::SearchManager::UpdateContext  updateContext;
+    std::function<void(std::string_view)> onSearchError;
     std::function<void(std::string_view)> onVerifyNetwork;
     std::map<NumaIndex, SharedHistories>  sharedHists;
 
@@ -135,6 +157,9 @@ class Engine {
     std::atomic_bool alicePondering{false};
 
     std::optional<std::string> configure_legacy_network(const std::filesystem::path&);
+    std::optional<std::string> configure_native_network();
+    std::optional<Eval::NNUE::AliceNative::QualificationNetwork::Lease>
+    lease_native_network(std::string& error) const;
 };
 
 }  // namespace Stockfish

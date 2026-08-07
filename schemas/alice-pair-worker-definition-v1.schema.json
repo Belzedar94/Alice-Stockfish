@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-pair-worker-definition-v1.schema.json",
+  "$defs": {
+    "engine": {
+      "additionalProperties": false,
+      "properties": {
+        "binary_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        "cwd": {"minLength": 1, "type": "string"},
+        "evaluator": {"enum": ["Legacy", "Native", "Zero"]},
+        "name": {"minLength": 1, "type": "string"},
+        "network_path": {"minLength": 1, "type": "string"},
+        "network_sha256": {
+          "oneOf": [
+            {"const": ""},
+            {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+          ]
+        },
+        "options": {
+          "additionalProperties": {"type": "string"},
+          "properties": {
+            "Hash": {"const": "512"},
+            "Move Overhead": {"const": "10"},
+            "Threads": {"const": "1"}
+          },
+          "required": ["Threads", "Hash", "Move Overhead"],
+          "type": "object"
+        },
+        "path": {"minLength": 1, "type": "string"},
+        "time_control": {"enum": ["2+0.02", "10+0.1", "30+0.3"]}
+      },
+      "required": [
+        "path",
+        "binary_sha256",
+        "cwd",
+        "name",
+        "evaluator",
+        "network_sha256",
+        "time_control",
+        "options"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "engines": {
+      "items": {"$ref": "#/$defs/engine"},
+      "maxItems": 2,
+      "minItems": 2,
+      "type": "array"
+    },
+    "fixed_budget_seconds": {"exclusiveMinimum": 0, "type": "number"},
+    "max_plies": {"minimum": 1, "type": "integer"},
+    "schema": {"const": "alice-pair-worker-definition-v1"},
+    "stall_grace_seconds": {"exclusiveMinimum": 0, "type": "number"}
+  },
+  "required": ["schema", "engines"],
+  "type": "object"
+}

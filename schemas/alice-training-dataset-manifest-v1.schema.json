@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-training-dataset-manifest-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "position_count": {"minimum": 1, "type": "integer"},
+    "schema": {"const": "alice-training-dataset-manifest-v1"},
+    "split_seed": {"minimum": 0, "type": "integer"},
+    "train_position_count": {"minimum": 1, "type": "integer"},
+    "training_run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    },
+    "validation_position_count": {"minimum": 1, "type": "integer"}
+  },
+  "required": [
+    "schema",
+    "training_run_id",
+    "position_count",
+    "train_position_count",
+    "validation_position_count",
+    "split_seed"
+  ],
+  "type": "object"
+}

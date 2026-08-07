@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-triple-bench-v1.schema.json",
+  "$defs": {
+    "reference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {"minLength": 1, "type": "string"},
+        "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["path", "sha256"],
+      "type": "object"
+    },
+    "run": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {"$ref": "#/$defs/reference"},
+        "exit_code": {"const": 0, "type": "integer"},
+        "ordinal": {"maximum": 2, "minimum": 0, "type": "integer"},
+        "stdout": {"$ref": "#/$defs/reference"}
+      },
+      "required": ["ordinal", "command", "stdout", "exit_code"],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "binary_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "network_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "runs": {
+      "items": {"$ref": "#/$defs/run"},
+      "maxItems": 3,
+      "minItems": 3,
+      "type": "array"
+    },
+    "schema": {"const": "alice-triple-bench-v1"}
+  },
+  "required": ["schema", "binary_sha256", "network_sha256", "runs"],
+  "type": "object"
+}

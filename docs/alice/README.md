@@ -23,6 +23,10 @@ must be backed by a reproducible receipt.
 - [Legacy implementation audit](legacy-audit.md)
 - [Legacy NNUE compatibility](legacy-nnue-compatibility.md)
 - [Local measurement protocol](measurement.md)
+- [Local acceptance runner](acceptance-runner.md)
+- [Final acceptance gate](final-gate.md)
+- [Release evidence](release-evidence.md)
+- [Training storage preflight](training-storage.md)
 - [OpenBench integration](openbench.md)
 - [Native Alice NNUE](native-nnue.md)
 

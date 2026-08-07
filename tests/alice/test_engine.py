@@ -151,6 +151,12 @@ class EngineFixtureTests(unittest.TestCase):
         cls.document = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
         cls.cases = cls.document["cases"]
 
+    def test_build_provenance_is_clean(self) -> None:
+        result = run_engine("compiler")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Source tree state          : clean", result.stdout)
+        self.assertNotIn("Source tree state          : dirty", result.stdout)
+
     def test_all_fixture_positions_parse_and_round_trip(self) -> None:
         valid: dict[str, tuple[str, str]] = {}
         invalid: dict[str, str] = {}
@@ -308,6 +314,10 @@ class EngineFixtureTests(unittest.TestCase):
             session.send("uci")
             session.wait_for(r"^uciok$")
             self.assertTrue(any("option name EvalFile" in line for line in session.lines))
+            self.assertIn(
+                "option name Alice Evaluation type combo default Legacy var Native var Zero",
+                session.lines,
+            )
             session.send("setoption name Use NNUE value false")
 
             for _ in range(2):
@@ -326,6 +336,16 @@ class EngineFixtureTests(unittest.TestCase):
             self.assertEqual(searches[0], searches[1])
             self.assertEqual(searches[0], ("bestmove a2a3 ponder a7a6", "a2a3 a7a6 b2b3"))
             self.assertNotIn("NNUE evaluation using", "\n".join(session.lines))
+
+    def test_search_evaluator_contract_fails_closed_and_unwinds(self) -> None:
+        result = run_engine("alice_search_verify_contract")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertRegex(
+            result.stdout,
+            r"alice_search contract verified cases 5 balanced_pushes \d+ "
+            r"balanced_pops \d+ balanced_evaluations \d+ injected_failures 3 "
+            r"stopped_cases 1 root_restorations 5",
+        )
 
     def test_safe_search_finds_an_alice_mate_in_one(self) -> None:
         fen = "8/6|Q1/8/8/8/8/k7/2K5 w - - 0 1"
@@ -368,9 +388,26 @@ class EngineFixtureTests(unittest.TestCase):
             bestmove = session.wait_for(r"^bestmove ")
             self.assertEqual(bestmove, "bestmove (none)")
             self.assertTrue(any("score mate 0" in line for line in session.lines))
+            self.assertIn(
+                "info string alice_result result=1-0 reason=checkmate",
+                session.lines,
+            )
 
             session.send("eval")
             session.wait_for(r"^legacy_nnue raw 0 adjusted 0$")
+
+    def test_rule_draw_reports_an_explicit_terminal_record(self) -> None:
+        rule_draw = START_FEN.replace(" 0 1", " 100 1")
+        with UciSession() as session:
+            session.send("setoption name Use NNUE value false")
+            session.send(f"position fen {rule_draw}")
+            session.send("go depth 3")
+            terminal = session.wait_for(r"^info string alice_result ")
+            self.assertEqual(
+                terminal,
+                "info string alice_result result=1/2-1/2 reason=rule_draw",
+            )
+            self.assertEqual(session.wait_for(r"^bestmove "), "bestmove (none)")
 
     def test_normal_search_without_a_network_fails_closed(self) -> None:
         result = run_engine("position startpos", "go depth 1")
