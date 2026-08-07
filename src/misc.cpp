@@ -260,6 +260,13 @@ std::string compiler_info() {
     compiler += "(undefined source commit)";
 #endif
 
+    compiler += "\nSource tree state          : ";
+#if defined(GIT_DIFFINDEX)
+    compiler += "dirty";
+#else
+    compiler += "clean";
+#endif
+
     compiler += "\nCompilation settings       : ";
     compiler += (Is64Bit ? "64bit" : "32bit");
 #if defined(USE_AVX512ICL)

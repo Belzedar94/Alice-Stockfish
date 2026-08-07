@@ -31,7 +31,9 @@ def write_json(path: Path, value: dict[str, object]) -> None:
     write_create_only_json(path, value)
 
 
-def write_test_binary(path: Path, role: str, source_commit: str) -> None:
+def write_test_binary(
+    path: Path, role: str, source_commit: str, source_tree_state: str = "clean"
+) -> None:
     executable_format, architecture = alice_release_evidence.BINARY_ROLE_REQUIREMENTS[
         role
     ]
@@ -53,7 +55,7 @@ def write_test_binary(path: Path, role: str, source_commit: str) -> None:
     payload.extend(
         (
             f"\x00{role}\x00{architecture}\x00{platform_marker}\x00"
-            f"{source_commit}\x00"
+            f"{source_commit}\x00Source tree state          : {source_tree_state}\x00"
         ).encode("ascii")
     )
     path.write_bytes(payload)
@@ -470,6 +472,37 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "declared full source commit" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_binary_from_dirty_source_tree_blocks_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            binary_entry = value["binaries"][1]
+            binary_path = Path(binary_entry["artifact"]["path"])
+            write_test_binary(
+                binary_path,
+                binary_entry["role"],
+                value["source_commit"],
+                source_tree_state="dirty",
+            )
+            binary_sha = sha256_file(binary_path)
+            binary_entry["artifact"]["sha256"] = binary_sha
+            for field in ("triple_bench", "load_failures"):
+                evidence_path = Path(binary_entry[field]["path"])
+                evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                evidence["binary_sha256"] = binary_sha
+                evidence_path.write_bytes(canonical_json_bytes(evidence))
+                binary_entry[field]["sha256"] = sha256_file(evidence_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "dirty source-tree marker" in reason
                 for reason in receipt["blocking_reasons"]
             )
         )

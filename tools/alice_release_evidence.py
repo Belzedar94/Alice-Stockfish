@@ -180,6 +180,10 @@ def verify_binary_role(
         reasons.append(
             f"{role}: binary does not embed the declared full source commit"
         )
+    if file_contains(path, b"Source tree state          : dirty"):
+        reasons.append(f"{role}: binary embeds a dirty source-tree marker")
+    if not file_contains(path, b"Source tree state          : clean"):
+        reasons.append(f"{role}: binary was not built from a clean source tree")
     other_architecture = (
         "x86-64-avx2" if expected_architecture == "x86-64-bmi2" else "x86-64-bmi2"
     )

@@ -151,6 +151,12 @@ class EngineFixtureTests(unittest.TestCase):
         cls.document = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
         cls.cases = cls.document["cases"]
 
+    def test_build_provenance_is_clean(self) -> None:
+        result = run_engine("compiler")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Source tree state          : clean", result.stdout)
+        self.assertNotIn("Source tree state          : dirty", result.stdout)
+
     def test_all_fixture_positions_parse_and_round_trip(self) -> None:
         valid: dict[str, tuple[str, str]] = {}
         invalid: dict[str, str] = {}
