@@ -396,7 +396,7 @@ namespace Stockfish::Benchmark {
 // where to look for positions in FEN format, and the type of the limit:
 // depth, perft, nodes and movetime (in milliseconds). Examples:
 //
-// bench                            : search default Alice positions up to depth 3
+// bench                            : search default Alice positions up to depth 10
 // bench 64 1 4                     : search default Alice positions up to depth 4 (TT = 64MB)
 // bench 64 1 100000 default nodes  : search default positions for 100K nodes each
 // bench 64 4 5000 current movetime : search current position with 4 threads for 5 sec
@@ -409,7 +409,7 @@ std::vector<std::string> setup_bench(const std::string& currentFen, std::istream
     // Assign default values to missing arguments
     std::string ttSize    = (is >> token) ? token : "16";
     std::string threads   = (is >> token) ? token : "1";
-    std::string limit     = (is >> token) ? token : "3";
+    std::string limit     = (is >> token) ? token : "10";
     std::string fenFile   = (is >> token) ? token : "default";
     std::string limitType = (is >> token) ? token : "depth";
 

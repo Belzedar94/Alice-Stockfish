@@ -32,6 +32,7 @@
 #include <cstring>
 
 #include "history.h"
+#include "legacy_alice_nnue.h"
 #include "misc.h"
 #include "nnue/nnue_accumulator.h"
 #include "numa.h"
@@ -187,18 +188,21 @@ struct SharedState {
                 ThreadPool&                                              threadPool,
                 TranspositionTable&                                      transpositionTable,
                 std::map<NumaIndex, SharedHistories>&                    sharedHists,
-                const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& net) :
+                const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& net,
+                const LegacyAliceExact&                                  legacy) :
         options(optionsMap),
         threads(threadPool),
         tt(transpositionTable),
         sharedHistories(sharedHists),
-        network(net) {}
+        network(net),
+        legacyEvaluator(legacy) {}
 
     const OptionsMap&                                        options;
     ThreadPool&                                              threads;
     TranspositionTable&                                      tt;
     std::map<NumaIndex, SharedHistories>&                    sharedHistories;
     const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
+    const LegacyAliceExact&                                  legacyEvaluator;
 };
 
 class Worker;
@@ -408,10 +412,12 @@ class Worker {
     ThreadPool&                                              threads;
     TranspositionTable&                                      tt;
     const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
+    const LegacyAliceExact&                                  legacyEvaluator;
 
     // Used by NNUE
-    Eval::NNUE::AccumulatorStack  accumulatorStack;
-    Eval::NNUE::AccumulatorCaches refreshTable;
+    Eval::NNUE::AccumulatorStack                   accumulatorStack;
+    Eval::NNUE::AccumulatorCaches                  refreshTable;
+    std::unique_ptr<LegacyAliceExact::Accumulator> legacyAccumulator;
 
     friend class Stockfish::ThreadPool;
     friend class SearchManager;

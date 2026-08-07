@@ -429,93 +429,6 @@ parse_alice_fen(const std::string& fen, bool isChess960, ParsedAliceFen& parsed)
     return validate_alice_castling(parsed);
 }
 
-struct AliceSnapshot {
-    std::array<Piece, SQUARE_NB> cells{};
-    Bitboard                     boardB = 0;
-
-    Piece piece_on(Board layer, Square square) const {
-        const Piece piece = cells[square];
-        if (piece == NO_PIECE)
-            return NO_PIECE;
-        return bool(boardB & square) == (layer == BOARD_B) ? piece : NO_PIECE;
-    }
-
-    Board board_of(Square square) const {
-        assert(cells[square] != NO_PIECE);
-        return boardB & square ? BOARD_B : BOARD_A;
-    }
-
-    Bitboard occupancy_on(Board layer) const {
-        Bitboard occupied = 0;
-        for (Square square = SQ_A1; square <= SQ_H8; ++square)
-            if (piece_on(layer, square) != NO_PIECE)
-                occupied |= square;
-        return occupied;
-    }
-
-    void remove(Square square) {
-        cells[square] = NO_PIECE;
-        boardB &= ~square_bb(square);
-    }
-
-    void put(Piece piece, Square square, Board layer) {
-        assert(cells[square] == NO_PIECE);
-        cells[square] = piece;
-        boardB &= ~square_bb(square);
-        if (layer == BOARD_B)
-            boardB |= square;
-    }
-
-    void transfer(Square square) {
-        assert(cells[square] != NO_PIECE);
-        boardB ^= square;
-    }
-};
-
-AliceSnapshot alice_snapshot(const Position& pos) {
-    AliceSnapshot snapshot;
-    snapshot.cells = pos.piece_array();
-
-    Bitboard occupied = pos.pieces();
-    while (occupied)
-    {
-        const Square square = pop_lsb(occupied);
-        if (pos.board_of(square) == BOARD_B)
-            snapshot.boardB |= square;
-    }
-    return snapshot;
-}
-
-bool alice_square_attacked(const AliceSnapshot& snapshot,
-                           Square               target,
-                           Board                layer,
-                           Color                byColor) {
-    const Bitboard occupied = snapshot.occupancy_on(layer);
-    for (Square source = SQ_A1; source <= SQ_H8; ++source)
-    {
-        const Piece piece = snapshot.piece_on(layer, source);
-        if (piece == NO_PIECE || color_of(piece) != byColor)
-            continue;
-
-        const Bitboard attacks = type_of(piece) == PAWN
-                                 ? Attacks::attacks_bb<PAWN>(source, byColor)
-                                 : Attacks::attacks_bb(type_of(piece), source, occupied);
-        if (attacks & target)
-            return true;
-    }
-    return false;
-}
-
-bool alice_in_check(const AliceSnapshot& snapshot, Color color) {
-    const Piece king = make_piece(color, KING);
-    for (Square square = SQ_A1; square <= SQ_H8; ++square)
-        if (snapshot.cells[square] == king)
-            return alice_square_attacked(snapshot, square, snapshot.board_of(square), ~color);
-
-    assert(false && "Alice snapshot has no king");
-    return true;
-}
-
 struct AliceCastlingLayout {
     Square rookFrom;
     Square transit;
@@ -530,54 +443,6 @@ AliceCastlingLayout alice_castling_layout(Color color, Move move) {
             relative_square(color, kingSide ? SQ_F1 : SQ_D1)};
 }
 
-AliceSnapshot alice_ordinary_provisional(const AliceSnapshot& initial, Move move) {
-    AliceSnapshot provisional = initial;
-    const Square  from        = move.from_sq();
-    const Square  to          = move.to_sq();
-    const Piece   mover       = provisional.cells[from];
-    const Board   source      = provisional.board_of(from);
-    Piece         result      = mover;
-
-    if (move.type_of() == PROMOTION)
-        result = make_piece(color_of(mover), move.promotion_type());
-
-    provisional.remove(from);
-    if (provisional.cells[to] != NO_PIECE)
-        provisional.remove(to);
-    provisional.put(result, to, source);
-    return provisional;
-}
-
-AliceSnapshot alice_castling_provisional(const AliceSnapshot& initial,
-                                         Move                 move,
-                                         Color                color,
-                                         AliceCastlingLayout  layout) {
-    AliceSnapshot provisional = initial;
-    const Board   source      = provisional.board_of(move.from_sq());
-    provisional.remove(move.from_sq());
-    provisional.remove(layout.rookFrom);
-    provisional.put(make_piece(color, KING), layout.kingTo, source);
-    provisional.put(make_piece(color, ROOK), layout.rookTo, source);
-    return provisional;
-}
-
-AliceSnapshot alice_final_snapshot(const Position& pos, Move move) {
-    AliceSnapshot initial = alice_snapshot(pos);
-    const Color   mover   = pos.side_to_move();
-
-    if (move.type_of() == CASTLING)
-    {
-        const AliceCastlingLayout layout = alice_castling_layout(mover, move);
-        AliceSnapshot             final  = alice_castling_provisional(initial, move, mover, layout);
-        final.transfer(layout.kingTo);
-        final.transfer(layout.rookTo);
-        return final;
-    }
-
-    AliceSnapshot final = alice_ordinary_provisional(initial, move);
-    final.transfer(move.to_sq());
-    return final;
-}
 }  // namespace
 
 
@@ -1258,48 +1123,65 @@ bool Position::legal(Move m) const {
     if (mover == NO_PIECE || color_of(mover) != us)
         return false;
 
-    const AliceSnapshot initial = alice_snapshot(*this);
+    const auto attacked = [&](Square target, Board layer, Bitboard occupied,
+                              Bitboard removedEnemy = 0) {
+        return bool(attackers_to(target, layer, occupied) & pieces_on(layer, ~us) & ~removedEnemy);
+    };
 
     if (m.type_of() == CASTLING)
     {
-        const AliceCastlingLayout layout = alice_castling_layout(us, m);
-        const Board               source = initial.board_of(from);
-        if (type_of(mover) != KING
-            || initial.piece_on(source, layout.rookFrom) != make_piece(us, ROOK)
-            || alice_in_check(initial, us))
+        const AliceCastlingLayout layout  = alice_castling_layout(us, m);
+        const Board               source  = board_of(from);
+        const Board               arrival = opposite(source);
+        if (type_of(mover) != KING || piece_on(source, layout.rookFrom) != make_piece(us, ROOK)
+            || checkers() || !empty(layout.transit) || !empty(layout.kingTo)
+            || !empty(layout.rookTo))
             return false;
 
-        AliceSnapshot transit = initial;
-        transit.remove(from);
-        if (transit.cells[layout.transit] != NO_PIECE)
-            return false;
-        transit.put(mover, layout.transit, source);
-        if (alice_in_check(transit, us))
+        Bitboard transit = (occupancy_on(source) & ~square_bb(from)) | layout.transit;
+        if (attacked(layout.transit, source, transit))
             return false;
 
-        AliceSnapshot provisional = alice_castling_provisional(initial, m, us, layout);
-        if (alice_in_check(provisional, us))
+        Bitboard provisional =
+          occupancy_on(source) & ~square_bb(from) & ~square_bb(layout.rookFrom);
+        provisional |= layout.kingTo | layout.rookTo;
+        if (attacked(layout.kingTo, source, provisional))
             return false;
 
-        provisional.transfer(layout.kingTo);
-        provisional.transfer(layout.rookTo);
-        return !alice_in_check(provisional, us);
+        const Bitboard finalOccupancy = occupancy_on(arrival) | layout.kingTo | layout.rookTo;
+        return !attacked(layout.kingTo, arrival, finalOccupancy);
     }
 
     const Square to = m.to_sq();
     if (!is_ok(to))
         return false;
 
-    AliceSnapshot provisional = alice_ordinary_provisional(initial, m);
-    const Board   source      = initial.board_of(from);
-    const Piece   king        = make_piece(us, KING);
-    for (Square square = SQ_A1; square <= SQ_H8; ++square)
-        if (provisional.cells[square] == king && provisional.board_of(square) == source
-            && alice_in_check(provisional, us))
-            return false;
+    const Board    source       = board_of(from);
+    const Board    arrival      = opposite(source);
+    const bool     capture      = !empty(to);
+    const Bitboard removedEnemy = capture ? square_bb(to) : Bitboard(0);
+    const Square   currentKing  = square<KING>(us);
+    const Board    currentLayer = board_of(currentKing);
 
-    provisional.transfer(to);
-    return !alice_in_check(provisional, us);
+    if (currentLayer == source)
+    {
+        const Square provisionalKing = type_of(mover) == KING ? to : currentKing;
+        Bitboard     provisional     = occupancy_on(source) & ~square_bb(from) & ~removedEnemy;
+        provisional |= to;
+        if (attacked(provisionalKing, source, provisional, removedEnemy))
+            return false;
+    }
+
+    const Square finalKing      = type_of(mover) == KING ? to : currentKing;
+    const Board  finalLayer     = type_of(mover) == KING ? arrival : currentLayer;
+    Bitboard     finalOccupancy = occupancy_on(finalLayer);
+    if (finalLayer == source)
+        finalOccupancy &= ~square_bb(from) & ~removedEnemy;
+    if (finalLayer == arrival)
+        finalOccupancy |= to;
+
+    return !attacked(finalKing, finalLayer, finalOccupancy,
+                     finalLayer == source ? removedEnemy : Bitboard(0));
 }
 
 
@@ -1307,14 +1189,115 @@ bool Position::legal(Move m) const {
 // pseudo-legal. It is used to validate moves from TT that can be corrupted
 // due to SMP concurrent access or hash position key aliasing.
 bool Position::pseudo_legal(const Move m) const {
-    return m.is_ok() && MoveList<NON_EVASIONS>(*this).contains(m);
+    if (!m.is_ok() || m.type_of() == EN_PASSANT)
+        return false;
+
+    const Square from  = m.from_sq();
+    const Square to    = m.to_sq();
+    const Piece  mover = piece_on(from);
+    if (mover == NO_PIECE || color_of(mover) != sideToMove || !is_ok(to))
+        return false;
+
+    const Color us     = sideToMove;
+    const Board source = board_of(from);
+    if (m.type_of() == CASTLING)
+    {
+        if (type_of(mover) != KING || piece_on(source, to) != make_piece(us, ROOK))
+            return false;
+        const CastlingRights right = us & (to > from ? KING_SIDE : QUEEN_SIDE);
+        if (!can_castle(right))
+            return false;
+        const AliceCastlingLayout layout     = alice_castling_layout(us, m);
+        const Bitboard            sourcePath = between_bb(from, to) & ~(from | to);
+        return !(sourcePath & occupancy_on(source)) && empty(layout.kingTo) && empty(layout.rookTo);
+    }
+
+    if (!empty(to)
+        && (board_of(to) != source || color_of(piece_on(to)) == us
+            || type_of(piece_on(to)) == KING))
+        return false;
+
+    const PieceType type = type_of(mover);
+    if (type == PAWN)
+    {
+        const Rank promotionRank = relative_rank(us, RANK_8);
+        if ((rank_of(to) == promotionRank) != (m.type_of() == PROMOTION))
+            return false;
+        if (m.type_of() == PROMOTION && (m.promotion_type() < KNIGHT || m.promotion_type() > QUEEN))
+            return false;
+
+        if (!empty(to))
+            return bool(attacks_bb<PAWN>(from, us) & to);
+
+        const Direction push = pawn_push(us);
+        if (to == from + push)
+            return empty_on(source, to);
+        if (rank_of(from) == relative_rank(us, RANK_2) && to == from + 2 * push)
+            return empty_on(source, from + push) && empty_on(source, to);
+        return false;
+    }
+
+    return m.type_of() == NORMAL && bool(attacks_bb(type, from, occupancy_on(source)) & to);
 }
 
 
 // Tests whether a pseudo-legal move gives a check
 bool Position::gives_check(Move m) const {
     assert(m.is_ok() && color_of(moved_piece(m)) == sideToMove);
-    return alice_in_check(alice_final_snapshot(*this, m), ~sideToMove);
+
+    const Color  us        = sideToMove;
+    const Square king      = square<KING>(~us);
+    const Board  kingLayer = board_of(king);
+    const Square from      = m.from_sq();
+    const Board  source    = board_of(from);
+    const Board  arrival   = opposite(source);
+
+    std::array<Bitboard, PIECE_TYPE_NB> attackers{};
+    for (PieceType type : {PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING})
+        attackers[type] = pieces_on(kingLayer, us, type);
+
+    Bitboard occupied = occupancy_on(kingLayer);
+    if (m.type_of() == CASTLING)
+    {
+        const AliceCastlingLayout layout = alice_castling_layout(us, m);
+        if (kingLayer == source)
+        {
+            occupied &= ~square_bb(from) & ~square_bb(layout.rookFrom);
+            attackers[KING] &= ~square_bb(from);
+            attackers[ROOK] &= ~square_bb(layout.rookFrom);
+        }
+        if (kingLayer == arrival)
+        {
+            occupied |= layout.kingTo | layout.rookTo;
+            attackers[KING] |= layout.kingTo;
+            attackers[ROOK] |= layout.rookTo;
+        }
+    }
+    else
+    {
+        const Square    to         = m.to_sq();
+        const PieceType moverType  = type_of(moved_piece(m));
+        const PieceType resultType = m.type_of() == PROMOTION ? m.promotion_type() : moverType;
+        if (kingLayer == source)
+        {
+            occupied &= ~square_bb(from);
+            attackers[moverType] &= ~square_bb(from);
+            if (!empty(to))
+                occupied &= ~square_bb(to);
+        }
+        if (kingLayer == arrival)
+        {
+            occupied |= to;
+            attackers[resultType] |= to;
+        }
+    }
+
+    const auto [bishopAttacks, rookAttacks] = both_attacks_bb(king, occupied);
+    return bool((rookAttacks & (attackers[ROOK] | attackers[QUEEN]))
+                | (bishopAttacks & (attackers[BISHOP] | attackers[QUEEN]))
+                | (attacks_bb<PAWN>(king, ~us) & attackers[PAWN])
+                | (attacks_bb<KNIGHT>(king) & attackers[KNIGHT])
+                | (attacks_bb<KING>(king) & attackers[KING]));
 }
 
 

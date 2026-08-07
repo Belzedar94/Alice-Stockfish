@@ -29,6 +29,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(USE_AVX2)
+    #include <immintrin.h>
+#endif
+
 #include "bitboard.h"
 #include "misc.h"
 #include "position.h"
@@ -233,6 +237,7 @@ class ByteReader {
     usize                  position = 0;
 };
 
+#if !defined(USE_AVX2)
 i16 add_wrapped(i16 left, i16 right) {
     const u16 raw = u16(u16(left) + u16(right));
     i16       result;
@@ -246,6 +251,7 @@ i16 subtract_wrapped(i16 left, i16 right) {
     std::memcpy(&result, &raw, sizeof(result));
     return result;
 }
+#endif
 
 int truncate_division(int value, int divisor) { return value / divisor; }
 
@@ -297,6 +303,58 @@ std::array<i32, OutputDimensions> affine(const u8*  input,
     return output;
 }
 
+std::array<i32, 16> affine_16x1024(const u8*                        input,
+                                   const std::array<i32, 16>&       biases,
+                                   const std::array<i8, 16 * 1024>& rowMajorWeights,
+                                   const std::array<i8, 16 * 1024>& interleavedWeights) {
+#if defined(USE_AVX2)
+    (void) rowMajorWeights;
+    constexpr usize ChunkCount  = 1024 / 4;
+    constexpr usize ChunkStride = 16 * 4;
+
+    const __m256i ones    = _mm256_set1_epi16(1);
+    __m256i       sums[2] = {_mm256_loadu_si256(reinterpret_cast<const __m256i*>(biases.data())),
+                             _mm256_loadu_si256(reinterpret_cast<const __m256i*>(biases.data() + 8))};
+
+    const auto multiply_chunk = [&](usize chunk, __m256i packedInput, usize group) {
+        const auto* weights = reinterpret_cast<const __m256i*>(interleavedWeights.data()
+                                                               + chunk * ChunkStride + group * 32);
+        __m256i     product = _mm256_maddubs_epi16(packedInput, _mm256_loadu_si256(weights));
+        return product;
+    };
+
+    for (usize chunk = 0; chunk < ChunkCount; chunk += 4)
+    {
+        i32 packed[4];
+        for (usize i = 0; i < 4; ++i)
+            std::memcpy(&packed[i], input + 4 * (chunk + i), sizeof(packed[i]));
+
+        const __m256i in[4] = {_mm256_set1_epi32(packed[0]), _mm256_set1_epi32(packed[1]),
+                               _mm256_set1_epi32(packed[2]), _mm256_set1_epi32(packed[3])};
+        for (usize group = 0; group < 2; ++group)
+        {
+            __m256i product0 = multiply_chunk(chunk, in[0], group);
+            __m256i product1 = multiply_chunk(chunk + 1, in[1], group);
+            __m256i product2 = multiply_chunk(chunk + 2, in[2], group);
+            __m256i product3 = multiply_chunk(chunk + 3, in[3], group);
+            product0         = _mm256_adds_epi16(product0, product1);
+            product2         = _mm256_adds_epi16(product2, product3);
+            product0         = _mm256_madd_epi16(product0, ones);
+            product2         = _mm256_madd_epi16(product2, ones);
+            sums[group]      = _mm256_add_epi32(sums[group], _mm256_add_epi32(product0, product2));
+        }
+    }
+
+    std::array<i32, 16> output{};
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(output.data()), sums[0]);
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(output.data() + 8), sums[1]);
+    return output;
+#else
+    (void) interleavedWeights;
+    return affine<16>(input, 1024, 1024, biases.data(), rowMajorWeights.data());
+#endif
+}
+
 template<usize Size>
 std::array<u8, Size> clipped_relu(const std::array<i32, Size>& input) {
     std::array<u8, Size> output{};
@@ -320,32 +378,55 @@ void apply_feature(LegacyAccumulatorState& state,
                    const std::vector<i32>& psqtWeights) {
     assert(piece != NO_PIECE && is_ok(square));
     const Square orientedSquare = relative_square(perspective, square);
-    const usize  feature = usize(state.kingSquares[perspective]) * PieceFeatureStride
+    const usize  feature        = usize(state.kingSquares[perspective]) * PieceFeatureStride
                         + piece_feature_offset(perspective, piece) + usize(orientedSquare);
     assert(feature < FeatureDimensions);
 
     const usize weightOffset = feature * TransformedHalf;
+#if defined(USE_AVX2)
+    for (usize i = 0; i < TransformedHalf; i += 16)
+    {
+        const __m256i current = _mm256_loadu_si256(
+          reinterpret_cast<const __m256i*>(state.accumulation[perspective].data() + i));
+        const __m256i delta =
+          _mm256_loadu_si256(reinterpret_cast<const __m256i*>(weights.data() + weightOffset + i));
+        const __m256i updated =
+          add ? _mm256_add_epi16(current, delta) : _mm256_sub_epi16(current, delta);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(state.accumulation[perspective].data() + i),
+                            updated);
+    }
+#else
     for (usize i = 0; i < TransformedHalf; ++i)
         state.accumulation[perspective][i] =
           add ? add_wrapped(state.accumulation[perspective][i], weights[weightOffset + i])
               : subtract_wrapped(state.accumulation[perspective][i], weights[weightOffset + i]);
+#endif
 
     const usize psqtOffset = feature * PsqtBuckets;
+#if defined(USE_AVX2)
+    const __m256i currentPsqt =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(state.psqt[perspective].data()));
+    const __m256i psqtDelta =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(psqtWeights.data() + psqtOffset));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(state.psqt[perspective].data()),
+                        add ? _mm256_add_epi32(currentPsqt, psqtDelta)
+                            : _mm256_sub_epi32(currentPsqt, psqtDelta));
+#else
     for (usize bucket = 0; bucket < PsqtBuckets; ++bucket)
         state.psqt[perspective][bucket] +=
           add ? psqtWeights[psqtOffset + bucket] : -psqtWeights[psqtOffset + bucket];
+#endif
 }
 
-void refresh_perspective(LegacyAccumulatorState&             state,
-                         Color                               perspective,
-                         const Position&                     pos,
+void refresh_perspective(LegacyAccumulatorState&                 state,
+                         Color                                   perspective,
+                         const Position&                         pos,
                          const std::array<i16, TransformedHalf>& biases,
-                         const std::vector<i16>&              weights,
-                         const std::vector<i32>&              psqtWeights) {
+                         const std::vector<i16>&                 weights,
+                         const std::vector<i32>&                 psqtWeights) {
     state.accumulation[perspective] = biases;
     state.psqt[perspective].fill(0);
-    state.kingSquares[perspective] =
-      relative_square(perspective, pos.square<KING>(perspective));
+    state.kingSquares[perspective] = relative_square(perspective, pos.square<KING>(perspective));
 
     Bitboard occupied = pos.pieces();
     while (occupied)
@@ -355,20 +436,20 @@ void refresh_perspective(LegacyAccumulatorState&             state,
     }
 }
 
-void refresh_state(LegacyAccumulatorState&                  state,
-                   const Position&                          pos,
+void refresh_state(LegacyAccumulatorState&                 state,
+                   const Position&                         pos,
                    const std::array<i16, TransformedHalf>& biases,
-                   const std::vector<i16>&                  weights,
-                   const std::vector<i32>&                  psqtWeights) {
+                   const std::vector<i16>&                 weights,
+                   const std::vector<i32>&                 psqtWeights) {
     refresh_perspective(state, WHITE, pos, biases, weights, psqtWeights);
     refresh_perspective(state, BLACK, pos, biases, weights, psqtWeights);
 }
 
 template<typename Stack>
-Value evaluate_state(const Position&                     pos,
-                     const LegacyAccumulatorState&       state,
+Value evaluate_state(const Position&                       pos,
+                     const LegacyAccumulatorState&         state,
                      const std::array<Stack, LayerStacks>& stacks,
-                     bool                                adjusted) {
+                     bool                                  adjusted) {
     std::array<u8, TransformedInput> transformed{};
     const std::array<Color, 2>       perspectives = {pos.side_to_move(), ~pos.side_to_move()};
     for (usize p = 0; p < perspectives.size(); ++p)
@@ -378,15 +459,13 @@ Value evaluate_state(const Position&                     pos,
 
     const usize pieceCount = popcount(pos.pieces());
     assert(pieceCount > 0);
-    const usize bucket = std::min((pieceCount - 1) * 8 / 32, usize(7));
-    const i32   material =
-      truncate_division(state.psqt[perspectives[0]][bucket]
-                          - state.psqt[perspectives[1]][bucket],
-                        2);
+    const usize bucket   = std::min((pieceCount - 1) * 8 / 32, usize(7));
+    const i32   material = truncate_division(
+      state.psqt[perspectives[0]][bucket] - state.psqt[perspectives[1]][bucket], 2);
 
-    const Stack& stack = stacks[bucket];
-    const auto hidden1 = clipped_relu(affine<16>(transformed.data(), transformed.size(), 1024,
-                                                  stack.bias1.data(), stack.weight1.data()));
+    const Stack& stack   = stacks[bucket];
+    const auto   hidden1 = clipped_relu(
+      affine_16x1024(transformed.data(), stack.bias1, stack.weight1, stack.weight1Interleaved));
     const auto hidden2 = clipped_relu(
       affine<32>(hidden1.data(), hidden1.size(), 32, stack.bias2.data(), stack.weight2.data()));
     const i32 positional =
@@ -394,8 +473,7 @@ Value evaluate_state(const Position&                     pos,
 
     const int delta         = std::abs(pos.non_pawn_material(WHITE) - pos.non_pawn_material(BLACK));
     const int entertainment = adjusted && delta <= BishopValue - KnightValue ? 7 : 0;
-    const int sum =
-      ((128 - entertainment) * material + (128 + entertainment) * positional) / 128;
+    const int sum = ((128 - entertainment) * material + (128 + entertainment) * positional) / 128;
     return Value(sum / 16);
 }
 
@@ -413,6 +491,7 @@ struct LegacyAliceExact::Impl {
     struct Stack {
         std::array<i32, 16>       bias1{};
         std::array<i8, 16 * 1024> weight1{};
+        std::array<i8, 16 * 1024> weight1Interleaved{};
         std::array<i32, 32>       bias2{};
         std::array<i8, 32 * 32>   weight2{};
         i32                       bias3 = 0;
@@ -535,6 +614,12 @@ std::optional<std::string> LegacyAliceExact::load(const std::filesystem::path& f
             || !reader.read(stack.weight2) || !reader.read(stack.bias3)
             || !reader.read(stack.weight3))
             return reject("EvalFile layer-stack parameters are truncated.");
+
+        for (usize i = 0; i < stack.weight1.size(); ++i)
+        {
+            const usize interleaved = (i / 4) % (1024 / 4) * 16 * 4 + i / 1024 * 4 + i % 4;
+            stack.weight1Interleaved[interleaved] = stack.weight1[i];
+        }
     }
     if (reader.remaining() != 0)
         return reject("EvalFile has unexpected trailing data.");
@@ -591,7 +676,7 @@ std::optional<Value> LegacyAliceExact::evaluate(const Position&    pos,
     return evaluate_state(pos, accumulator.impl->states.back(), impl->stacks, adjusted);
 }
 
-void LegacyAliceExact::push(Accumulator& accumulator,
+void LegacyAliceExact::push(Accumulator&    accumulator,
                             const Position& pos,
                             const Dirties&  dirties) const {
     assert(impl->ready && !accumulator.impl->states.empty());

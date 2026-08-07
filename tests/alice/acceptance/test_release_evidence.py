@@ -306,7 +306,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 stdout = root / f"{role}-bench-{ordinal}-stdout.txt"
                 stdout.write_text(
                     f"Alice native network sha256={network_sha}\n"
-                    "Nodes searched : 162582\n",
+                    "Nodes searched : 104045\n",
                     encoding="utf-8",
                     newline="\n",
                 )
@@ -492,7 +492,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(receipt["blocking_reasons"], [])
 
     def test_triple_bench_requires_the_canonical_node_count(self) -> None:
-        for signature in ("error", "Nodes searched : 162583"):
+        for signature in ("error", "Nodes searched : 104046"):
             with (
                 self.subTest(signature=signature),
                 tempfile.TemporaryDirectory() as temporary,

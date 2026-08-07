@@ -152,10 +152,10 @@ normalized path, checksum, serialization version, and architecture as an
 interactive load. It contains no orthodox embedded network.
 
 Bare `bench` uses eight versioned Alice positions, one thread, 16 MiB of hash,
-and depth 3. Its canonical signature is:
+and depth 10. Its canonical signature is:
 
 ```text
-Nodes searched  : 162582
+Nodes searched  : 104045
 ```
 
 The positions are mirrored in `tests/alice/fixtures/bench-v1.epd`. The legacy

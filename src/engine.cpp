@@ -540,6 +540,13 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
              + (legacyEvaluator.last_error().empty() ? std::string(".")
                                                      : ": " + legacyEvaluator.last_error());
 
+    if (evaluationBackend == AliceEvaluationBackend::LEGACY && !pos.is_draw(0))
+    {
+        verify_network();
+        threads.start_thinking(options, pos, states, limits);
+        return std::nullopt;
+    }
+
     std::unique_ptr<LegacyAliceExact::Accumulator> legacyAccumulator;
     if (evaluationBackend == AliceEvaluationBackend::LEGACY)
     {
@@ -870,8 +877,8 @@ bool Engine::set_numa_config_from_option(const std::string& o) {
 
 void Engine::resize_threads() {
     threads.wait_for_search_finished();
-    threads.set(numaContext.get_numa_config(), {options, threads, tt, sharedHists, network},
-                updateContext);
+    threads.set(numaContext.get_numa_config(),
+                {options, threads, tt, sharedHists, network, legacyEvaluator}, updateContext);
 
     // Reallocate the hash with the new threadpool size
     set_tt_size(options["Hash"]);

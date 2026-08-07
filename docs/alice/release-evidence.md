@@ -11,7 +11,7 @@ A candidate manifest must bind:
 - clean 200-pair official OpenBench shadow receipts at VSTC, STC, and LTC,
   each tracking `800/4` and `40/8/10` virtual endings;
 - Windows BMI2, Windows AVX2, Linux BMI2, and Linux AVX2 binaries;
-- three distinct, authenticated `162582`-node canonical bench executions for
+- three distinct, authenticated `104045`-node canonical bench executions for
   every binary; and
 - missing, corrupt, and incompatible network probes for every binary.
 
@@ -88,7 +88,7 @@ Every triple-bench receipt references three distinct canonical command
 artifacts and three distinct raw UTF-8 stdout artifacts by absolute path and
 SHA-256. The auditor reopens every artifact, recomputes its digest, requires
 each command to bind the exact executable and network paths and hashes, and
-parses exactly one `Nodes searched : 162582` result plus the selected network
+parses exactly one `Nodes searched : 104045` result plus the selected network
 SHA-256 from each stdout. A declared signature without those authenticated
 execution artifacts cannot satisfy the release gate.
 
