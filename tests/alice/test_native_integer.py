@@ -230,12 +230,16 @@ def engine_integer_traces(network: Path, fens: list[str]) -> tuple[list[dict], s
 
 def loaded_incremental_reports(
     network: Path, cases: list[tuple[str, int]]
-) -> list[dict[str, int]]:
+) -> tuple[list[dict[str, int]], list[dict[str, int]]]:
     network_sha = file_sha256(network)
     commands = [f"alice_native_load_file {command_path(network)} {network_sha}"]
     for fen, depth in cases:
         commands.extend(
-            (f"position fen {fen}", f"alice_native_verify_loaded_incremental {depth}")
+            (
+                f"position fen {fen}",
+                f"alice_native_verify_loaded_incremental {depth}",
+                f"alice_native_verify_search_session {depth}",
+            )
         )
     commands.extend(("quit", ""))
     result = subprocess.run(
@@ -277,7 +281,33 @@ def loaded_incremental_reports(
             f"Expected {len(cases)} loaded incremental reports, got {len(reports)}.\n"
             + result.stdout[-4000:]
         )
-    return reports
+
+    session_pattern = re.compile(
+        r"^alice_native session verified generation (?P<generation>\d+) "
+        r"positions (?P<positions>\d+) transitions (?P<transitions>\d+) "
+        r"captures (?P<captures>\d+) promotions (?P<promotions>\d+) "
+        r"castlings (?P<castlings>\d+) king_moves (?P<king_moves>\d+) "
+        r"evaluations (?P<evaluations>\d+) pushes (?P<pushes>\d+) pops (?P<pops>\d+) "
+        r"refreshes (?P<white_refreshes>\d+),(?P<black_refreshes>\d+) "
+        r"piece_adds (?P<piece_adds>\d+) piece_removes (?P<piece_removes>\d+) "
+        r"threat_adds (?P<threat_adds>\d+) threat_removes (?P<threat_removes>\d+) "
+        r"max_piece_events (?P<max_piece_events>\d+) "
+        r"max_threat_events (?P<max_threat_events>\d+) "
+        r"accumulator_checks (?P<accumulator_checks>\d+) "
+        r"value_checks (?P<value_checks>\d+) undo_checks (?P<undo_checks>\d+) "
+        r"depth (?P<depth>\d+) search disabled$"
+    )
+    session_reports = [
+        {name: int(value) for name, value in match.groupdict().items()}
+        for line in result.stdout.splitlines()
+        if (match := session_pattern.match(line))
+    ]
+    if len(session_reports) != len(cases):
+        raise AssertionError(
+            f"Expected {len(cases)} search-session reports, got {len(session_reports)}.\n"
+            + result.stdout[-4000:]
+        )
+    return reports, session_reports
 
 
 class NativeIntegerTests(unittest.TestCase):
@@ -412,6 +442,30 @@ class NativeIntegerTests(unittest.TestCase):
                 "feature accumulator exceeds signed i16", incremental_overflow.stdout
             )
 
+            session_overflow = subprocess.run(
+                [str(ENGINE_PATH)],
+                input="\n".join(
+                    (
+                        f"alice_native_load_file {command_path(overflow)} {overflow_sha}",
+                        f"position fen {fen}",
+                        "alice_native_verify_search_session 0",
+                        "quit",
+                        "",
+                    )
+                ),
+                text=True,
+                capture_output=True,
+                encoding="ascii",
+                check=False,
+            )
+            self.assertNotEqual(
+                session_overflow.returncode,
+                0,
+                session_overflow.stdout + session_overflow.stderr,
+            )
+            self.assertIn("code=accumulator-out-of-range", session_overflow.stdout)
+            self.assertIn("stage=root-refresh", session_overflow.stdout)
+
             zero = directory / "zero.nnue"
             write_zero_wire(zero)
             zero_sha = file_sha256(zero)
@@ -446,6 +500,21 @@ class NativeIntegerTests(unittest.TestCase):
             self.assertNotEqual(missing.returncode, 0, missing.stdout + missing.stderr)
             self.assertIn("requires qualification parameters", missing.stdout)
 
+            missing_session = subprocess.run(
+                [str(ENGINE_PATH)],
+                input="alice_native_verify_search_session 0\nquit\n",
+                text=True,
+                capture_output=True,
+                encoding="ascii",
+                check=False,
+            )
+            self.assertNotEqual(
+                missing_session.returncode,
+                0,
+                missing_session.stdout + missing_session.stderr,
+            )
+            self.assertIn("requires qualification parameters", missing_session.stdout)
+
     def test_loaded_incremental_matches_full_refresh_after_every_transition(self) -> None:
         cases = [
             (START_FEN, 2),
@@ -460,7 +529,7 @@ class NativeIntegerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="alice-native-loaded-incremental-") as temporary:
             network = Path(temporary) / "sparse.nnue"
             build_sparse_network(network, feature_fens)
-            reports = loaded_incremental_reports(network, cases)
+            reports, session_reports = loaded_incremental_reports(network, cases)
 
         self.assertTrue(all(report["generation"] == 1 for report in reports))
         for report in reports:
@@ -495,6 +564,35 @@ class NativeIntegerTests(unittest.TestCase):
             self.assertGreater(report["white_refreshes"], 0)
         self.assertGreater(reports[6]["king_moves"], 0)
         self.assertGreater(reports[6]["white_refreshes"], 0)
+
+        for incremental, session in zip(reports, session_reports, strict=True):
+            for field in (
+                "generation",
+                "positions",
+                "transitions",
+                "captures",
+                "promotions",
+                "castlings",
+                "king_moves",
+                "white_refreshes",
+                "black_refreshes",
+                "piece_adds",
+                "piece_removes",
+                "threat_adds",
+                "threat_removes",
+                "max_piece_events",
+                "max_threat_events",
+                "depth",
+            ):
+                self.assertEqual(session[field], incremental[field], field)
+            self.assertEqual(session["evaluations"], session["positions"])
+            self.assertEqual(session["pushes"], session["transitions"])
+            self.assertEqual(session["pops"], session["transitions"])
+            self.assertEqual(session["undo_checks"], session["transitions"])
+            self.assertEqual(
+                session["accumulator_checks"], 2 * session["positions"]
+            )
+            self.assertEqual(session["value_checks"], session["positions"])
 
 
 def parse_arguments() -> tuple[argparse.Namespace, list[str]]:

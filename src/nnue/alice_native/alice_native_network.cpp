@@ -32,6 +32,7 @@
 #include "../simd.h"
 #include "alice_native_features.h"
 #include "alice_native_inference.h"
+#include "alice_native_session.h"
 
 namespace Stockfish::Eval::NNUE::AliceNative {
 
@@ -1733,6 +1734,175 @@ std::optional<std::string> QualificationNetwork::verify_incremental(
     if (active.get() != parameters || active->generation != verifiedGeneration)
         return "Alice native qualification parameters changed during incremental verification.";
     return error;
+}
+
+std::optional<std::string>
+QualificationNetwork::verify_session(Position& position, Depth depth, std::string& report) const {
+    report.clear();
+    if (!active)
+        return "Alice native search-session verification requires qualification parameters.";
+    if (depth < 0 || depth > 2)
+        return "Alice native search-session verification depth must be between 0 and 2.";
+
+    const Parameters*   parameters         = active.get();
+    const ParameterView parameterView      = make_parameter_view(*parameters);
+    const u64           verifiedGeneration = active->generation;
+    const std::string   verifiedSha256     = active->wire.sha256;
+    const std::string   rootFen            = position.fen();
+    const Key           rootKey            = position.key();
+    const Bitboard      rootBoardB         = position.state()->boardB;
+    const Color         rootSideToMove     = position.side_to_move();
+    const int           rootPieceCount     = position.count<ALL_PIECES>();
+
+    std::unique_ptr<SearchSession> session(new (std::nothrow) SearchSession(
+      parameterView, verifiedGeneration, verifiedSha256, position));
+    if (!session)
+        return "Alice native search-session allocation failed.";
+
+    const auto describe_failure = [](std::string_view                action,
+                                     const AliceSearch::EvalFailure& failure) {
+        std::ostringstream out;
+        out << "Alice native search session " << action
+            << " failed: code=" << AliceSearch::failure_code_name(failure.code)
+            << " stage=" << AliceSearch::failure_stage_name(failure.stage)
+            << " generation=" << failure.generation << " ply=" << failure.ply
+            << " perspective=" << failure.perspective << ".";
+        return out.str();
+    };
+
+    if (!session->ready())
+    {
+        Value                    ignored = VALUE_ZERO;
+        AliceSearch::EvalFailure failure;
+        session->evaluate(position, ignored, failure);
+        return describe_failure("initialization", failure);
+    }
+
+    u64 positions         = 0;
+    u64 transitions       = 0;
+    u64 captures          = 0;
+    u64 promotions        = 0;
+    u64 castlings         = 0;
+    u64 kingMoves         = 0;
+    u64 accumulatorChecks = 0;
+    u64 valueChecks       = 0;
+    u64 undoChecks        = 0;
+
+    std::function<std::optional<std::string>(Depth)> visit;
+    visit = [&](Depth remaining) -> std::optional<std::string> {
+        ++positions;
+        if (!session->matches_current(position))
+            return "Alice native search session did not match the current position.";
+
+        Value                    sessionValue = VALUE_ZERO;
+        AliceSearch::EvalFailure evaluationFailure;
+        if (!session->evaluate(position, sessionValue, evaluationFailure))
+            return describe_failure("evaluation", evaluationFailure);
+
+        const PositionTrace   trace = build_trace(position);
+        IntegerAccumulatorSet refreshed;
+        for (Color perspective : {WHITE, BLACK})
+        {
+            if (auto error = refresh_integer_accumulator(parameterView, trace[perspective],
+                                                         refreshed[perspective]))
+                return error;
+            const auto& current = session->current_accumulators()[perspective];
+            if (current.values != refreshed[perspective].values
+                || current.psqt != refreshed[perspective].psqt)
+                return "Alice native search-session accumulator mismatch at " + position.fen()
+                     + ".";
+            ++accumulatorChecks;
+        }
+
+        NativeIntegerStages stages;
+        if (auto error = evaluate_integer(parameterView, position, refreshed, stages))
+            return error;
+        if (sessionValue != stages.value)
+            return "Alice native search-session value mismatch at " + position.fen() + ".";
+        ++valueChecks;
+
+        if (remaining == 0)
+            return std::nullopt;
+
+        const std::string nodeFen    = position.fen();
+        const Key         nodeKey    = position.key();
+        const Bitboard    nodeBoardB = position.state()->boardB;
+        const Color       nodeSide   = position.side_to_move();
+        const int         nodePieces = position.count<ALL_PIECES>();
+        std::vector<Move> legalMoves;
+        for (Move move : MoveList<LEGAL>(position))
+            legalMoves.push_back(move);
+
+        for (Move move : legalMoves)
+        {
+            const Piece moved = position.moved_piece(move);
+            captures += position.capture(move);
+            promotions += move.type_of() == PROMOTION;
+            castlings += move.type_of() == CASTLING;
+            kingMoves += type_of(moved) == KING;
+
+            StateInfo state;
+            Dirties   dirties;
+            position.do_move(move, state, position.gives_check(move), dirties, nullptr, nullptr);
+            ++transitions;
+
+            AliceSearch::EvalFailure pushFailure;
+            if (!session->push(position, dirties, pushFailure))
+            {
+                position.undo_move(move);
+                return describe_failure("push", pushFailure);
+            }
+
+            auto error = visit(remaining - 1);
+            position.undo_move(move);
+
+            AliceSearch::EvalFailure popFailure;
+            if (!session->pop(position, popFailure))
+                return describe_failure("pop", popFailure);
+            ++undoChecks;
+
+            if (position.fen() != nodeFen || position.key() != nodeKey
+                || position.state()->boardB != nodeBoardB || position.side_to_move() != nodeSide
+                || position.count<ALL_PIECES>() != nodePieces
+                || !session->matches_current(position))
+                return "Alice native search session did not restore a parent position.";
+            if (error)
+                return error;
+        }
+        return std::nullopt;
+    };
+
+    if (auto error = visit(depth))
+        return error;
+    if (position.fen() != rootFen || position.key() != rootKey
+        || position.state()->boardB != rootBoardB || position.side_to_move() != rootSideToMove
+        || position.count<ALL_PIECES>() != rootPieceCount || session->ply() != 0
+        || !session->matches_current(position))
+        return "Alice native search session did not restore its root position.";
+    if (active.get() != parameters || active->generation != verifiedGeneration
+        || active->wire.sha256 != verifiedSha256)
+        return "Alice native qualification parameters changed during search-session verification.";
+
+    const RuntimeSessionStats& runtime = session->stats();
+    if (runtime.evaluations != positions || runtime.pushes != transitions
+        || runtime.pops != transitions || accumulatorChecks != 2 * positions
+        || valueChecks != positions || undoChecks != transitions)
+        return "Alice native search-session counters violated their traversal invariants.";
+
+    std::ostringstream out;
+    out << "alice_native session verified generation " << verifiedGeneration << " positions "
+        << positions << " transitions " << transitions << " captures " << captures << " promotions "
+        << promotions << " castlings " << castlings << " king_moves " << kingMoves
+        << " evaluations " << runtime.evaluations << " pushes " << runtime.pushes << " pops "
+        << runtime.pops << " refreshes " << runtime.fullRefreshes[WHITE] << ','
+        << runtime.fullRefreshes[BLACK] << " piece_adds " << runtime.pieceAdds << " piece_removes "
+        << runtime.pieceRemoves << " threat_adds " << runtime.threatAdds << " threat_removes "
+        << runtime.threatRemoves << " max_piece_events " << runtime.maxPieceEvents
+        << " max_threat_events " << runtime.maxThreatEvents << " accumulator_checks "
+        << accumulatorChecks << " value_checks " << valueChecks << " undo_checks " << undoChecks
+        << " depth " << depth << " search disabled";
+    report = out.str();
+    return std::nullopt;
 }
 
 }  // namespace Stockfish::Eval::NNUE::AliceNative

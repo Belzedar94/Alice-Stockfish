@@ -957,6 +957,11 @@ std::optional<std::string> Engine::verify_loaded_native_incremental(Depth       
     return std::nullopt;
 }
 
+std::optional<std::string> Engine::verify_native_search_session(Depth depth, std::string& report) {
+    wait_for_search_finished();
+    return nativeQualification.verify_session(pos, depth, report);
+}
+
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
     wait_for_search_finished();
     positions = 0;

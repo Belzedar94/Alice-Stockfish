@@ -296,10 +296,20 @@ result. The dense corpus reaches both `+32258` and `-32258`, covers all eight
 phase stacks, and exercises full refresh plus incremental updates at every
 visited node.
 
+The private search-session verifier allocates one fixed frame for every legal
+search ply before traversal. A frame owns the position identity, both fixed
+feature snapshots, and wide signed accumulators. `push` constructs the next
+frame transactionally; `pop` selects the already preserved parent only after
+its complete position identity matches. At every visited position,
+`alice_native_verify_search_session <depth 0..2>` compares both session
+accumulators and the static value with a semantic full refresh. It also requires
+balanced pushes and pops, exact undo restoration, and unchanged parameter
+identity. The opening tree and all directed transition roots pass this gate.
+
 The installed object is not read by normal search, never selects the
 historical evaluator as a fallback, and reports `search=disabled`.
-Generation-keyed search accumulators and evaluation routing remain later
-exact-parity gates.
+An immutable parameter lease, active-reload rejection, and evaluation routing
+remain later exact-parity gates.
 
 ## Cross-platform verification
 

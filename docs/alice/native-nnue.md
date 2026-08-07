@@ -140,9 +140,15 @@ The independent Python reference remains a separate implementation.
 The Alice-safe search already requires a concrete evaluator with
 failure-reporting `evaluate`, `push`, and `pop` operations. It distinguishes a
 normal stop from evaluator failure and proves exact unwind behavior with
-injected failures. AliceNative-v1 is not admitted through that interface until
-its generation-bound session and persistent frame stack pass the later runtime
-gates.
+injected failures. A private AliceNative-v1 qualification session now owns a
+fixed frame for every search ply. Each child frame contains the complete fixed
+feature snapshot and wide feature/PSQT accumulators; it is built
+transactionally without altering its parent. `Dirties` is not an authority for
+native threats. The `alice_native_verify_search_session <depth 0..2>` command
+compares every current frame with a semantic full refresh, evaluates through
+the production integer body, and requires exact parent and root restoration.
+Normal search still cannot select this session until parameter leasing and
+active-reload rejection pass their own runtime gate.
 
 ## 2. State and move semantics
 

@@ -106,6 +106,8 @@ class QualificationNetwork {
     std::optional<std::string> verify_incremental(Position&                           position,
                                                   Depth                               depth,
                                                   LoadedIncrementalVerificationStats& stats) const;
+    std::optional<std::string>
+    verify_session(Position& position, Depth depth, std::string& report) const;
 
    private:
     struct Parameters;
