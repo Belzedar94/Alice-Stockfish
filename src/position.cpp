@@ -1645,8 +1645,11 @@ void Position::do_move_orthodox_legacy(Move                      m,
     // Set capture piece
     st->capturedPiece = captured;
 
-    // Calculate checkers bitboard (if move gives check)
-    st->checkersBB = givesCheck ? attackers_to(square<KING>(them)) & pieces(us) : 0;
+    // Calculate checkers only on the layer occupied by the opposing king.
+    const Square opposingKing  = square<KING>(them);
+    const Board  opposingBoard = board_of(opposingKing);
+    st->checkersBB =
+      givesCheck ? attackers_to(opposingKing, opposingBoard) & pieces_on(opposingBoard, us) : 0;
 
     sideToMove = ~sideToMove;
 
