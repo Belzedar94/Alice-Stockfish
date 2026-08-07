@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import sys
 import unittest
@@ -46,6 +47,14 @@ def admit_even_pairs(controller: AcceptanceController, buckets: list[int]) -> No
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_policy_objects_reject_boolean_and_float_numeric_fields(self) -> None:
+        policy = exact_los_policy("VSTC")
+        for field, value in (("engine_threads", True), ("base_ms", 2000.0)):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                ValueError, "canonical integers"
+            ):
+                replace(policy, **{field: value})
+
     def test_exact_extreme_requires_more_than_one_hundred_games(self) -> None:
         controller = running(exact_los_policy("VSTC"))
         admit_even_pairs(controller, [4] * 50)

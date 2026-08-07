@@ -29,6 +29,26 @@ class ControlPolicy:
     early_stop: bool = False
 
     def __post_init__(self) -> None:
+        integer_fields = (
+            self.base_ms,
+            self.increment_ms,
+            self.pair_workers,
+            self.engine_threads,
+            self.hash_mib,
+            self.minimum_scored_games_exclusive,
+        )
+        optional_integer_fields = (
+            self.maximum_scored_games,
+            self.maximum_attempted_games,
+            self.target_admitted_games,
+        )
+        if any(type(value) is not int for value in integer_fields) or any(
+            value is not None and type(value) is not int
+            for value in optional_integer_fields
+        ):
+            raise ValueError("control policy numeric fields must be canonical integers")
+        if type(self.early_stop) is not bool:
+            raise ValueError("control policy early_stop must be a boolean")
         if self.control not in TIMING_CONTROLS:
             raise ValueError(f"unknown timing control: {self.control}")
         if (self.base_ms, self.increment_ms) != TIMING_CONTROLS[self.control]:

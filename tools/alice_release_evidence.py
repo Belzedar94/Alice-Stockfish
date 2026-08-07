@@ -345,10 +345,16 @@ def verify_openbench_shadow(
             reasons.append(
                 f"OpenBench shadow preset {preset} does not bind a candidate binary"
             )
+        pairs = result.get("pairs")
+        inversions = result.get("inversions")
+        invalid_pairs = result.get("invalid_pairs")
         if (
-            result.get("pairs") != 200
-            or result.get("inversions") != 0
-            or result.get("invalid_pairs") != 0
+            type(pairs) is not int
+            or pairs != 200
+            or type(inversions) is not int
+            or inversions != 0
+            or type(invalid_pairs) is not int
+            or invalid_pairs != 0
             or result.get("adjudication") != ["800/4", "40/8/10"]
         ):
             reasons.append(f"OpenBench shadow preset {preset} is not clean")

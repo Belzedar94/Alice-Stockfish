@@ -151,7 +151,12 @@ def validate_control_policy(
         if mode == "fixed-final"
         else None,
     }
-    if policy != expected:
+    numeric_fields = {
+        field for field, expected_value in expected.items() if type(expected_value) is int
+    }
+    if any(type(policy.get(field)) is not int for field in numeric_fields):
+        raise ValueError(f"{control} policy numeric fields are not canonical integers")
+    if canonical_json_bytes(policy) != canonical_json_bytes(expected):
         raise ValueError(f"{control} policy values do not match the frozen control")
 
 
@@ -288,7 +293,8 @@ def validate_control_result(
     ):
         raise ValueError(f"{control} WLD totals contradict the pentanomial")
     statistics = result.get("statistics")
-    if statistics != paired_statistics(pentanomial):
+    expected_statistics = paired_statistics(pentanomial)
+    if canonical_json_bytes(statistics) != canonical_json_bytes(expected_statistics):
         raise ValueError(f"{control} statistics do not reproduce from the pentanomial")
     if mode == "exact-los":
         if (

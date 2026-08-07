@@ -604,6 +604,39 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertTrue(any("candidate network" in reason for reason in reasons))
         self.assertTrue(any("candidate binary" in reason for reason in reasons))
 
+    def test_openbench_shadow_counters_require_exact_integer_types(self) -> None:
+        cases = (
+            ("pairs", 200.0),
+            ("inversions", False),
+            ("invalid_pairs", False),
+        )
+        for field, replacement in cases:
+            with (
+                self.subTest(field=field),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                manifest, value, size = self.build_candidate(root)
+                shadow_path = Path(value["openbench_shadow_receipt"]["path"])
+                shadow = json.loads(shadow_path.read_text(encoding="utf-8"))
+                shadow["presets"]["VSTC"][field] = replacement
+                shadow_path.write_bytes(canonical_json_bytes(shadow))
+                value["openbench_shadow_receipt"]["sha256"] = sha256_file(
+                    shadow_path
+                )
+                manifest.write_text(json.dumps(value), encoding="utf-8")
+                with mock.patch.object(
+                    alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+                ):
+                    receipt = alice_release_evidence.audit_release_candidate(manifest)
+            self.assertFalse(receipt["strength_release_authorized"])
+            self.assertTrue(
+                any(
+                    "OpenBench shadow preset VSTC is not clean" in reason
+                    for reason in receipt["blocking_reasons"]
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

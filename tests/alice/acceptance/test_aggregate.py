@@ -157,6 +157,27 @@ class AggregateReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "nonzero abort"):
                 aggregate_receipts("bad-battery", "exact-los", paths)
 
+    def test_policy_numeric_fields_require_exact_integer_types(self) -> None:
+        cases = (
+            ("exact-los", "engine_threads", True),
+            ("exact-los", "base_ms", 10000.0),
+            ("exact-los", "maximum_scored_games", 64000.0),
+            ("fixed-final", "target_admitted_games", 300.0),
+        )
+        for mode, field, value in cases:
+            with (
+                self.subTest(mode=mode, field=field),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                paths = self.materialize(root, mode)
+                bad = control_receipt("STC", mode)
+                bad["policy"][field] = value
+                paths["STC"].unlink()
+                write_create_only_json(paths["STC"], bad)
+                with self.assertRaisesRegex(ValueError, "canonical integers"):
+                    aggregate_receipts("bad-policy-types", mode, paths)
+
     def test_contradictory_or_unsealed_receipt_is_rejected(self) -> None:
         for mutation, message in (
             (
@@ -236,6 +257,20 @@ class AggregateReceiptTests(unittest.TestCase):
             write_create_only_json(paths["STC"], bad)
             with self.assertRaisesRegex(ValueError, "sealed snapshot does not match"):
                 aggregate_receipts("bad-seal-result", "fixed-final", paths)
+
+    def test_boolean_statistic_cannot_replace_a_numeric_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self.materialize(root, "exact-los")
+            bad = control_receipt("STC", "exact-los")
+            bad["result"]["statistics"]["los_probability"] = True
+            bad["sealed_snapshot_sha256"] = hashlib.sha256(
+                canonical_json_bytes(bad["sealed_snapshot"])
+            ).hexdigest()
+            paths["STC"].unlink()
+            write_create_only_json(paths["STC"], bad)
+            with self.assertRaisesRegex(ValueError, "statistics do not reproduce"):
+                aggregate_receipts("bad-statistic-type", "exact-los", paths)
 
 
 if __name__ == "__main__":
