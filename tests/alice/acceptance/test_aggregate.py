@@ -94,7 +94,10 @@ def control_receipt(
         },
         "sealed_snapshot": None,
         "sealed_snapshot_sha256": "",
-        "artifacts": {},
+        "artifacts": {
+            "openings_jsonl_sha256": "f" * 64,
+            "status_jsonl_sha256": "0" * 64,
+        },
         "strength_release_authorized": False,
     }
     result = receipt["result"]
@@ -156,6 +159,33 @@ class AggregateReceiptTests(unittest.TestCase):
             write_create_only_json(paths["STC"], bad)
             with self.assertRaisesRegex(ValueError, "nonzero abort"):
                 aggregate_receipts("bad-battery", "exact-los", paths)
+
+    def test_control_artifact_hashes_are_required(self) -> None:
+        cases = (
+            {},
+            {"openings_jsonl_sha256": "f" * 64},
+            {
+                "openings_jsonl_sha256": "f" * 64,
+                "status_jsonl_sha256": True,
+            },
+            {
+                "openings_jsonl_sha256": "f" * 64,
+                "status_jsonl_sha256": "f" * 64,
+            },
+        )
+        for artifacts in cases:
+            with (
+                self.subTest(artifacts=artifacts),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                paths = self.materialize(root, "exact-los")
+                bad = control_receipt("STC", "exact-los")
+                bad["artifacts"] = artifacts
+                paths["STC"].unlink()
+                write_create_only_json(paths["STC"], bad)
+                with self.assertRaisesRegex(ValueError, "artifact hashes"):
+                    aggregate_receipts("bad-artifacts", "exact-los", paths)
 
     def test_policy_numeric_fields_require_exact_integer_types(self) -> None:
         cases = (

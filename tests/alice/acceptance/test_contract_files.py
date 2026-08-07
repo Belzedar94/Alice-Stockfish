@@ -37,6 +37,9 @@ class ContractFileTests(unittest.TestCase):
         openbench_shadow_schema = load_contract(
             "schemas/alice-openbench-shadow-receipt-v1.schema.json"
         )
+        load_failure_schema = load_contract(
+            "schemas/alice-load-failure-matrix-v1.schema.json"
+        )
         worker_schema = load_contract(
             "schemas/alice-pair-worker-definition-v1.schema.json"
         )
@@ -62,6 +65,10 @@ class ContractFileTests(unittest.TestCase):
             "alice-control-receipt-v1",
         )
         self.assertEqual(
+            set(control_schema["properties"]["artifacts"]["required"]),
+            {"openings_jsonl_sha256", "status_jsonl_sha256"},
+        )
+        self.assertEqual(
             release_candidate_schema["properties"]["schema"]["const"],
             "alice-release-candidate-v1",
         )
@@ -76,6 +83,10 @@ class ContractFileTests(unittest.TestCase):
         self.assertEqual(
             openbench_shadow_schema["properties"]["schema"]["const"],
             "alice-openbench-shadow-receipt-v1",
+        )
+        self.assertEqual(
+            load_failure_schema["properties"]["schema"]["const"],
+            "alice-load-failure-matrix-v1",
         )
         self.assertEqual(
             worker_schema["properties"]["schema"]["const"],

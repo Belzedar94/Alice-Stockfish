@@ -139,7 +139,10 @@ def control_receipt(
         },
         "sealed_snapshot": None,
         "sealed_snapshot_sha256": "",
-        "artifacts": {},
+        "artifacts": {
+            "openings_jsonl_sha256": "f" * 64,
+            "status_jsonl_sha256": "0" * 64,
+        },
         "strength_release_authorized": False,
     }
     result = receipt["result"]
@@ -237,22 +240,32 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 },
             )
             failures = root / f"{role}-failures.json"
-            case = {
-                "exit_nonzero": True,
-                "fallback_observed": False,
-                "search_result_published": False,
-            }
+            cases = {}
+            for index, (name, (mutation, diagnostic_code)) in enumerate(
+                alice_release_evidence.LOAD_FAILURE_PROBES.items(), start=1
+            ):
+                cases[name] = {
+                    "probe_kind": name,
+                    "source_network_sha256": network_sha,
+                    "input_descriptor_sha256": f"{index}" * 64,
+                    "input_sha256": None
+                    if name == "missing"
+                    else ("a" if name == "corrupt" else "b") * 64,
+                    "mutation": mutation,
+                    "command_sha256": f"{index + 3}" * 64,
+                    "output_sha256": f"{index + 6}" * 64,
+                    "diagnostic_code": diagnostic_code,
+                    "exit_code": 3,
+                    "fallback_observed": False,
+                    "search_result_published": False,
+                }
             write_json(
                 failures,
                 {
                     "schema": "alice-load-failure-matrix-v1",
                     "binary_sha256": binary_sha,
                     "network_sha256": network_sha,
-                    "cases": {
-                        "missing": dict(case),
-                        "corrupt": dict(case),
-                        "incompatible": dict(case),
-                    },
+                    "cases": cases,
                 },
             )
             binaries.append(
@@ -315,7 +328,9 @@ class ReleaseEvidenceTests(unittest.TestCase):
     def test_complete_candidate_is_authorized_but_not_published(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             manifest, _value, size = self.build_candidate(Path(temporary))
-            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
                 receipt = alice_release_evidence.audit_release_candidate(manifest)
         self.assertEqual(receipt["status"], "ready")
         self.assertTrue(receipt["strength_release_authorized"])
@@ -364,7 +379,36 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 receipt = alice_release_evidence.audit_release_candidate(manifest)
         self.assertEqual(receipt["status"], "blocked")
         self.assertFalse(receipt["strength_release_authorized"])
-        self.assertTrue(any("did not fail closed" in reason for reason in receipt["blocking_reasons"]))
+        self.assertTrue(
+            any(
+                "did not fail closed" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
+
+    def test_load_failure_cases_must_bind_distinct_probe_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            first = value["binaries"][0]
+            failures_path = Path(first["load_failures"]["path"])
+            failures = json.loads(failures_path.read_text(encoding="utf-8"))
+            failures["cases"]["corrupt"] = dict(failures["cases"]["missing"])
+            failures_path.write_bytes(canonical_json_bytes(failures))
+            first["load_failures"]["sha256"] = sha256_file(failures_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(
+                alice_release_evidence, "EXPECTED_NATIVE_SIZE", size
+            ):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertFalse(receipt["strength_release_authorized"])
+        self.assertTrue(
+            any(
+                "corrupt load-failure evidence" in reason
+                or "distinct executions" in reason
+                for reason in receipt["blocking_reasons"]
+            )
+        )
 
     def test_structural_network_claim_blocks_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

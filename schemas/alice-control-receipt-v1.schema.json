@@ -3,7 +3,21 @@
   "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-control-receipt-v1.schema.json",
   "additionalProperties": false,
   "properties": {
-    "artifacts": {"type": "object"},
+    "artifacts": {
+      "additionalProperties": false,
+      "properties": {
+        "openings_jsonl_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "status_jsonl_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["openings_jsonl_sha256", "status_jsonl_sha256"],
+      "type": "object"
+    },
     "inputs": {"type": "object"},
     "policy": {"type": "object"},
     "result": {"type": "object"},

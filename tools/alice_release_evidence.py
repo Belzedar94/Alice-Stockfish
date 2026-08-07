@@ -77,6 +77,33 @@ SHADOW_PRESET_FIELDS = {
     "invalid_pairs",
     "adjudication",
 }
+LOAD_FAILURE_MATRIX_FIELDS = {
+    "schema",
+    "binary_sha256",
+    "network_sha256",
+    "cases",
+}
+LOAD_FAILURE_CASE_FIELDS = {
+    "probe_kind",
+    "source_network_sha256",
+    "input_descriptor_sha256",
+    "input_sha256",
+    "mutation",
+    "command_sha256",
+    "output_sha256",
+    "diagnostic_code",
+    "exit_code",
+    "fallback_observed",
+    "search_result_published",
+}
+LOAD_FAILURE_PROBES = {
+    "missing": ("absent-path", "ALICE_NETWORK_MISSING"),
+    "corrupt": ("deterministic-byte-flip", "ALICE_NETWORK_CORRUPT"),
+    "incompatible": (
+        "architecture-word-mismatch",
+        "ALICE_NETWORK_INCOMPATIBLE",
+    ),
+}
 
 
 def load_object(path: Path) -> dict[str, object]:
@@ -291,9 +318,10 @@ def verify_load_failures(
     reasons: list[str],
 ) -> None:
     cases = receipt.get("cases")
-    expected_cases = {"missing", "corrupt", "incompatible"}
+    expected_cases = set(LOAD_FAILURE_PROBES)
     if (
-        receipt.get("schema") != "alice-load-failure-matrix-v1"
+        set(receipt) != LOAD_FAILURE_MATRIX_FIELDS
+        or receipt.get("schema") != "alice-load-failure-matrix-v1"
         or receipt.get("binary_sha256") != binary_sha256
         or receipt.get("network_sha256") != network_sha256
         or not isinstance(cases, dict)
@@ -301,14 +329,68 @@ def verify_load_failures(
     ):
         reasons.append(f"{role}: load-failure matrix is incomplete")
         return
+    input_descriptors: set[str] = set()
+    commands: set[str] = set()
+    outputs: set[str] = set()
+    mutated_inputs: set[str] = set()
     for name, case in cases.items():
+        mutation, diagnostic_code = LOAD_FAILURE_PROBES[name]
         if (
             not isinstance(case, dict)
-            or case.get("exit_nonzero") is not True
+            or set(case) != LOAD_FAILURE_CASE_FIELDS
+            or case.get("probe_kind") != name
+            or case.get("source_network_sha256") != network_sha256
+            or case.get("mutation") != mutation
+            or case.get("diagnostic_code") != diagnostic_code
+            or type(case.get("exit_code")) is not int
+            or case.get("exit_code") == 0
             or case.get("fallback_observed") is not False
             or case.get("search_result_published") is not False
         ):
-            reasons.append(f"{role}: {name} load failure did not fail closed")
+            reasons.append(
+                f"{role}: {name} load-failure evidence is incomplete or did not fail closed"
+            )
+            continue
+        hash_fields = (
+            "input_descriptor_sha256",
+            "command_sha256",
+            "output_sha256",
+        )
+        if any(
+            not isinstance(case.get(field), str)
+            or not SHA256_RE.fullmatch(case[field])
+            for field in hash_fields
+        ):
+            reasons.append(f"{role}: {name} load-failure hashes are not canonical")
+            continue
+        input_sha256 = case.get("input_sha256")
+        if name == "missing":
+            if input_sha256 is not None:
+                reasons.append(
+                    f"{role}: missing load probe unexpectedly identifies input bytes"
+                )
+                continue
+        elif (
+            not isinstance(input_sha256, str)
+            or not SHA256_RE.fullmatch(input_sha256)
+            or input_sha256 == network_sha256
+        ):
+            reasons.append(f"{role}: {name} load probe does not bind mutated input bytes")
+            continue
+        input_descriptors.add(case["input_descriptor_sha256"])
+        commands.add(case["command_sha256"])
+        outputs.add(case["output_sha256"])
+        if isinstance(input_sha256, str):
+            mutated_inputs.add(input_sha256)
+    if (
+        len(input_descriptors) != 3
+        or len(commands) != 3
+        or len(outputs) != 3
+        or len(mutated_inputs) != 2
+    ):
+        reasons.append(
+            f"{role}: load-failure probes do not bind three distinct executions"
+        )
 
 
 def verify_openbench_shadow(

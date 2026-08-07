@@ -50,14 +50,17 @@ Per-pair evidence is admitted only after the response, result-core hash, PGN
 hash, result-file hash, terminal classifications, contender scores, root FEN,
 move prefix, and both color assignments agree. Game 1 must name the contender
 as White and the reference as Black; game 2 must name the reference as White
-and the contender as Black. Files are create-only. A process may be reused
-across pairs, but an engine is restarted and reauthenticated after a runtime
-failure.
+and the contender as Black. Each PGN movetext must end in exactly one result
+token, and that token must match both the machine result and the `Result`
+header. Files are create-only. A process may be reused across pairs, but an
+engine is restarted and reauthenticated after a runtime failure.
 
 Every finalized control receipt embeds the create-only acceptance-seal payload
 and its canonical SHA-256. The aggregator recomputes that hash and compares all
 sealed statistical fields with the final controller result before granting any
-strength eligibility.
+strength eligibility. It also requires exactly `openings_jsonl_sha256` and
+`status_jsonl_sha256` in the control artifact map; missing, malformed, or extra
+artifact identities fail closed.
 
 The machine schemas are in [`schemas`](../../schemas). Statistical and final
 gate semantics are in [measurement.md](measurement.md) and

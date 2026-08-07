@@ -115,6 +115,10 @@ ENGINE_IDENTITY_FIELDS = {
     "evaluator",
     "options_sha256",
 }
+CONTROL_ARTIFACT_FIELDS = {
+    "openings_jsonl_sha256",
+    "status_jsonl_sha256",
+}
 
 
 def utc_now() -> str:
@@ -386,14 +390,24 @@ def validate_control_receipt(
     policy = value.get("policy")
     inventory = value.get("inputs")
     result = value.get("result")
+    artifacts = value.get("artifacts")
     if (
         not isinstance(policy, dict)
         or not isinstance(inventory, dict)
         or not isinstance(result, dict)
         or not isinstance(value.get("times"), dict)
-        or not isinstance(value.get("artifacts"), dict)
+        or not isinstance(artifacts, dict)
     ):
         raise ValueError(f"{control} lacks policy, input, result, or artifact evidence")
+    if (
+        set(artifacts) != CONTROL_ARTIFACT_FIELDS
+        or any(
+            not isinstance(value, str) or not SHA256_RE.fullmatch(value)
+            for value in artifacts.values()
+        )
+        or len(set(artifacts.values())) != 2
+    ):
+        raise ValueError(f"{control} control artifact hashes are incomplete")
     validate_control_policy(policy, control, mode)
     validate_input_inventory(inventory, control)
     validate_control_result(result, control, mode)

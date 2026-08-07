@@ -11,12 +11,20 @@ A candidate manifest must bind:
 - clean 200-pair official OpenBench shadow receipts at VSTC, STC, and LTC,
   each tracking `800/4` and `40/8/10` virtual endings;
 - Windows BMI2, Windows AVX2, Linux BMI2, and Linux AVX2 binaries;
-- three identical bench signatures for every binary; and
+- three identical `162582`-node canonical bench signatures for every binary; and
 - missing, corrupt, and incompatible network probes for every binary.
 
 Each negative load probe must exit nonzero, publish no search result, and show
-that no alternate evaluator ran. Checksums are verified against the bytes on
-disk; the native network must have the exact AliceNative-v1 wire size.
+that no alternate evaluator ran. Each case records its exact probe kind, source
+network SHA-256, input-descriptor SHA-256, mutated-input SHA-256 where bytes
+exist, frozen mutation recipe, command SHA-256, output SHA-256, normalized
+diagnostic code, and numeric exit code. Missing input uses `absent-path` and no
+input-byte hash; corrupt input uses `deterministic-byte-flip`; incompatible
+input uses `architecture-word-mismatch`. The three descriptor, command, and
+output identities must be distinct, and the two mutated inputs must differ
+from both each other and the candidate network. Checksums are verified against
+the bytes on disk; the native network must have the exact AliceNative-v1 wire
+size.
 The qualification receipt must identify a trained run, positive dataset and
 comparison sample sizes, a positive nonzero-parameter count, and zero
 checkpoint/file, file/engine, and incremental/full mismatches.
@@ -33,6 +41,10 @@ the structural zero evaluator cannot satisfy either strength gate.
 The contender binary SHA-256 in both local batteries must equal one of the
 four candidate release artifacts; a result produced by a development or
 otherwise unlisted executable cannot authorize those artifacts.
+Every embedded control receipt must contain exactly the canonical SHA-256 of
+its `openings.jsonl` and `status.jsonl`; an empty, partial, malformed, or
+extended artifact map cannot enter either strength aggregate, and the two
+identities must be distinct.
 The OpenBench shadow receipt must repeat the candidate source commit and
 network SHA-256. Every preset must also name a release binary role and the
 matching binary SHA-256 from the candidate manifest; a clean audit from any
