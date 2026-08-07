@@ -433,7 +433,16 @@ def audit_release_candidate(manifest_path: Path) -> dict[str, object]:
     if (
         "exact" in acceptance_identities
         and "fixed" in acceptance_identities
-        and acceptance_identities["exact"] != acceptance_identities["fixed"]
+        and {
+            key: value
+            for key, value in acceptance_identities["exact"].items()
+            if key != "opening_seed"
+        }
+        != {
+            key: value
+            for key, value in acceptance_identities["fixed"].items()
+            if key != "opening_seed"
+        }
     ):
         reasons.append("local batteries do not share one pinned input identity")
     if network_sha is not None:

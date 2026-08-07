@@ -32,6 +32,11 @@ from .runner_adapter import (
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 FROZEN_LEGACY_NETWORK_NAME = "alice_run2rl_e40_l09.nnue"
+FROZEN_COMMON_OPTIONS = {
+    "Threads": "1",
+    "Hash": "512",
+    "Move Overhead": "10",
+}
 
 
 def utc_now() -> str:
@@ -207,8 +212,41 @@ def validate_pair_worker_definition(
             or any(not isinstance(option, str) for option in options.values())
         ):
             raise ValueError("engine options must be a string-to-string object")
-        if options.get("Threads") != "1" or options.get("Hash") != "512":
-            raise ValueError("each engine requires Threads=1 and Hash=512")
+        expected_options = dict(FROZEN_COMMON_OPTIONS)
+        if evaluator == "Legacy":
+            expected_options.update(
+                {
+                    "Use NNUE": "true",
+                    "Alice Evaluation": "Legacy",
+                    "Alice_Frozen_Network": "true",
+                    "EvalFile": item.get("network_path"),
+                }
+            )
+        elif evaluator == "Native":
+            expected_options.update(
+                {
+                    "Use NNUE": "true",
+                    "Alice Evaluation": "Native",
+                    "Alice Native SHA256": item.get("network_sha256"),
+                    "Alice Native EvalFile": item.get("network_path"),
+                }
+            )
+        else:
+            if item.get("network_sha256") != "":
+                raise ValueError("the Zero evaluator requires an empty network SHA-256")
+            expected_options.update(
+                {
+                    "Use NNUE": "false",
+                    "Alice Evaluation": "Zero",
+                }
+            )
+        require_exact_fields(
+            options, set(expected_options), f"engines[{index}].options"
+        )
+        if options != expected_options:
+            raise ValueError(
+                f"engines[{index}] options do not match the frozen evaluator policy"
+            )
         engines.append(item)
         names.append(name)
     return engines, (names[0], names[1])
@@ -226,6 +264,13 @@ def prepare_snapshots(
     book_config = run_definition.get("book")
     if not isinstance(runner_config, dict) or not isinstance(book_config, dict):
         raise ValueError("run definition requires book and pair_worker objects")
+    opening_seed = run_definition.get("seed")
+    if (
+        type(opening_seed) is not int
+        or opening_seed < 0
+        or opening_seed > (2**64 - 1)
+    ):
+        raise ValueError("opening seed must be an unsigned 64-bit integer")
 
     worker_definition_source = require_absolute_file(
         runner_config.get("definition"), "pair_worker.definition"
@@ -352,6 +397,7 @@ def prepare_snapshots(
         "source_definition_sha256": source_definition_sha256,
         "canonical_definition_sha256": canonical_definition_sha256,
         "book_sha256": book_sha,
+        "opening_seed": opening_seed,
         "pair_worker_sha256": worker_sha,
         "pair_core_sha256": core_sha,
         "source_worker_definition_sha256": worker_definition_source_sha,

@@ -12,17 +12,20 @@ inputs. Every control must score more than 100 games and seal at a displayed
 paired LOS of exactly `100.0`. `0.0`, `INCONCLUSIVE`, interruption, or invalid
 evidence fails this battery.
 
-## Fixed battery
+## Release-only fixed Elo battery
 
-The same candidate then completes exactly 400 VSTC, 300 STC, and 200 LTC games
-without early stopping. Its conclusion is `FIXED_COMPLETE`. Aborts are recorded
-separately and a clean aggregate requires none.
+Only when preparing the release, the same candidate completes exactly 400
+VSTC, 300 STC, and 200 LTC games without early stopping. This battery measures
+the release Elo sample; it is not run before the exact-LOS battery. Its
+conclusion is `FIXED_COMPLETE`. Aborts are recorded separately and a clean
+aggregate requires none.
 
 ## Common invariants
 
 - contender is always engine 1;
 - every opening is a complete color-swapped pair;
-- Threads is 1, Hash is 512 MiB, and exactly two persistent pair processes run;
+- Threads is 1, Hash is 512 MiB, Move Overhead is 10 ms, and exactly two
+  persistent pair processes run;
 - no score adjudication, SPRT, combined LOS, or external local adjudicator;
 - attempt ordinals, not completion timing, determine admission;
 - the immutable seal precedes drain; and

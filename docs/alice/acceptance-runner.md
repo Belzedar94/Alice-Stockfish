@@ -17,6 +17,7 @@ For a network-backed engine, select the evaluator explicitly:
   "options": {
     "Threads": "1",
     "Hash": "512",
+    "Move Overhead": "10",
     "Use NNUE": "true",
     "Alice Evaluation": "Native",
     "Alice Native SHA256": "<sha256>",
@@ -25,9 +26,12 @@ For a network-backed engine, select the evaluator explicitly:
 }
 ```
 
-Legacy selection uses `Alice Evaluation=Legacy`, `Use NNUE=true`, and the
-pinned `EvalFile`. `Zero` requires both `Alice Evaluation=Zero` and
-`Use NNUE=false`; it is valid only for structural verification.
+Legacy selection uses `Alice Evaluation=Legacy`, `Use NNUE=true`,
+`Alice_Frozen_Network=true`, and the pinned `EvalFile`. `Zero` requires both
+`Alice Evaluation=Zero` and `Use NNUE=false`; it is valid only for structural
+verification. Each evaluator has an exact option allowlist. Missing, extra, or
+different options are rejected, including strength limits and timing
+handicaps.
 
 The frozen Legacy source must retain the canonical basename
 `alice_run2rl_e40_l09.nnue`. Snapshotting content-addresses its parent
@@ -38,9 +42,9 @@ The controller rejects unknown outer or per-engine definition fields,
 duplicate JSON keys, noncanonical hashes, a policy time-control mismatch, a
 reused evidence root, evidence rooted on `D:`, non-unique or PGN-unsafe engine
 names, and any engine that does not specify exactly `Threads=1` and `Hash=512`.
-Each persistent process authenticates declared UCI options, binary and network
-bytes, evaluator identity, and the evaluator's reported SHA-256 before it
-plays a preflight pair.
+`Move Overhead=10` is also frozen. Each persistent process authenticates
+declared UCI options, binary and network bytes, evaluator identity, and the
+evaluator's reported SHA-256 before it plays a preflight pair.
 
 Per-pair evidence is admitted only after the response, result-core hash, PGN
 hash, result-file hash, terminal classifications, contender scores, root FEN,

@@ -81,6 +81,11 @@ class ContractFileTests(unittest.TestCase):
             worker_schema["properties"]["schema"]["const"],
             "alice-pair-worker-definition-v1",
         )
+        worker_options = worker_schema["$defs"]["engine"]["properties"]["options"]
+        self.assertEqual(
+            worker_options["properties"]["Move Overhead"]["const"], "10"
+        )
+        self.assertIn("Move Overhead", worker_options["required"])
         self.assertEqual(
             request_schema["properties"]["schema"]["const"],
             "alice-pair-request-v1",

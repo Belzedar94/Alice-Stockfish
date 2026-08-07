@@ -52,6 +52,7 @@ class RunControlTests(unittest.TestCase):
             "options": {
                 "Threads": "1",
                 "Hash": "512",
+                "Move Overhead": "10",
                 "Use NNUE": "true",
                 "Alice Evaluation": "Legacy",
                 "Alice_Frozen_Network": "true",
@@ -75,6 +76,7 @@ class RunControlTests(unittest.TestCase):
             encoding="utf-8",
         )
         run_definition = {
+            "seed": 7,
             "book": {"path": str(book.resolve()), "sha256": sha256(book)},
             "pair_worker": {
                 "script": str(worker.resolve()),
@@ -118,7 +120,7 @@ class RunControlTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "frozen legacy basename"):
                 prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
 
-    def test_normalized_worker_identity_binds_options_but_not_time_control(self) -> None:
+    def test_normalized_worker_identity_ignores_only_time_control(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
             definition, _network, _network_sha = self.legacy_snapshot_fixture(
@@ -153,33 +155,24 @@ class RunControlTests(unittest.TestCase):
                 second_inventory["normalized_worker_configuration_sha256"],
             )
 
-            worker_definition["engines"][0]["options"]["Move Overhead"] = "250"
-            worker_definition_path.write_text(
-                json.dumps(worker_definition), encoding="utf-8"
-            )
-            definition["pair_worker"]["definition_sha256"] = sha256(
-                worker_definition_path
-            )
-            third_evidence = parent / "evidence-third"
-            third_evidence.mkdir()
-            _worker, _rewritten, _book, third_inventory = prepare_snapshots(
-                definition, third_evidence, "5" * 64, "6" * 64
-            )
-            self.assertNotEqual(
-                second_inventory["normalized_worker_configuration_sha256"],
-                third_inventory["normalized_worker_configuration_sha256"],
-            )
-            self.assertNotEqual(
-                second_inventory["engines"][0]["options_sha256"],
-                third_inventory["engines"][0]["options_sha256"],
-            )
-
-    def test_snapshot_rejects_nonfrozen_thread_and_hash_options(self) -> None:
+    def test_snapshot_rejects_nonfrozen_or_extra_uci_options(self) -> None:
         cases = (
             ("missing Threads", lambda options: options.pop("Threads")),
             ("wrong Threads", lambda options: options.__setitem__("Threads", "16")),
             ("missing Hash", lambda options: options.pop("Hash")),
             ("wrong Hash", lambda options: options.__setitem__("Hash", "64")),
+            (
+                "missing Move Overhead",
+                lambda options: options.pop("Move Overhead"),
+            ),
+            (
+                "wrong Move Overhead",
+                lambda options: options.__setitem__("Move Overhead", "5000"),
+            ),
+            (
+                "strength handicap",
+                lambda options: options.__setitem__("Skill Level", "0"),
+            ),
         )
         for label, mutate in cases:
             with (
@@ -206,7 +199,7 @@ class RunControlTests(unittest.TestCase):
                 evidence = parent / "evidence"
                 evidence.mkdir()
                 with self.assertRaisesRegex(
-                    ValueError, "Threads=1 and Hash=512"
+                    ValueError, "fields mismatch|frozen evaluator policy"
                 ):
                     prepare_snapshots(definition, evidence, "1" * 64, "2" * 64)
                 self.assertEqual(list(evidence.iterdir()), [])
@@ -281,6 +274,7 @@ class RunControlTests(unittest.TestCase):
                 "options": {
                     "Threads": "1",
                     "Hash": "512",
+                    "Move Overhead": "10",
                     "Use NNUE": "false",
                     "Alice Evaluation": "Zero",
                 },

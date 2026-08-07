@@ -20,9 +20,10 @@
           "additionalProperties": {"type": "string"},
           "properties": {
             "Hash": {"const": "512"},
+            "Move Overhead": {"const": "10"},
             "Threads": {"const": "1"}
           },
-          "required": ["Threads", "Hash"],
+          "required": ["Threads", "Hash", "Move Overhead"],
           "type": "object"
         },
         "path": {"minLength": 1, "type": "string"},

@@ -42,12 +42,13 @@ python -m tools.alice_acceptance \
   --evidence-root <new-absolute-directory>
 ```
 
-The exact-LOS and fixed 400/300/200 batteries are separate. A release remains
-blocked until a trained AliceNative-v1 network, exact parity receipts, both
-local batteries, four release binaries, triple bench, negative load probes,
-and official OpenBench shadow audits are all present. The public contracts and
-commands are listed in the
-[engineering dossier](docs/alice/README.md).
+The exact-LOS and fixed 400/300/200 batteries are separate. Exact LOS at all
+three time controls comes first; the fixed battery is run only to measure Elo
+when preparing a release. A release remains blocked until a trained
+AliceNative-v1 network, exact parity receipts, both local batteries, four
+release binaries, triple bench, negative load probes, and official OpenBench
+shadow audits are all present. The public contracts and commands are listed in
+the [engineering dossier](docs/alice/README.md).
 
 ---
 

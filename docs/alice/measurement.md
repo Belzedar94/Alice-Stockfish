@@ -11,10 +11,10 @@ separate from OpenBench and from the fixed-game release battery.
   reference.
 - The contender plays once as each color in every complete pair.
 - Record the source commit, build command, binary SHA-256, evaluator identity,
-  network SHA-256, book SHA-256, pair-worker SHA-256, runner SHA-256, and every
-  UCI option before starting.
-- Both engines use one search thread and 512 MiB of hash. The controller keeps
-  exactly two persistent pair processes.
+  network SHA-256, book SHA-256, opening seed, pair-worker SHA-256, runner
+  SHA-256, and every UCI option before starting.
+- Both engines use one search thread, 512 MiB of hash, and a 10 ms move
+  overhead. The controller keeps exactly two persistent pair processes.
 - Binaries, networks, books, runner code, and options never change inside one
   timing-control result.
 
@@ -113,9 +113,11 @@ digest or a post-seal statistical rewrite is rejected.
 The exact battery passes only with `100.0` at VSTC, STC, and LTC. Interrupted
 experiments do not resume statistically.
 
-## 7. Fixed final gate
+## 7. Release-only fixed Elo battery
 
-Release evidence also requires a distinct battery with no early stopping:
+The 400/300/200 battery is run only when preparing a release, to measure its
+published Elo sample. It is not a prerequisite for the earlier exact-LOS
+battery. It has no early stopping:
 
 | Preset | Admitted games |
 | --- | ---: |
@@ -158,7 +160,9 @@ Use `--mode fixed-final` for the separate 400/300/200 battery. Aggregation
 rejects nonzero abort evidence, missing controls, a non-extreme exact result,
 or a wrong fixed sample size. It embeds each canonical control receipt,
 reproduces its statistics, and requires one shared book, runner, binary,
-evaluator, and network identity across VSTC, STC, and LTC.
+evaluator, network identity, UCI option set, and opening seed across VSTC, STC,
+and LTC. The exact-LOS and release-only fixed batteries may declare different
+opening seeds; each seed remains immutable within its own three controls.
 
 ## 9. Monitoring and final interpretation
 

@@ -62,7 +62,7 @@ def write_test_binary(
 
 
 def control_receipt(
-    control: str, mode: str, network_sha256: str
+    control: str, mode: str, network_sha256: str, opening_seed: int = 7
 ) -> dict[str, object]:
     fixed = mode == "fixed-final"
     scored_games = FIXED_GAMES[control] if fixed else 102
@@ -94,6 +94,7 @@ def control_receipt(
             "source_definition_sha256": "1" * 64,
             "canonical_definition_sha256": "2" * 64,
             "book_sha256": "3" * 64,
+            "opening_seed": opening_seed,
             "pair_worker_sha256": "4" * 64,
             "pair_core_sha256": "5" * 64,
             "source_worker_definition_sha256": "6" * 64,
@@ -401,6 +402,23 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 for reason in receipt["blocking_reasons"]
             )
         )
+
+    def test_release_batteries_may_declare_independent_opening_seeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest, value, size = self.build_candidate(root)
+            fixed_path = Path(value["fixed_final_receipt"]["path"])
+
+            self.mutate_aggregate(
+                fixed_path,
+                lambda receipt: receipt["inputs"].__setitem__("opening_seed", 8),
+            )
+            value["fixed_final_receipt"]["sha256"] = sha256_file(fixed_path)
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with mock.patch.object(alice_release_evidence, "EXPECTED_NATIVE_SIZE", size):
+                receipt = alice_release_evidence.audit_release_candidate(manifest)
+        self.assertEqual(receipt["status"], "ready")
+        self.assertTrue(receipt["strength_release_authorized"])
 
     def test_zero_reference_blocks_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -16,7 +16,9 @@ from tools.alice_acceptance.statistics import paired_statistics
 from tools.alice_acceptance.policy import TIMING_CONTROLS
 
 
-def control_receipt(control: str, mode: str) -> dict[str, object]:
+def control_receipt(
+    control: str, mode: str, opening_seed: int = 7
+) -> dict[str, object]:
     fixed = mode == "fixed-final"
     scored_games = FIXED_GAMES[control] if fixed else 102
     admitted_pairs = scored_games // 2
@@ -47,6 +49,7 @@ def control_receipt(control: str, mode: str) -> dict[str, object]:
             "source_definition_sha256": "1" * 64,
             "canonical_definition_sha256": "2" * 64,
             "book_sha256": "3" * 64,
+            "opening_seed": opening_seed,
             "pair_worker_sha256": "4" * 64,
             "pair_core_sha256": "5" * 64,
             "source_worker_definition_sha256": "6" * 64,
@@ -192,6 +195,16 @@ class AggregateReceiptTests(unittest.TestCase):
             write_create_only_json(paths["STC"], bad)
             with self.assertRaisesRegex(ValueError, "pinned input identity"):
                 aggregate_receipts("bad-options", "exact-los", paths)
+
+    def test_controls_with_different_opening_seeds_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self.materialize(root, "exact-los")
+            bad = control_receipt("STC", "exact-los", opening_seed=8)
+            paths["STC"].unlink()
+            write_create_only_json(paths["STC"], bad)
+            with self.assertRaisesRegex(ValueError, "pinned input identity"):
+                aggregate_receipts("bad-opening-seed", "exact-los", paths)
 
     def test_arbitrary_seal_digest_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

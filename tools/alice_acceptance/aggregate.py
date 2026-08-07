@@ -100,6 +100,7 @@ INVENTORY_FIELDS = {
     "source_definition_sha256",
     "canonical_definition_sha256",
     "book_sha256",
+    "opening_seed",
     "pair_worker_sha256",
     "pair_core_sha256",
     "source_worker_definition_sha256",
@@ -161,10 +162,17 @@ def validate_input_inventory(
         raise ValueError(f"{control} input inventory fields do not match the contract")
     if inventory.get("schema") != "alice-acceptance-input-inventory-v1":
         raise ValueError(f"{control} input inventory schema is unsupported")
-    for field in INVENTORY_FIELDS.difference({"schema", "engines"}):
+    for field in INVENTORY_FIELDS.difference({"schema", "engines", "opening_seed"}):
         value = inventory.get(field)
         if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
             raise ValueError(f"{control} input inventory {field} is not canonical")
+    opening_seed = inventory.get("opening_seed")
+    if (
+        type(opening_seed) is not int
+        or opening_seed < 0
+        or opening_seed > (2**64 - 1)
+    ):
+        raise ValueError(f"{control} input inventory opening_seed is not canonical")
     engines = inventory.get("engines")
     if not isinstance(engines, list) or len(engines) != 2:
         raise ValueError(f"{control} input inventory requires two engines")
@@ -197,6 +205,7 @@ def validate_input_inventory(
 def input_identity(inventory: dict[str, object]) -> dict[str, object]:
     return {
         "book_sha256": inventory["book_sha256"],
+        "opening_seed": inventory["opening_seed"],
         "pair_worker_sha256": inventory["pair_worker_sha256"],
         "pair_core_sha256": inventory["pair_core_sha256"],
         "normalized_worker_configuration_sha256": inventory[
