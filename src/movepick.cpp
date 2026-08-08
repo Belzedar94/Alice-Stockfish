@@ -56,6 +56,27 @@ enum Stages {
     QCAPTURE
 };
 
+bool alice_capture_is_good(const Position& pos, Move move) {
+    if (!pos.capture(move) || move.type_of() != NORMAL)
+        return true;
+
+    const Square from     = move.from_sq();
+    const Square to       = move.to_sq();
+    const Piece  attacker = pos.moved_piece(move);
+    const Piece  victim   = pos.piece_on(to);
+
+    if (PieceValue[victim] >= PieceValue[attacker])
+        return true;
+
+    // A capture lands on the opposite board. Demote a material loser only
+    // when the transferred piece can be challenged on that arrival board.
+    const Board    arrival  = opposite(pos.board_of(from));
+    const Bitboard occupied = pos.occupancy_on(arrival) | to;
+
+    return !(pos.attackers_to(to, arrival, occupied)
+             & pos.pieces_on(arrival, ~color_of(attacker)));
+}
+
 #ifdef USE_AVX512
 // Load the Move, and the ExtMove value, into all lanes of 512-bit registers
 static void splat_extmove(const ExtMove& m, __m512i& move, __m512i& value) {
@@ -313,7 +334,7 @@ top:
 
     case GOOD_CAPTURE :
         if (select([&]() {
-                if (pos.see_ge(*cur, -cur->value / 18))
+                if (alice_capture_is_good(pos, *cur))
                     return true;
                 std::swap(*endBadCaptures++, *cur);
                 return false;
