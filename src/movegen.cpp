@@ -160,9 +160,9 @@ Move* generate_candidates(const Position& pos, Move* moveList) {
 
 template<GenType Type>
 bool include_move(const Position& pos, Move move) {
-    if constexpr (Type == NON_EVASIONS)
+    if constexpr (Type == NON_EVASIONS || Type == EVASIONS)
         return true;
-    else if constexpr (Type == EVASIONS || Type == LEGAL)
+    else if constexpr (Type == LEGAL)
         return pos.legal(move);
     else
     {
@@ -195,7 +195,7 @@ Move* generate_alice(const Position& pos, Move* moveList) {
 
 // CAPTURES preserves Stockfish's staging convention: captures and queen
 // promotions. QUIETS contains ordinary non-captures and quiet underpromotions.
-// EVASIONS and LEGAL both use the complete Alice legality filter.
+// EVASIONS are filtered lazily by search; LEGAL uses the complete Alice legality filter.
 template<GenType Type>
 Move* generate(const Position& pos, Move* moveList) {
     static_assert(Type != LEGAL, "LEGAL has an explicit specialization");
