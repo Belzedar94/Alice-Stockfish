@@ -28,7 +28,7 @@
 namespace {
 
 // clang-format off
-const std::vector<std::string> Defaults = {
+[[maybe_unused]] const std::vector<std::string> Defaults = {
   "setoption name UCI_Chess960 value false",
   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
   "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10",
@@ -97,6 +97,18 @@ const std::vector<std::string> Defaults = {
   "setoption name UCI_Chess960 value false"
 };
 // clang-format on
+
+// Deterministic Alice positions generated from the rules reference with seed 0xB3ECA.
+const std::vector<std::string> AliceDefaults = {
+  "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  "1nbqkbnr/1pp1pppp/|p7/3|p4/|P7/4|P2|N/|rPPP1PPP/RNBQKB1R w KQk - 2 4",
+  "1nb1kbnr/1pp|qpp1p/|p7/3|p2|p1/r7/4|P|Q1|N/1PPP1PPP/RNB1KB1R w KQk - 2 7",
+  "1n2kbnr/|r1p|qpp1p/|p3|b3/1|p1|p2|p1/3|P4/3|B|P|Q|P|N/1PP2P1P/RNB1K2R w KQk - 0 10",
+  "1n2kbnr/2p|qpp1p/4|b3/p|p1|p2|p1/3|P2Q1/3|B|P1|P|N/|rPP2P1P/RNB2K1R w k - 0 13",
+  "1n2kbnr/2p|qpp1p/4|b3/p2|p2|p|Q/1p1|PB3/4|P1|P|N/1PP|N1|r1P/R1B2K1R w k - 0 16",
+  "1n1qkbnr/1|Bp1pp1p/4|b3/p2|p2N|Q/1pN|P|r3/4|P1|P1/1PP4P/R1B2K1R w k - 5 19",
+  "1n1qk1nr/2p1pp|bp/4|b3/p1QB2N1/1pN|P|r1P1/4|P3/1PP4P/R1B2K1R w k - 3 22",
+};
 
 // clang-format off
 // human-randomly picked 5 games with <60 moves from
@@ -384,8 +396,8 @@ namespace Stockfish::Benchmark {
 // where to look for positions in FEN format, and the type of the limit:
 // depth, perft, nodes and movetime (in milliseconds). Examples:
 //
-// bench                            : search default positions up to depth 13
-// bench 64 1 15                    : search default positions up to depth 15 (TT = 64MB)
+// bench                            : search default Alice positions up to depth 12
+// bench 64 1 4                     : search default Alice positions up to depth 4 (TT = 64MB)
 // bench 64 1 100000 default nodes  : search default positions for 100K nodes each
 // bench 64 4 5000 current movetime : search current position with 4 threads for 5 sec
 // bench 16 1 5 blah perft          : run a perft 5 on positions in file "blah"
@@ -397,14 +409,14 @@ std::vector<std::string> setup_bench(const std::string& currentFen, std::istream
     // Assign default values to missing arguments
     std::string ttSize    = (is >> token) ? token : "16";
     std::string threads   = (is >> token) ? token : "1";
-    std::string limit     = (is >> token) ? token : "13";
+    std::string limit     = (is >> token) ? token : "12";
     std::string fenFile   = (is >> token) ? token : "default";
     std::string limitType = (is >> token) ? token : "depth";
 
     go = limitType == "eval" ? "eval" : "go " + limitType + " " + limit;
 
     if (fenFile == "default")
-        fens = Defaults;
+        fens = AliceDefaults;
 
     else if (fenFile == "current")
         fens.push_back(currentFen);

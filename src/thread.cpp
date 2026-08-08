@@ -291,6 +291,8 @@ void ThreadPool::start_thinking(const OptionsMap&  options,
                                 StateListPtr&      states,
                                 Search::LimitsType limits) {
 
+    (void) options;
+
     main_thread()->wait_for_search_finished();
 
     main_manager()->stopOnPonderhit = stop = false;
@@ -312,7 +314,8 @@ void ThreadPool::start_thinking(const OptionsMap&  options,
         for (const auto& m : MoveList<LEGAL>(pos))
             rootMoves.emplace_back(m);
 
-    Tablebases::Config tbConfig = Tablebases::rank_root_moves(options, pos, rootMoves);
+    // Orthodox tablebases do not encode Alice board layers.
+    Tablebases::Config tbConfig{};
 
     // After ownership transfer 'states' becomes empty, so if we stop the search
     // and call 'go' again without setting a new position states.get() == nullptr.

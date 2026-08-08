@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-native-gate-report-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "checkpoint_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "dataset_manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "export_receipt_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "gate": {"enum": ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"]},
+    "mismatch_count": {"const": 0},
+    "network_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "sample_count": {"minimum": 1, "type": "integer"},
+    "schema": {"const": "alice-native-gate-report-v1"},
+    "status": {"const": "PASS"},
+    "training_run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "gate",
+    "status",
+    "training_run_id",
+    "network_sha256",
+    "dataset_manifest_sha256",
+    "checkpoint_sha256",
+    "export_receipt_sha256",
+    "sample_count",
+    "mismatch_count"
+  ],
+  "type": "object"
+}

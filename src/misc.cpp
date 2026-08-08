@@ -127,20 +127,20 @@ class Logger {
 }  // namespace
 
 
-// Returns the full name of the current Stockfish version.
+// Returns the full name of the current Alice-Stockfish version.
 //
 // For local dev compiles we try to append the commit SHA and
 // commit date from git. If that fails only the local compilation
 // date is set and "nogit" is specified:
-//      Stockfish dev-YYYYMMDD-SHA
+//      Alice-Stockfish dev-YYYYMMDD-SHA
 //      or
-//      Stockfish dev-YYYYMMDD-nogit
+//      Alice-Stockfish dev-YYYYMMDD-nogit
 //
 // For releases (non-dev builds) we only include the version number:
-//      Stockfish version
+//      Alice-Stockfish version
 std::string engine_version_info() {
     std::stringstream ss;
-    ss << "Stockfish " << version << std::setfill('0');
+    ss << "Alice-Stockfish " << version << std::setfill('0');
 
     if constexpr (version == "dev")
     {
@@ -176,7 +176,7 @@ std::string engine_version_info() {
 
 std::string engine_info(bool to_uci) {
     return engine_version_info() + (to_uci ? "\nid author " : " by ")
-         + "the Stockfish developers (see AUTHORS file)";
+         + "Belzedar94 and the Stockfish developers (see AUTHORS file)";
 }
 
 
@@ -251,6 +251,20 @@ std::string compiler_info() {
     compiler += stringify(ARCH);
 #else
     compiler += "(undefined architecture)";
+#endif
+
+    compiler += "\nSource commit              : ";
+#if defined(GIT_SHA_FULL)
+    compiler += stringify(GIT_SHA_FULL);
+#else
+    compiler += "(undefined source commit)";
+#endif
+
+    compiler += "\nSource tree state          : ";
+#if defined(GIT_DIFFINDEX)
+    compiler += "dirty";
+#else
+    compiler += "clean";
 #endif
 
     compiler += "\nCompilation settings       : ";

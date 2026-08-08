@@ -1,0 +1,63 @@
+{
+  "fixtureSchema": {
+    "name": "alice-legacy-nnue-parity",
+    "version": 1,
+    "evaluationUnits": "legacy-internal-value",
+    "perspective": "side-to-move"
+  },
+  "network": {
+    "fileName": "alice_run2rl_e40_l09.nnue",
+    "bytes": 47721376,
+    "sha256": "9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9",
+    "serializationVersion": "0x7AF32F20",
+    "architecture": "0x3C103E72"
+  },
+  "witness": {
+    "sourceCommit": "4b1940a8d0f60eeb853de7e77af3b39ebf1b6f79",
+    "executableSha256": "B70AFE03EC9A67258CD7B5B848C46FC9E5C83F53B9F2825E9A5946FEEFB59599"
+  },
+  "positions": [
+    {
+      "id": "start-position",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "raw": 68,
+      "adjusted": 72
+    },
+    {
+      "id": "after-a2a3",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/|P7/1PPPPPPP/RNBQKBNR b KQkq - 0 1",
+      "raw": 53,
+      "adjusted": 59
+    },
+    {
+      "id": "mate-in-one-root",
+      "fen": "8/6|Q1/8/8/8/8/k7/2K5 w - - 0 1",
+      "raw": 674,
+      "adjusted": 674
+    },
+    {
+      "id": "mate-leaf",
+      "fen": "8/8/8/8/8/8/k|Q6/2K5 b - - 1 1",
+      "raw": -685,
+      "adjusted": -685
+    },
+    {
+      "id": "queen-layer-a",
+      "fen": "3q3k/8/8/8/8/8/8/3Q3K w - - 0 1",
+      "raw": -3,
+      "adjusted": -3
+    },
+    {
+      "id": "queen-layer-b-collision",
+      "fen": "3|q3k/8/8/8/8/8/8/3Q3K w - - 0 1",
+      "raw": -3,
+      "adjusted": -3
+    },
+    {
+      "id": "mixed-layers",
+      "fen": "4r2|k/8/8/8/8/8/|R7/4K3 w - - 0 1",
+      "raw": 34,
+      "adjusted": 31
+    }
+  ]
+}

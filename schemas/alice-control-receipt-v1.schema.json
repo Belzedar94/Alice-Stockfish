@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-control-receipt-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "additionalProperties": false,
+      "properties": {
+        "openings_jsonl_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "status_jsonl_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["openings_jsonl_sha256", "status_jsonl_sha256"],
+      "type": "object"
+    },
+    "inputs": {"type": "object"},
+    "policy": {"type": "object"},
+    "result": {"type": "object"},
+    "run_id": {"minLength": 1, "type": "string"},
+    "schema": {"const": "alice-control-receipt-v1"},
+    "sealed_snapshot": {
+      "oneOf": [
+        {"type": "object"},
+        {"type": "null"}
+      ]
+    },
+    "sealed_snapshot_sha256": {
+      "oneOf": [
+        {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        {"type": "null"}
+      ]
+    },
+    "status": {"enum": ["finalized", "invalid"]},
+    "strength_release_authorized": {"const": false},
+    "times": {"type": "object"}
+  },
+  "required": [
+    "schema",
+    "run_id",
+    "status",
+    "times",
+    "policy",
+    "inputs",
+    "result",
+    "sealed_snapshot",
+    "sealed_snapshot_sha256",
+    "artifacts",
+    "strength_release_authorized"
+  ],
+  "type": "object"
+}

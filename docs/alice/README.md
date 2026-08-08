@@ -19,9 +19,14 @@ must be backed by a reproducible receipt.
 
 - [Chassis decision](adr-0001-official-stockfish-chassis.md)
 - [Rules specification](rules-spec.md)
+- [Implementation status](implementation-status.md)
 - [Legacy implementation audit](legacy-audit.md)
 - [Legacy NNUE compatibility](legacy-nnue-compatibility.md)
 - [Local measurement protocol](measurement.md)
+- [Local acceptance runner](acceptance-runner.md)
+- [Final acceptance gate](final-gate.md)
+- [Release evidence](release-evidence.md)
+- [Training storage preflight](training-storage.md)
 - [OpenBench integration](openbench.md)
 - [Native Alice NNUE](native-nnue.md)
 

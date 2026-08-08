@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
 #include <iterator>
 #include <optional>
 #include <sstream>
@@ -87,6 +88,10 @@ void UCIEngine::init_search_update_listeners() {
     engine.set_on_update_full(
       [this](const auto& i) { on_update_full(i, engine.get_options()["UCI_ShowWDL"]); });
     engine.set_on_start([]() {});
+    engine.set_on_search_error([](const auto& message) {
+        print_info_string("CRITICAL ERROR: " + std::string(message));
+        std::exit(1);
+    });
     engine.set_on_bestmove([](const auto& bm, const auto& p) { on_bestmove(bm, p); });
     engine.set_on_verify_network([](const auto& s) { print_info_string(s); });
 }
@@ -159,26 +164,168 @@ void UCIEngine::loop() {
         else if (token == "d")
             sync_cout << engine.visualize() << sync_endl;
         else if (token == "eval")
-            engine.trace_eval();
+        {
+            if (auto error = engine.trace_eval())
+                terminate_on_critical_error(*error);
+        }
+        else if (token == "alice_search_verify_contract")
+        {
+            std::string report;
+            if (auto error = engine.verify_search_contract(report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
+        else if (token == "alice_verify_incremental")
+        {
+            int requestedDepth = 2;
+            if (is >> requestedDepth; is.fail())
+                terminate_on_critical_error(
+                  "alice_verify_incremental requires an integer depth between 0 and 4.");
+
+            u64 positions = 0;
+            if (auto error = engine.verify_legacy_incremental(Depth(requestedDepth), positions))
+                terminate_on_critical_error(*error);
+            sync_cout << "legacy_nnue incremental verified positions " << positions << " depth "
+                      << requestedDepth << sync_endl;
+        }
+        else if (token == "alice_native_trace")
+            sync_cout << "alice_native_trace " << engine.trace_native_features() << sync_endl;
+        else if (token == "alice_native_verify_incremental")
+        {
+            int requestedDepth = 1;
+            if (is >> requestedDepth; is.fail())
+                terminate_on_critical_error(
+                  "alice_native_verify_incremental requires an integer depth between 0 and 2.");
+
+            std::string report;
+            if (auto error = engine.verify_native_incremental(Depth(requestedDepth), report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
+        else if (token == "alice_native_validate_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file)))
+                terminate_on_critical_error(
+                  "alice_native_validate_file requires a path and an optional SHA-256.");
+            is >> expectedSha256;
+
+            const std::optional<std::string> expected =
+              expectedSha256.empty() ? std::nullopt : std::optional{expectedSha256};
+            if (auto error = engine.validate_native_wire(path_from_utf8(file), expected))
+                terminate_on_critical_error(*error);
+            sync_cout << engine.native_wire_status() << sync_endl;
+        }
+        else if (token == "alice_native_try_validate_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file)))
+                terminate_on_critical_error(
+                  "alice_native_try_validate_file requires a path and an optional SHA-256.");
+            is >> expectedSha256;
+
+            const std::optional<std::string> expected =
+              expectedSha256.empty() ? std::nullopt : std::optional{expectedSha256};
+            if (auto error = engine.validate_native_wire(path_from_utf8(file), expected))
+                sync_cout << *error << sync_endl;
+            else
+                sync_cout << engine.native_wire_status() << sync_endl;
+        }
+        else if (token == "alice_native_wire_status")
+            sync_cout << engine.native_wire_status() << sync_endl;
+        else if (token == "alice_native_load_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file) >> expectedSha256))
+                terminate_on_critical_error(
+                  "alice_native_load_file requires a path and an expected SHA-256.");
+            if (auto error = engine.load_native_qualification(path_from_utf8(file), expectedSha256))
+                terminate_on_critical_error(*error);
+            sync_cout << engine.native_qualification_status() << sync_endl;
+        }
+        else if (token == "alice_native_try_load_file")
+        {
+            std::string file;
+            std::string expectedSha256;
+            if (!(is >> std::quoted(file) >> expectedSha256))
+                sync_cout
+                  << "Alice native qualification load rejected: alice_native_try_load_file requires a path and an expected SHA-256."
+                  << sync_endl;
+            else if (auto error =
+                       engine.load_native_qualification(path_from_utf8(file), expectedSha256))
+                sync_cout << *error << sync_endl;
+            else
+                sync_cout << engine.native_qualification_status() << sync_endl;
+        }
+        else if (token == "alice_native_load_status")
+            sync_cout << engine.native_qualification_status() << sync_endl;
+        else if (token == "alice_native_tensor_status")
+            sync_cout << engine.native_tensor_status() << sync_endl;
+        else if (token == "alice_native_parameter")
+        {
+            std::string tensor;
+            u64         index = 0;
+            if (!(is >> tensor >> index))
+                terminate_on_critical_error(
+                  "alice_native_parameter requires a tensor name and a nonnegative flat index.");
+            std::string report;
+            if (auto error = engine.probe_native_parameter(tensor, index, report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
+        else if (token == "alice_native_eval_trace")
+        {
+            std::string report;
+            if (auto error = engine.trace_native_integer(report))
+                terminate_on_critical_error(*error);
+            sync_cout << "alice_native_integer_trace " << report << sync_endl;
+        }
+        else if (token == "alice_native_verify_loaded_incremental")
+        {
+            int requestedDepth = 1;
+            if (is >> requestedDepth; is.fail())
+                terminate_on_critical_error(
+                  "alice_native_verify_loaded_incremental requires an integer depth between 0 and 2.");
+
+            std::string report;
+            if (auto error = engine.verify_loaded_native_incremental(Depth(requestedDepth), report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
+        else if (token == "alice_native_verify_search_session")
+        {
+            int requestedDepth = 1;
+            if (is >> requestedDepth; is.fail())
+                terminate_on_critical_error(
+                  "alice_native_verify_search_session requires an integer depth between 0 and 2.");
+
+            std::string report;
+            if (auto error = engine.verify_native_search_session(Depth(requestedDepth), report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
+        else if (token == "alice_native_verify_lease")
+        {
+            std::string report;
+            if (auto error = engine.verify_native_lease(report))
+                terminate_on_critical_error(*error);
+            sync_cout << report << sync_endl;
+        }
         else if (token == "compiler")
             sync_cout << compiler_info() << sync_endl;
         else if (token == "export_net")
-        {
-            std::optional<std::filesystem::path> file;
-            std::string                          filename;
-
-            if (is >> filename)
-                file = path_from_utf8(filename);
-
-            engine.save_network(file);
-        }
+            print_info_string(
+              "Network export is unavailable until a compatible Alice evaluator is loaded.");
         else if (token == "--help" || token == "help" || token == "--license" || token == "license")
             sync_cout
-              << "\nStockfish is a powerful chess engine for playing and analyzing."
+              << "\nAlice-Stockfish is a UCI engine for playing and analyzing Alice Chess."
                  "\nIt is released as free software licensed under the GNU GPLv3 License."
-                 "\nStockfish is normally used with a graphical user interface (GUI) and implements"
+                 "\nIt is normally used with a graphical user interface (GUI) and implements"
                  "\nthe Universal Chess Interface (UCI) protocol to communicate with a GUI, an API, etc."
-                 "\nFor any further information, visit https://github.com/official-stockfish/Stockfish#readme"
+                 "\nFor further information, visit https://github.com/Belzedar94/Alice-Stockfish#readme"
                  "\nor read the corresponding README.md and Copying.txt files distributed along with this program.\n"
               << sync_endl;
         else if (!token.empty() && token[0] != '#')
@@ -199,7 +346,7 @@ Search::LimitsType UCIEngine::parse_limits(std::istream& is) {
         if (token == "searchmoves")  // Needs to be the last command on the line
         {
             while (is >> token)
-                limits.searchmoves.push_back(to_lower(token));
+                limits.searchmoves.push_back(token);
             break;
         }
 
@@ -241,8 +388,8 @@ void UCIEngine::go(std::istringstream& is) {
 
     if (limits.perft)
         perft(limits);
-    else
-        engine.go(limits);
+    else if (auto error = engine.go(limits))
+        terminate_on_critical_error(*error);
 }
 
 void UCIEngine::bench(std::istream& args) {
@@ -280,7 +427,8 @@ void UCIEngine::bench(std::istream& args) {
                     nodesSearched = perft(limits);
                 else
                 {
-                    engine.go(limits);
+                    if (auto error = engine.go(limits))
+                        terminate_on_critical_error(*error);
                     engine.wait_for_search_finished();
                 }
 
@@ -288,7 +436,10 @@ void UCIEngine::bench(std::istream& args) {
                 nodesSearched = 0;
             }
             else
-                engine.trace_eval();
+            {
+                if (auto error = engine.trace_eval())
+                    terminate_on_critical_error(*error);
+            }
         }
         else if (token == "setoption")
             setoption(is);
@@ -355,7 +506,8 @@ void UCIEngine::benchmark(std::istream& args) {
             Search::LimitsType limits = parse_limits(is);
 
             // Run with silenced network verification
-            engine.go(limits);
+            if (auto error = engine.go(limits))
+                terminate_on_critical_error(*error);
             engine.wait_for_search_finished();
         }
         else if (token == "position")
@@ -423,7 +575,8 @@ void UCIEngine::benchmark(std::istream& args) {
             Search::LimitsType limits = parse_limits(is);
 
             // Run with silenced network verification
-            engine.go(limits);
+            if (auto error = engine.go(limits))
+                terminate_on_critical_error(*error);
             engine.wait_for_search_finished();
 
             updateHashfullReadings();
@@ -638,13 +791,25 @@ std::string UCIEngine::to_lower(std::string str) {
 }
 
 Move UCIEngine::to_move(const Position& pos, std::string str) {
-    str = to_lower(str);
+    const bool validLength  = str.size() == 4 || str.size() == 5;
+    const bool validSquares = validLength && str[0] >= 'a' && str[0] <= 'h' && str[1] >= '1'
+                           && str[1] <= '8' && str[2] >= 'a' && str[2] <= 'h' && str[3] >= '1'
+                           && str[3] <= '8';
+    const bool validPromotion =
+      str.size() == 4 || (str[4] == 'q' || str[4] == 'r' || str[4] == 'b' || str[4] == 'n');
+    if (!validSquares || !validPromotion)
+        return Move::none();
 
+    Move match = Move::none();
     for (const auto& m : MoveList<LEGAL>(pos))
         if (str == move(m, pos.is_chess960()))
-            return m;
+        {
+            if (match != Move::none())
+                return Move::none();
+            match = m;
+        }
 
-    return Move::none();
+    return match;
 }
 
 void UCIEngine::on_update_no_moves(const Engine::InfoShort& info) {

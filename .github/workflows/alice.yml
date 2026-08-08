@@ -17,6 +17,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  acceptance-contracts:
+    name: Acceptance contracts (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+            python: python3
+          - name: Windows
+            os: windows-2022
+            python: python
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Verify acceptance contracts
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: >-
+          ${{ matrix.python }} -B -m unittest discover
+          -s tests/alice/acceptance -p test_*.py -v
+
   linux-release:
     name: Linux ${{ matrix.arch }}
     runs-on: ubuntu-24.04
@@ -37,6 +62,10 @@ jobs:
         run: |
           python3 tests/alice/test_reference.py
           python3 tests/alice/test_engine.py --engine src/stockfish
+          python3 tests/alice/test_native_features.py --engine src/stockfish
+          python3 tests/alice/test_native_quant.py
+          python3 tests/alice/test_native_wire.py --engine src/stockfish
+          python3 tests/alice/test_native_integer.py --engine src/stockfish
       - name: Verify closed binary
         run: |
           test "$(stat -c%s src/stockfish)" -lt 10000000
@@ -69,6 +98,10 @@ jobs:
         run: |
           python tests/alice/test_reference.py
           python tests/alice/test_engine.py --engine src/stockfish.exe
+          python tests/alice/test_native_features.py --engine src/stockfish.exe
+          python tests/alice/test_native_quant.py
+          python tests/alice/test_native_wire.py --engine src/stockfish.exe
+          python tests/alice/test_native_integer.py --engine src/stockfish.exe
           if ((Get-Item src/stockfish.exe).Length -ge 10000000) {
             throw "Alice binary unexpectedly contains a large embedded payload."
           }
@@ -111,3 +144,7 @@ jobs:
         run: |
           python3 tests/alice/test_reference.py
           python3 tests/alice/test_engine.py --engine src/stockfish
+          python3 tests/alice/test_native_features.py --engine src/stockfish
+          python3 tests/alice/test_native_quant.py
+          python3 tests/alice/test_native_wire.py --engine src/stockfish
+          python3 tests/alice/test_native_integer.py --engine src/stockfish

@@ -27,16 +27,14 @@
 #include <initializer_list>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <utility>
 
 #include "bitboard.h"
-#include "history.h"
 #include "misc.h"
 #include "movegen.h"
-#include "syzygy/tbprobe.h"
-#include "tt.h"
 #include "uci.h"
 
 using std::string;
@@ -48,6 +46,7 @@ using namespace Attacks;
 namespace Zobrist {
 
 Key psq[PIECE_NB][SQUARE_NB];
+Key boardB[PIECE_NB][SQUARE_NB];
 Key enpassant[FILE_NB];
 Key castling[CASTLING_RIGHT_NB];
 Key side, noPawns;
@@ -60,6 +59,390 @@ constexpr std::string_view PieceToChar(" PNBRQK  pnbrqk");
 
 static constexpr Piece Pieces[] = {W_PAWN, W_KNIGHT, W_BISHOP, W_ROOK, W_QUEEN, W_KING,
                                    B_PAWN, B_KNIGHT, B_BISHOP, B_ROOK, B_QUEEN, B_KING};
+
+Key alice_piece_key(Piece piece, Square square, Board board) {
+    return Zobrist::psq[piece][square]
+         ^ (board == BOARD_B ? Zobrist::boardB[piece][square] : Key(0));
+}
+
+struct AliceFenCell {
+    Piece piece = NO_PIECE;
+    Board board = BOARD_A;
+};
+
+struct ParsedAliceFen {
+    std::array<AliceFenCell, SQUARE_NB> cells{};
+    Color                               sideToMove = WHITE;
+    std::string                         castling;
+    int                                 rule50         = 0;
+    int                                 fullmoveNumber = 1;
+};
+
+bool parse_decimal(std::string_view text, int& value) {
+    if (text.empty())
+        return false;
+
+    int parsed = 0;
+    for (char token : text)
+    {
+        if (token < '0' || token > '9')
+            return false;
+
+        const int digit = token - '0';
+        if (parsed > (std::numeric_limits<int>::max() - digit) / 10)
+            return false;
+        parsed = parsed * 10 + digit;
+    }
+
+    value = parsed;
+    return true;
+}
+
+std::optional<PositionSetError>
+parse_empty_run(std::string_view rank, std::size_t& index, int maximum, int& run) {
+    const std::size_t start = index;
+    while (index < rank.size() && rank[index] >= '0' && rank[index] <= '9')
+        ++index;
+
+    const std::string_view digits = rank.substr(start, index - start);
+    if (digits.front() == '0')
+        return PositionSetError(
+          "Invalid Alice FEN. Empty-square runs cannot contain a leading zero.");
+    if (!parse_decimal(digits, run) || run < 1 || run > maximum)
+        return PositionSetError(
+          "Invalid Alice FEN. Empty-square run is outside the accepted width.");
+
+    return std::nullopt;
+}
+
+std::optional<PositionSetError> split_alice_ranks(std::string_view                       placement,
+                                                  std::array<std::string_view, RANK_NB>& ranks) {
+    std::size_t start = 0;
+    for (int rank = 0; rank < RANK_NB; ++rank)
+    {
+        const std::size_t slash = placement.find('/', start);
+        const bool        last  = rank == RANK_NB - 1;
+
+        if ((!last && slash == std::string_view::npos) || (last && slash != std::string_view::npos))
+            return PositionSetError(
+              "Invalid Alice FEN. Piece placement must contain exactly eight ranks.");
+
+        const std::size_t end = last ? placement.size() : slash;
+        ranks[rank]           = placement.substr(start, end - start);
+        if (ranks[rank].empty())
+            return PositionSetError("Invalid Alice FEN. Empty rank encoding.");
+        start = end + 1;
+    }
+
+    return std::nullopt;
+}
+
+std::optional<PositionSetError> parse_compact_rank(std::string_view             rank,
+                                                   std::array<AliceFenCell, 8>& cells) {
+    std::size_t index  = 0;
+    int         file   = 0;
+    bool        boardB = false;
+
+    while (index < rank.size())
+    {
+        const char token = rank[index];
+
+        if (token == '|')
+        {
+            // The frozen opening book has one historical start-position rank
+            // ending in a redundant layer marker. The legacy parser ignored
+            // it after the rank had already expanded to all eight files. Keep
+            // that input compatibility without accepting a marker in place of
+            // a missing coordinate or before any other non-piece token.
+            if (file == FILE_NB && index + 1 == rank.size())
+            {
+                ++index;
+                continue;
+            }
+            if (boardB || index + 1 >= rank.size()
+                || PieceToChar.find(rank[index + 1]) == std::string_view::npos
+                || rank[index + 1] == ' ')
+                return PositionSetError(
+                  "Invalid Alice FEN. The layer marker must immediately precede a piece.");
+
+            boardB = true;
+            ++index;
+            continue;
+        }
+
+        if (token >= '0' && token <= '9')
+        {
+            if (boardB)
+                return PositionSetError(
+                  "Invalid Alice FEN. A layer marker cannot precede an empty-square run.");
+
+            int run = 0;
+            if (auto error = parse_empty_run(rank, index, 8, run))
+                return error;
+            file += run;
+        }
+        else
+        {
+            const std::size_t pieceIndex = PieceToChar.find(token);
+            if (pieceIndex == std::string_view::npos || token == ' ')
+                return PositionSetError(std::string("Invalid Alice FEN. Invalid placement token: ")
+                                        + token);
+            if (file >= FILE_NB)
+                return PositionSetError(
+                  "Invalid Alice FEN. Rank expands beyond eight coordinates.");
+
+            cells[file++] = {Piece(pieceIndex), boardB ? BOARD_B : BOARD_A};
+            boardB        = false;
+            ++index;
+        }
+
+        if (file > FILE_NB)
+            return PositionSetError("Invalid Alice FEN. Rank expands beyond eight coordinates.");
+    }
+
+    if (boardB)
+        return PositionSetError("Invalid Alice FEN. A layer marker cannot terminate a rank.");
+    if (file != FILE_NB)
+        return PositionSetError(
+          "Invalid Alice FEN. Compact rank must expand to eight coordinates.");
+
+    return std::nullopt;
+}
+
+std::optional<PositionSetError>
+parse_unmarked_rank(std::string_view rank, std::array<Piece, 16>& cells, int& width) {
+    std::size_t index = 0;
+    width             = 0;
+
+    while (index < rank.size())
+    {
+        const char token = rank[index];
+        if (token >= '0' && token <= '9')
+        {
+            int run = 0;
+            if (auto error = parse_empty_run(rank, index, 16, run))
+                return error;
+            width += run;
+        }
+        else
+        {
+            const std::size_t pieceIndex = PieceToChar.find(token);
+            if (pieceIndex == std::string_view::npos || token == ' ' || token == '|')
+                return PositionSetError(std::string("Invalid Alice FEN. Invalid placement token: ")
+                                        + token);
+            if (width >= 16)
+                return PositionSetError("Invalid Alice FEN. Rank expands beyond sixteen cells.");
+            cells[width++] = Piece(pieceIndex);
+            ++index;
+        }
+
+        if (width > 16)
+            return PositionSetError("Invalid Alice FEN. Rank expands beyond sixteen cells.");
+    }
+
+    return std::nullopt;
+}
+
+std::optional<PositionSetError> validate_alice_material(const ParsedAliceFen& parsed) {
+    std::array<int, PIECE_NB> counts{};
+    int                       total = 0;
+
+    for (Square square = SQ_A1; square <= SQ_H8; ++square)
+    {
+        const Piece piece = parsed.cells[square].piece;
+        if (piece == NO_PIECE)
+            continue;
+
+        ++counts[piece];
+        ++total;
+        if (type_of(piece) == PAWN && (rank_of(square) == RANK_1 || rank_of(square) == RANK_8))
+            return PositionSetError(
+              "Unsupported Alice position. Pawns cannot occupy the first or eighth rank.");
+    }
+
+    if (counts[W_KING] != 1 || counts[B_KING] != 1)
+        return PositionSetError(
+          "Unsupported Alice position. Exactly one king of each color is required.");
+    if (total > 32)
+        return PositionSetError("Unsupported Alice position. More than 32 pieces.");
+
+    for (Color color : {WHITE, BLACK})
+    {
+        int colorTotal = 0;
+        for (PieceType type = PAWN; type <= KING; ++type)
+            colorTotal += counts[make_piece(color, type)];
+
+        if (colorTotal > 16)
+            return PositionSetError(
+              "Unsupported Alice position. More than 16 pieces for one color.");
+
+        const int pawns = counts[make_piece(color, PAWN)];
+        if (pawns > 8)
+            return PositionSetError(
+              "Unsupported Alice position. More than eight pawns for one color.");
+
+        const int promotedSurplus = std::max(counts[make_piece(color, KNIGHT)] - 2, 0)
+                                  + std::max(counts[make_piece(color, BISHOP)] - 2, 0)
+                                  + std::max(counts[make_piece(color, ROOK)] - 2, 0)
+                                  + std::max(counts[make_piece(color, QUEEN)] - 1, 0);
+        if (promotedSurplus > 8 - pawns)
+            return PositionSetError(
+              "Unsupported Alice position. Promoted material exceeds the missing-pawn allowance.");
+    }
+
+    return std::nullopt;
+}
+
+std::optional<PositionSetError> validate_alice_castling(const ParsedAliceFen& parsed) {
+    if (parsed.castling == "-")
+        return std::nullopt;
+    if (parsed.castling.empty())
+        return PositionSetError("Invalid Alice FEN. Missing castling field.");
+
+    std::array<bool, 4> seen{};
+    for (char right : parsed.castling)
+    {
+        std::size_t index;
+        Piece       king;
+        Piece       rook;
+        Square      kingSquare;
+        Square      rookSquare;
+
+        switch (right)
+        {
+        case 'K' :
+            index = 0, king = W_KING, rook = W_ROOK, kingSquare = SQ_E1, rookSquare = SQ_H1;
+            break;
+        case 'Q' :
+            index = 1, king = W_KING, rook = W_ROOK, kingSquare = SQ_E1, rookSquare = SQ_A1;
+            break;
+        case 'k' :
+            index = 2, king = B_KING, rook = B_ROOK, kingSquare = SQ_E8, rookSquare = SQ_H8;
+            break;
+        case 'q' :
+            index = 3, king = B_KING, rook = B_ROOK, kingSquare = SQ_E8, rookSquare = SQ_A8;
+            break;
+        default :
+            return PositionSetError(
+              "Invalid Alice FEN. Castling rights must use unique KQkq symbols or '-'.");
+        }
+
+        if (seen[index])
+            return PositionSetError("Invalid Alice FEN. Duplicate castling right.");
+        seen[index] = true;
+
+        const AliceFenCell& kingCell = parsed.cells[kingSquare];
+        const AliceFenCell& rookCell = parsed.cells[rookSquare];
+        if (kingCell.piece != king || rookCell.piece != rook)
+            return PositionSetError(
+              "Unsupported Alice position. Castling right lacks its orthodox king or rook.");
+        if (kingCell.board != rookCell.board)
+            return PositionSetError(
+              "Unsupported Alice position. Castling king and rook must share a board.");
+    }
+
+    return std::nullopt;
+}
+
+std::optional<PositionSetError>
+parse_alice_fen(const std::string& fen, bool isChess960, ParsedAliceFen& parsed) {
+    if (isChess960)
+        return PositionSetError(
+          "Unsupported Alice position. Chess960 is not part of Alice rules v1.");
+
+    std::array<std::string, 6> fields;
+    std::istringstream         stream(fen);
+    for (std::string& field : fields)
+        if (!(stream >> field))
+            return PositionSetError("Invalid Alice FEN. Exactly six fields are required.");
+
+    std::string trailing;
+    if (stream >> trailing)
+        return PositionSetError("Invalid Alice FEN. Exactly six fields are required.");
+
+    std::array<std::string_view, RANK_NB> ranks;
+    if (auto error = split_alice_ranks(fields[0], ranks))
+        return error;
+
+    if (fields[0].find('|') != std::string::npos)
+    {
+        for (int fenRank = 0; fenRank < RANK_NB; ++fenRank)
+        {
+            std::array<AliceFenCell, 8> cells{};
+            if (auto error = parse_compact_rank(ranks[fenRank], cells))
+                return error;
+
+            const Rank rank = Rank(RANK_8 - fenRank);
+            for (File file = FILE_A; file <= FILE_H; ++file)
+                parsed.cells[make_square(file, rank)] = cells[file];
+        }
+    }
+    else
+    {
+        int expectedWidth = 0;
+        for (int fenRank = 0; fenRank < RANK_NB; ++fenRank)
+        {
+            std::array<Piece, 16> cells{};
+            int                   width = 0;
+            if (auto error = parse_unmarked_rank(ranks[fenRank], cells, width))
+                return error;
+            if (width != 8 && width != 16)
+                return PositionSetError(
+                  "Invalid Alice FEN. Unmarked ranks must expand to eight or sixteen cells.");
+            if (expectedWidth && width != expectedWidth)
+                return PositionSetError("Invalid Alice FEN. Mixed rank widths are not accepted.");
+            expectedWidth = width;
+
+            const Rank rank = Rank(RANK_8 - fenRank);
+            for (File file = FILE_A; file <= FILE_H; ++file)
+            {
+                const Piece boardA = cells[file];
+                const Piece boardB = width == 16 ? cells[file + 8] : NO_PIECE;
+                if (boardA != NO_PIECE && boardB != NO_PIECE)
+                    return PositionSetError(
+                      "Invalid Alice FEN. A coordinate cannot be occupied on both boards.");
+                parsed.cells[make_square(file, rank)] = boardA != NO_PIECE
+                                                        ? AliceFenCell{boardA, BOARD_A}
+                                                        : AliceFenCell{boardB, BOARD_B};
+            }
+        }
+    }
+
+    if (fields[1] == "w")
+        parsed.sideToMove = WHITE;
+    else if (fields[1] == "b")
+        parsed.sideToMove = BLACK;
+    else
+        return PositionSetError("Invalid Alice FEN. Active color must be 'w' or 'b'.");
+
+    parsed.castling = fields[2];
+    if (fields[3] != "-")
+        return PositionSetError("Invalid Alice FEN. The en-passant field must be '-'.");
+    if (!parse_decimal(fields[4], parsed.rule50) || parsed.rule50 > 32767)
+        return PositionSetError("Unsupported Alice position. Rule50 counter is out of range.");
+    if (!parse_decimal(fields[5], parsed.fullmoveNumber) || parsed.fullmoveNumber < 1
+        || parsed.fullmoveNumber > 100000)
+        return PositionSetError("Unsupported Alice position. Fullmove number is out of range.");
+
+    if (auto error = validate_alice_material(parsed))
+        return error;
+    return validate_alice_castling(parsed);
+}
+
+struct AliceCastlingLayout {
+    Square rookFrom;
+    Square transit;
+    Square kingTo;
+    Square rookTo;
+};
+
+AliceCastlingLayout alice_castling_layout(Color color, Move move) {
+    const bool kingSide = move.to_sq() > move.from_sq();
+    return {move.to_sq(), relative_square(color, kingSide ? SQ_F1 : SQ_D1),
+            relative_square(color, kingSide ? SQ_G1 : SQ_C1),
+            relative_square(color, kingSide ? SQ_F1 : SQ_D1)};
+}
+
 }  // namespace
 
 
@@ -81,23 +464,15 @@ std::ostream& operator<<(std::ostream& os, const Position& pos) {
 
     os << "   a   b   c   d   e   f   g   h\n"
        << "\nFen: " << pos.fen() << "\nKey: " << std::hex << std::uppercase << std::setfill('0')
-       << std::setw(16) << pos.key() << std::setfill(' ') << std::dec << "\nCheckers: ";
+       << std::setw(16) << pos.key() << "\nPawn key: " << std::setw(16) << pos.pawn_key()
+       << "\nMinor key: " << std::setw(16) << pos.minor_piece_key()
+       << "\nWhite non-pawn key: " << std::setw(16) << pos.non_pawn_key(WHITE)
+       << "\nBlack non-pawn key: " << std::setw(16) << pos.non_pawn_key(BLACK)
+       << "\nMaterial key: " << std::setw(16) << pos.material_key() << std::setfill(' ') << std::dec
+       << "\nCheckers: ";
 
     for (Bitboard b = pos.checkers(); b;)
         os << UCIEngine::square(pop_lsb(b)) << " ";
-
-    if (Tablebases::MaxCardinality >= popcount(pos.pieces()) && !pos.can_castle(ANY_CASTLING))
-    {
-        StateInfo st;
-
-        Position p;
-        p.set(pos.fen(), pos.is_chess960(), &st);
-        Tablebases::ProbeState s1, s2;
-        Tablebases::WDLScore   wdl = Tablebases::probe_wdl(p, &s1);
-        int                    dtz = Tablebases::probe_dtz(p, &s2);
-        os << "\nTablebases WDL: " << std::setw(4) << wdl << " (" << s1 << ")"
-           << "\nTablebases DTZ: " << std::setw(4) << dtz << " (" << s2 << ")";
-    }
 
     return os;
 }
@@ -137,6 +512,11 @@ void Position::init() {
     Zobrist::side    = rng.rand<Key>();
     Zobrist::noPawns = rng.rand<Key>();
 
+    PRNG aliceRng(0xA11CEB04DULL);
+    for (Piece pc : Pieces)
+        for (Square s = SQ_A1; s <= SQ_H8; ++s)
+            Zobrist::boardB[pc][s] = aliceRng.rand<Key>();
+
     // Prepare the cuckoo tables
     cuckoo.fill(0);
     cuckooMove.fill(Move::none());
@@ -163,11 +543,53 @@ void Position::init() {
 }
 
 
-// Initializes the position object with the given FEN string.
-// The FEN string is strictly validated; if it is invalid or inconsistent,
-// a PositionSetError describing the problem is returned, otherwise std::nullopt.
+// Initializes an Alice position from canonical compact FEN or legacy 16-wide FEN.
+// Parsing and validation complete before the live position is modified.
 std::optional<PositionSetError>
 Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
+    ParsedAliceFen parsed;
+    if (auto error = parse_alice_fen(fenStr, isChess960, parsed))
+        return error;
+
+    std::memset(reinterpret_cast<char*>(this), 0, sizeof(Position));
+    std::memset(si, 0, sizeof(StateInfo));
+    st = si;
+
+    for (Square square = SQ_A1; square <= SQ_H8; ++square)
+    {
+        const AliceFenCell& cell = parsed.cells[square];
+        if (cell.piece != NO_PIECE)
+            put_piece(cell.piece, square, cell.board);
+    }
+
+    sideToMove   = parsed.sideToMove;
+    st->epSquare = SQ_NONE;
+    st->rule50   = parsed.rule50;
+    gamePly      = 2 * (parsed.fullmoveNumber - 1) + (sideToMove == BLACK);
+    chess960     = false;
+
+    if (parsed.castling != "-")
+        for (char right : parsed.castling)
+        {
+            const Color  color      = right == 'K' || right == 'Q' ? WHITE : BLACK;
+            const Square rookSquare = right == 'K' ? SQ_H1
+                                    : right == 'Q' ? SQ_A1
+                                    : right == 'k' ? SQ_H8
+                                                   : SQ_A8;
+            set_castling_right(color, rookSquare);
+        }
+
+    set_state();
+    assert(pos_is_ok());
+    return std::nullopt;
+}
+
+
+#if 0
+// Frozen orthodox parser retained only as local porting context. It is excluded
+// from every Alice build and is not reachable from the public loading path.
+std::optional<PositionSetError>
+Position::set_orthodox_fen_legacy(const string& fenStr, bool isChess960, StateInfo* si) {
     /*
    A FEN string defines a particular position using only the ASCII character set.
 
@@ -442,6 +864,7 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
 
     return std::nullopt;
 }
+#endif
 
 
 // Helper function used to set castling
@@ -470,7 +893,8 @@ void Position::set_check_info() const {
     update_slider_blockers(BLACK);
 
     Square ksq                              = square<KING>(~sideToMove);
-    const auto [bishopAttacks, rookAttacks] = both_attacks_bb(ksq, pieces());
+    Board  layer                            = board_of(ksq);
+    const auto [bishopAttacks, rookAttacks] = both_attacks_bb(ksq, occupancy_on(layer));
 
     st->checkSquares[PAWN]   = attacks_bb<PAWN>(ksq, ~sideToMove);
     st->checkSquares[KNIGHT] = attacks_bb<KNIGHT>(ksq);
@@ -491,29 +915,32 @@ void Position::set_state() const {
     st->nonPawnKey[WHITE] = st->nonPawnKey[BLACK] = 0;
     st->pawnKey                                   = Zobrist::noPawns;
     st->nonPawnMaterial[WHITE] = st->nonPawnMaterial[BLACK] = VALUE_ZERO;
-    st->checkersBB = attackers_to(square<KING>(sideToMove)) & pieces(~sideToMove);
+    const Square kingSquare                                 = square<KING>(sideToMove);
+    const Board  kingBoard                                  = board_of(kingSquare);
+    st->checkersBB = attackers_to(kingSquare, kingBoard) & pieces_on(kingBoard, ~sideToMove);
 
     set_check_info();
 
     for (Bitboard b = pieces(); b;)
     {
-        Square s  = pop_lsb(b);
-        Piece  pc = piece_on(s);
-        st->key ^= Zobrist::psq[pc][s];
+        Square    s        = pop_lsb(b);
+        Piece     pc       = piece_on(s);
+        const Key pieceKey = alice_piece_key(pc, s, board_of(s));
+        st->key ^= pieceKey;
 
         if (type_of(pc) == PAWN)
-            st->pawnKey ^= Zobrist::psq[pc][s];
+            st->pawnKey ^= pieceKey;
 
         else
         {
-            st->nonPawnKey[color_of(pc)] ^= Zobrist::psq[pc][s];
+            st->nonPawnKey[color_of(pc)] ^= pieceKey;
 
             if (type_of(pc) != KING)
             {
                 st->nonPawnMaterial[color_of(pc)] += PieceValue[pc];
 
                 if (type_of(pc) <= BISHOP)
-                    st->minorPieceKey ^= Zobrist::psq[pc][s];
+                    st->minorPieceKey ^= pieceKey;
             }
         }
     }
@@ -558,8 +985,7 @@ std::optional<PositionSetError> Position::set(const string& code, Color c, State
 }
 
 
-// Returns a FEN representation of the position. In case of
-// Chess960 the Shredder-FEN notation is used. This is mainly a debugging function.
+// Returns the canonical compact Alice FEN representation.
 string Position::fen() const {
 
     int                emptyCnt;
@@ -576,7 +1002,12 @@ string Position::fen() const {
                 ss << emptyCnt;
 
             if (f <= FILE_H)
-                ss << PieceToChar[piece_on(make_square(f, r))];
+            {
+                const Square square = make_square(f, r);
+                if (board_of(square) == BOARD_B)
+                    ss << '|';
+                ss << PieceToChar[piece_on(square)];
+            }
         }
 
         if (r == RANK_1)
@@ -587,16 +1018,16 @@ string Position::fen() const {
     ss << (sideToMove == WHITE ? " w " : " b ");
 
     if (can_castle(WHITE_OO))
-        ss << (chess960 ? char('A' + file_of(castling_rook_square(WHITE_OO))) : 'K');
+        ss << 'K';
 
     if (can_castle(WHITE_OOO))
-        ss << (chess960 ? char('A' + file_of(castling_rook_square(WHITE_OOO))) : 'Q');
+        ss << 'Q';
 
     if (can_castle(BLACK_OO))
-        ss << (chess960 ? char('a' + file_of(castling_rook_square(BLACK_OO))) : 'k');
+        ss << 'k';
 
     if (can_castle(BLACK_OOO))
-        ss << (chess960 ? char('a' + file_of(castling_rook_square(BLACK_OOO))) : 'q');
+        ss << 'q';
 
     if (!can_castle(ANY_CASTLING))
         ss << '-';
@@ -612,16 +1043,16 @@ string Position::fen() const {
 // and the slider pieces of color ~c pinning pieces of color c to the king.
 void Position::update_slider_blockers(Color c) const {
 
-    Square ksq = square<KING>(c);
+    Square ksq   = square<KING>(c);
+    Board  layer = board_of(ksq);
 
     st->blockersForKing[c] = 0;
     st->pinners[~c]        = 0;
 
     // Snipers are sliders that attack 's' when a piece and other snipers are removed
-    Bitboard snipers = ((attacks_bb<ROOK>(ksq) & pieces(QUEEN, ROOK))
-                        | (attacks_bb<BISHOP>(ksq) & pieces(QUEEN, BISHOP)))
-                     & pieces(~c);
-    Bitboard occupancy = pieces() ^ snipers;
+    Bitboard snipers   = ((attacks_bb<ROOK>(ksq) & pieces_on(layer, ~c, QUEEN, ROOK))
+                        | (attacks_bb<BISHOP>(ksq) & pieces_on(layer, ~c, QUEEN, BISHOP)));
+    Bitboard occupancy = occupancy_on(layer) ^ snipers;
 
     while (snipers)
     {
@@ -631,7 +1062,7 @@ void Position::update_slider_blockers(Color c) const {
         if (b && !more_than_one(b))
         {
             st->blockersForKing[c] |= b;
-            if (b & pieces(c))
+            if (b & pieces_on(layer, c))
                 st->pinners[~c] |= sniperSq;
         }
     }
@@ -650,6 +1081,21 @@ Bitboard Position::attackers_to(Square s, Bitboard occupied) const {
          | (attacks_bb<KNIGHT>(s) & pieces(KNIGHT)) | (attacks_bb<KING>(s) & pieces(KING));
 }
 
+Bitboard Position::attackers_to(Square s, Board layer) const {
+    return attackers_to(s, layer, occupancy_on(layer));
+}
+
+Bitboard Position::attackers_to(Square s, Board layer, Bitboard occupied) const {
+    const auto [bishopAttacks, rookAttacks] = both_attacks_bb(s, occupied);
+
+    return (rookAttacks & pieces_on(layer, ROOK, QUEEN))
+         | (bishopAttacks & pieces_on(layer, BISHOP, QUEEN))
+         | (attacks_bb<PAWN>(s, BLACK) & pieces_on(layer, WHITE, PAWN))
+         | (attacks_bb<PAWN>(s, WHITE) & pieces_on(layer, BLACK, PAWN))
+         | (attacks_bb<KNIGHT>(s) & pieces_on(layer, KNIGHT))
+         | (attacks_bb<KING>(s) & pieces_on(layer, KING));
+}
+
 bool Position::attackers_to_exist(Square s, Bitboard occupied, Color c) const {
 
     return (attacks_bb<ROOK>(s, occupied) & pieces(c, ROOK, QUEEN))
@@ -658,44 +1104,84 @@ bool Position::attackers_to_exist(Square s, Bitboard occupied, Color c) const {
         || (attacks_bb<KNIGHT>(s) & pieces(c, KNIGHT)) || (attacks_bb<KING>(s) & pieces(c, KING));
 }
 
+bool Position::attackers_to_exist(Square s, Board layer, Bitboard occupied, Color c) const {
+    return (attacks_bb<ROOK>(s, occupied) & pieces_on(layer, c, ROOK, QUEEN))
+        || (attacks_bb<BISHOP>(s, occupied) & pieces_on(layer, c, BISHOP, QUEEN))
+        || (attacks_bb<PAWN>(s, ~c) & pieces_on(layer, c, PAWN))
+        || (attacks_bb<KNIGHT>(s) & pieces_on(layer, c, KNIGHT))
+        || (attacks_bb<KING>(s) & pieces_on(layer, c, KING));
+}
+
 // Tests whether a pseudo-legal move is legal
 bool Position::legal(Move m) const {
+    if (!m.is_ok() || m.type_of() == EN_PASSANT)
+        return false;
 
-    assert(m.is_ok());
+    const Color  us    = sideToMove;
+    const Square from  = m.from_sq();
+    const Piece  mover = piece_on(from);
+    if (mover == NO_PIECE || color_of(mover) != us)
+        return false;
 
-    Color  us   = sideToMove;
-    Square from = m.from_sq();
-    Square to   = m.to_sq();
+    const auto attacked = [&](Square target, Board layer, Bitboard occupied,
+                              Bitboard removedEnemy = 0) {
+        return bool(attackers_to(target, layer, occupied) & pieces_on(layer, ~us) & ~removedEnemy);
+    };
 
-    assert(color_of(moved_piece(m)) == us);
-    assert(piece_on(square<KING>(us)) == make_piece(us, KING));
-
-    // Castling moves generation does not check if the castling path is clear of
-    // enemy attacks, it is delayed at a later time: now!
     if (m.type_of() == CASTLING)
     {
-        // After castling, the rook and king final positions are the same in
-        // Chess960 as they would be in standard chess.
-        to             = relative_square(us, to > from ? SQ_G1 : SQ_C1);
-        Direction step = to > from ? WEST : EAST;
+        const AliceCastlingLayout layout  = alice_castling_layout(us, m);
+        const Board               source  = board_of(from);
+        const Board               arrival = opposite(source);
+        if (type_of(mover) != KING || piece_on(source, layout.rookFrom) != make_piece(us, ROOK)
+            || checkers() || !empty(layout.transit) || !empty(layout.kingTo)
+            || !empty(layout.rookTo))
+            return false;
 
-        for (Square s = to; s != from; s += step)
-            if (attackers_to_exist(s, pieces(), ~us))
-                return false;
+        Bitboard transit = (occupancy_on(source) & ~square_bb(from)) | layout.transit;
+        if (attacked(layout.transit, source, transit))
+            return false;
 
-        // In case of Chess960, verify if the Rook blocks some checks.
-        // For instance an enemy queen in SQ_A1 when castling rook is in SQ_B1.
-        return !chess960 || !(blockers_for_king(us) & m.to_sq());
+        Bitboard provisional =
+          occupancy_on(source) & ~square_bb(from) & ~square_bb(layout.rookFrom);
+        provisional |= layout.kingTo | layout.rookTo;
+        if (attacked(layout.kingTo, source, provisional))
+            return false;
+
+        const Bitboard finalOccupancy = occupancy_on(arrival) | layout.kingTo | layout.rookTo;
+        return !attacked(layout.kingTo, arrival, finalOccupancy);
     }
 
-    // If the moving piece is a king, check whether the destination square is
-    // attacked by the opponent.
-    if (type_of(piece_on(from)) == KING)
-        return !(attackers_to_exist(to, pieces() ^ from, ~us));
+    const Square to = m.to_sq();
+    if (!is_ok(to))
+        return false;
 
-    // A non-king move is legal if and only if it is not pinned or it
-    // is moving along the ray towards or away from the king.
-    return !(blockers_for_king(us) & from) || line_bb(from, to) & pieces(us, KING);
+    const Board    source       = board_of(from);
+    const Board    arrival      = opposite(source);
+    const bool     capture      = !empty(to);
+    const Bitboard removedEnemy = capture ? square_bb(to) : Bitboard(0);
+    const Square   currentKing  = square<KING>(us);
+    const Board    currentLayer = board_of(currentKing);
+
+    if (currentLayer == source)
+    {
+        const Square provisionalKing = type_of(mover) == KING ? to : currentKing;
+        Bitboard     provisional     = occupancy_on(source) & ~square_bb(from) & ~removedEnemy;
+        provisional |= to;
+        if (attacked(provisionalKing, source, provisional, removedEnemy))
+            return false;
+    }
+
+    const Square finalKing      = type_of(mover) == KING ? to : currentKing;
+    const Board  finalLayer     = type_of(mover) == KING ? arrival : currentLayer;
+    Bitboard     finalOccupancy = occupancy_on(finalLayer);
+    if (finalLayer == source)
+        finalOccupancy &= ~square_bb(from) & ~removedEnemy;
+    if (finalLayer == arrival)
+        finalOccupancy |= to;
+
+    return !attacked(finalKing, finalLayer, finalOccupancy,
+                     finalLayer == source ? removedEnemy : Bitboard(0));
 }
 
 
@@ -703,123 +1189,240 @@ bool Position::legal(Move m) const {
 // pseudo-legal. It is used to validate moves from TT that can be corrupted
 // due to SMP concurrent access or hash position key aliasing.
 bool Position::pseudo_legal(const Move m) const {
-
-    Color  us   = sideToMove;
-    Square from = m.from_sq();
-    Square to   = m.to_sq();
-    Piece  pc   = moved_piece(m);
-
-    // Use a slower but simpler function for uncommon cases
-    // yet we skip the legality check of MoveList<LEGAL>().
-    if (m.type_of() != NORMAL)
-        return checkers() ? MoveList<EVASIONS>(*this).contains(m)
-                          : MoveList<NON_EVASIONS>(*this).contains(m);
-
-    // Is not a promotion, so the promotion piece must be empty
-    assert(m.promotion_type() - KNIGHT == NO_PIECE_TYPE);
-
-    // If the 'from' square is not occupied by a piece belonging to the side to
-    // move, the move is obviously not legal.
-    if (pc == NO_PIECE || color_of(pc) != us)
+    if (!m.is_ok() || m.type_of() == EN_PASSANT)
         return false;
 
-    // The destination square cannot be occupied by a friendly piece
-    if (pieces(us) & to)
+    const Square from  = m.from_sq();
+    const Square to    = m.to_sq();
+    const Piece  mover = piece_on(from);
+    if (mover == NO_PIECE || color_of(mover) != sideToMove || !is_ok(to))
         return false;
 
-    // Handle the special case of a pawn move
-    if (type_of(pc) == PAWN)
+    const Color us     = sideToMove;
+    const Board source = board_of(from);
+    if (m.type_of() == CASTLING)
     {
-        // We have already handled promotion moves, so destination cannot be on the 8th/1st rank
-        if ((Rank8BB | Rank1BB) & to)
+        if (type_of(mover) != KING || piece_on(source, to) != make_piece(us, ROOK))
             return false;
-
-        // Check if it's a valid capture, single push, or double push
-        const bool isCapture    = bool(attacks_bb<PAWN>(from, us) & pieces(~us) & to);
-        const bool isSinglePush = (from + pawn_push(us) == to) && empty(to);
-        const bool isDoublePush = (from + 2 * pawn_push(us) == to)
-                               && (relative_rank(us, from) == RANK_2) && empty(to)
-                               && empty(to - pawn_push(us));
-
-        if (!(isCapture || isSinglePush || isDoublePush))
+        const CastlingRights right = us & (to > from ? KING_SIDE : QUEEN_SIDE);
+        if (!can_castle(right))
             return false;
-    }
-    else if (!(attacks_bb(type_of(pc), from, pieces()) & to))
-        return false;
-
-    if (checkers() && type_of(pc) != KING)
-    {
-        // In double check, only a king move can evade
-        if (more_than_one(checkers()))
-            return false;
-
-        // The move must block the check or capture the checker
-        if (!(between_bb(square<KING>(us), lsb(checkers())) & to))
-            return false;
+        const AliceCastlingLayout layout     = alice_castling_layout(us, m);
+        const Bitboard            sourcePath = between_bb(from, to) & ~(from | to);
+        return !(sourcePath & occupancy_on(source)) && empty(layout.kingTo) && empty(layout.rookTo);
     }
 
-    return true;
+    if (!empty(to)
+        && (board_of(to) != source || color_of(piece_on(to)) == us
+            || type_of(piece_on(to)) == KING))
+        return false;
+
+    const PieceType type = type_of(mover);
+    if (type == PAWN)
+    {
+        const Rank promotionRank = relative_rank(us, RANK_8);
+        if ((rank_of(to) == promotionRank) != (m.type_of() == PROMOTION))
+            return false;
+        if (m.type_of() == PROMOTION && (m.promotion_type() < KNIGHT || m.promotion_type() > QUEEN))
+            return false;
+
+        if (!empty(to))
+            return bool(attacks_bb<PAWN>(from, us) & to);
+
+        const Direction push = pawn_push(us);
+        if (to == from + push)
+            return empty_on(source, to);
+        if (rank_of(from) == relative_rank(us, RANK_2) && to == from + 2 * push)
+            return empty_on(source, from + push) && empty_on(source, to);
+        return false;
+    }
+
+    return m.type_of() == NORMAL && bool(attacks_bb(type, from, occupancy_on(source)) & to);
 }
 
 
 // Tests whether a pseudo-legal move gives a check
 bool Position::gives_check(Move m) const {
+    assert(m.is_ok() && color_of(moved_piece(m)) == sideToMove);
 
-    assert(m.is_ok());
-    assert(color_of(moved_piece(m)) == sideToMove);
+    const Color  us        = sideToMove;
+    const Square king      = square<KING>(~us);
+    const Board  kingLayer = board_of(king);
+    const Square from      = m.from_sq();
+    const Board  source    = board_of(from);
+    const Board  arrival   = opposite(source);
 
-    Square from = m.from_sq();
-    Square to   = m.to_sq();
+    std::array<Bitboard, PIECE_TYPE_NB> attackers{};
+    for (PieceType type : {PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING})
+        attackers[type] = pieces_on(kingLayer, us, type);
 
-    // Is there a direct check?
-    if (check_squares(type_of(piece_on(from))) & to)
-        return true;
-
-    // Is there a discovered check?
-    if (blockers_for_king(~sideToMove) & from)
-        return !(line_bb(from, to) & pieces(~sideToMove, KING)) || m.type_of() == CASTLING;
-
-    switch (m.type_of())
+    Bitboard occupied = occupancy_on(kingLayer);
+    if (m.type_of() == CASTLING)
     {
-    case NORMAL :
-        return false;
-
-    case PROMOTION :
-        return attacks_bb(m.promotion_type(), to, pieces() ^ from) & pieces(~sideToMove, KING);
-
-    // En passant capture with check? We have already handled the case of direct
-    // checks and ordinary discovered check, so the only case we need to handle
-    // is the unusual case of a discovered check through the captured pawn.
-    case EN_PASSANT : {
-        Square   capsq                          = make_square(file_of(to), rank_of(from));
-        Bitboard b                              = (pieces() ^ from ^ capsq) | to;
-        const auto [bishopAttacks, rookAttacks] = both_attacks_bb(square<KING>(~sideToMove), b);
-
-        return (rookAttacks & pieces(sideToMove, QUEEN, ROOK))
-             | (bishopAttacks & pieces(sideToMove, QUEEN, BISHOP));
+        const AliceCastlingLayout layout = alice_castling_layout(us, m);
+        if (kingLayer == source)
+        {
+            occupied &= ~square_bb(from) & ~square_bb(layout.rookFrom);
+            attackers[KING] &= ~square_bb(from);
+            attackers[ROOK] &= ~square_bb(layout.rookFrom);
+        }
+        if (kingLayer == arrival)
+        {
+            occupied |= layout.kingTo | layout.rookTo;
+            attackers[KING] |= layout.kingTo;
+            attackers[ROOK] |= layout.rookTo;
+        }
     }
-    default :  //CASTLING
+    else
     {
-        // Castling is encoded as 'king captures the rook'
-        Square rto = relative_square(sideToMove, to > from ? SQ_F1 : SQ_D1);
+        const Square    to         = m.to_sq();
+        const PieceType moverType  = type_of(moved_piece(m));
+        const PieceType resultType = m.type_of() == PROMOTION ? m.promotion_type() : moverType;
+        if (kingLayer == source)
+        {
+            occupied &= ~square_bb(from);
+            attackers[moverType] &= ~square_bb(from);
+            if (!empty(to))
+                occupied &= ~square_bb(to);
+        }
+        if (kingLayer == arrival)
+        {
+            occupied |= to;
+            attackers[resultType] |= to;
+        }
+    }
 
-        return check_squares(ROOK) & rto;
-    }
-    }
+    const auto [bishopAttacks, rookAttacks] = both_attacks_bb(king, occupied);
+    return bool((rookAttacks & (attackers[ROOK] | attackers[QUEEN]))
+                | (bishopAttacks & (attackers[BISHOP] | attackers[QUEEN]))
+                | (attacks_bb<PAWN>(king, ~us) & attackers[PAWN])
+                | (attacks_bb<KNIGHT>(king) & attackers[KNIGHT])
+                | (attacks_bb<KING>(king) & attackers[KING]));
 }
 
 
-// Makes a move, and saves all information necessary
-// to a StateInfo object. The move is assumed to be legal. Pseudo-legal
-// moves should be filtered out before this function is called.
-// If a pointer to the TT table is passed, the entry for the new position
-// will be prefetched, and likewise for shared history.
+// Makes an Alice move and recomputes every derived state field from the result.
+// The full recomputation is the correctness baseline for later incremental work.
 void Position::do_move(Move                      m,
                        StateInfo&                newSt,
                        bool                      givesCheck,
                        Dirties&                  dirties,
                        const TranspositionTable* tt      = nullptr,
                        const SharedHistories*    history = nullptr) {
+    assert(m.is_ok());
+    assert(&newSt != st);
+    assert(pseudo_legal(m));
+    assert(legal(m));
+
+    (void) givesCheck;
+    (void) tt;
+    (void) history;
+
+    new (&dirties.dirtyThreats) DirtyThreats;
+    new (&dirties.dirtyPawnPairs) DirtyPawnPairs;
+
+    auto& dirtyPiece        = dirties.dirtyPiece;
+    auto& pawnPairs         = dirties.dirtyPawnPairs;
+    pawnPairs.before[WHITE] = pieces(WHITE, PAWN);
+    pawnPairs.before[BLACK] = pieces(BLACK, PAWN);
+
+    const Color  us       = sideToMove;
+    const Square from     = m.from_sq();
+    const Piece  mover    = piece_on(from);
+    const Board  source   = board_of(from);
+    const Board  arrival  = opposite(source);
+    Piece        captured = NO_PIECE;
+
+    std::memcpy(&newSt, st, offsetof(StateInfo, key));
+    newSt.previous = st;
+    st             = &newSt;
+
+    ++gamePly;
+    ++st->rule50;
+    ++st->pliesFromNull;
+    st->epSquare = SQ_NONE;
+
+    dirtyPiece.pc        = mover;
+    dirtyPiece.from      = from;
+    dirtyPiece.add_sq    = SQ_NONE;
+    dirtyPiece.remove_sq = SQ_NONE;
+
+    if (m.type_of() == CASTLING)
+    {
+        const AliceCastlingLayout layout = alice_castling_layout(us, m);
+        dirtyPiece.to                    = layout.kingTo;
+        dirtyPiece.remove_pc = dirtyPiece.add_pc = make_piece(us, ROOK);
+        dirtyPiece.remove_sq                     = layout.rookFrom;
+        dirtyPiece.add_sq                        = layout.rookTo;
+
+        remove_piece(from);
+        remove_piece(layout.rookFrom);
+        put_piece(make_piece(us, KING), layout.kingTo, arrival);
+        put_piece(make_piece(us, ROOK), layout.rookTo, arrival);
+    }
+    else
+    {
+        const Square to = m.to_sq();
+        captured        = piece_on(to);
+        dirtyPiece.to   = to;
+
+        if (captured != NO_PIECE)
+        {
+            dirtyPiece.remove_pc = captured;
+            dirtyPiece.remove_sq = to;
+            remove_piece(to);
+        }
+
+        remove_piece(from);
+        Piece result = mover;
+        if (m.type_of() == PROMOTION)
+        {
+            result            = make_piece(us, m.promotion_type());
+            dirtyPiece.to     = SQ_NONE;
+            dirtyPiece.add_pc = result;
+            dirtyPiece.add_sq = to;
+        }
+        put_piece(result, to, arrival);
+    }
+
+    st->castlingRights &= ~(castlingRightsMask[from] | castlingRightsMask[m.to_sq()]);
+    if (type_of(mover) == PAWN || captured != NO_PIECE)
+        st->rule50 = 0;
+
+    sideToMove = ~sideToMove;
+    set_state();
+    st->capturedPiece = captured;
+
+    st->repetition = 0;
+    const int end  = std::min(st->rule50, st->pliesFromNull);
+    if (end >= 4)
+    {
+        StateInfo* previous = st->previous->previous;
+        for (int distance = 4; distance <= end; distance += 2)
+        {
+            previous = previous->previous->previous;
+            if (previous->key == st->key)
+            {
+                st->repetition = previous->repetition ? -distance : distance;
+                break;
+            }
+        }
+    }
+
+    pawnPairs.after[WHITE] = pieces(WHITE, PAWN);
+    pawnPairs.after[BLACK] = pieces(BLACK, PAWN);
+    assert(pos_is_ok());
+}
+
+
+#if 0
+// Frozen orthodox transition retained only as local porting context.
+void Position::do_move_orthodox_legacy(Move                      m,
+                                       StateInfo&                newSt,
+                                       bool                      givesCheck,
+                                       Dirties&                  dirties,
+                                       const TranspositionTable* tt,
+                                       const SharedHistories*    history) {
 
     assert(m.is_ok());
     assert(&newSt != st);
@@ -1042,8 +1645,11 @@ void Position::do_move(Move                      m,
     // Set capture piece
     st->capturedPiece = captured;
 
-    // Calculate checkers bitboard (if move gives check)
-    st->checkersBB = givesCheck ? attackers_to(square<KING>(them)) & pieces(us) : 0;
+    // Calculate checkers only on the layer occupied by the opposing king.
+    const Square opposingKing  = square<KING>(them);
+    const Board  opposingBoard = board_of(opposingKing);
+    st->checkersBB =
+      givesCheck ? attackers_to(opposingKing, opposingBoard) & pieces_on(opposingBoard, us) : 0;
 
     sideToMove = ~sideToMove;
 
@@ -1079,11 +1685,54 @@ void Position::do_move(Move                      m,
     assert(dp.from != SQ_NONE);
     assert(!(dp.add_sq != SQ_NONE) ^ (m.type_of() == PROMOTION || m.type_of() == CASTLING));
 }
+#endif
 
 
-// Unmakes a move. When it returns, the position should
-// be restored to exactly the same state as before the move was made.
+// Unmakes an Alice move and restores the exact prior state object.
 void Position::undo_move(Move m) {
+
+    assert(m.is_ok());
+    assert(st->previous);
+
+    sideToMove     = ~sideToMove;
+    const Color us = sideToMove;
+
+    if (m.type_of() == CASTLING)
+    {
+        const AliceCastlingLayout layout  = alice_castling_layout(us, m);
+        const Board               arrival = board_of(layout.kingTo);
+        const Board               source  = opposite(arrival);
+
+        assert(piece_on(layout.kingTo) == make_piece(us, KING));
+        assert(piece_on(layout.rookTo) == make_piece(us, ROOK));
+        remove_piece(layout.kingTo);
+        remove_piece(layout.rookTo);
+        put_piece(make_piece(us, KING), m.from_sq(), source);
+        put_piece(make_piece(us, ROOK), layout.rookFrom, source);
+    }
+    else
+    {
+        const Square to      = m.to_sq();
+        const Piece  result  = piece_on(to);
+        const Board  arrival = board_of(to);
+        const Board  source  = opposite(arrival);
+        const Piece  mover   = m.type_of() == PROMOTION ? make_piece(us, PAWN) : result;
+
+        remove_piece(to);
+        put_piece(mover, m.from_sq(), source);
+        if (st->capturedPiece != NO_PIECE)
+            put_piece(st->capturedPiece, to, source);
+    }
+
+    st = st->previous;
+    --gamePly;
+    assert(pos_is_ok());
+}
+
+
+#if 0
+// Frozen orthodox undo retained only as local porting context.
+void Position::undo_move_orthodox_legacy(Move m) {
 
     assert(m.is_ok());
 
@@ -1141,6 +1790,7 @@ void Position::undo_move(Move m) {
 
     assert(pos_is_ok());
 }
+#endif
 
 inline void add_dirty_threat(DirtyThreats* const dts,
                              bool                putPiece,
@@ -1316,18 +1966,10 @@ void Position::update_piece_threats(Piece               pc,
 }
 
 Key Position::prefetch_key(Move m) const {
-    Square from     = m.from_sq();
-    Square to       = m.to_sq();
-    Piece  pc       = piece_on(from);
-    Piece  captured = piece_on(to);
-    Key    k        = st->key ^ Zobrist::side;
-
-    k ^= Zobrist::psq[captured][to] ^ Zobrist::psq[pc][to] ^ Zobrist::psq[pc][from];
-
-    if (captured || type_of(pc) == PAWN)
-        return k;
-
-    return adjust_key50<true>(k);
+    (void) m;
+    // Alice transitions change the board layer as well as the square. Until a
+    // proven incremental predictor exists, prefetch the current bucket only.
+    return key();
 }
 
 // Helper used to do/undo a castling move. This is a bit
@@ -1413,6 +2055,14 @@ void Position::undo_null_move() {
 // algorithm similar to alpha-beta pruning with a null window.
 bool Position::see_ge(Move m, int threshold) const {
 
+    (void) m;
+    (void) threshold;
+    // Classical SEE cannot model recaptures that transfer between boards. Its
+    // pruning consumers must treat every candidate as admissible until alice_see
+    // replaces this conservative gate.
+    return true;
+
+#if 0
     assert(m.is_ok());
 
     // Only deal with normal moves, assume others pass a simple SEE
@@ -1514,6 +2164,7 @@ bool Position::see_ge(Move m, int threshold) const {
     }
 
     return bool(res);
+#endif
 }
 
 // Tests whether the position is drawn by 50-move rule
@@ -1551,6 +2202,12 @@ bool Position::has_repeated() const {
 // This function accurately matches the outcome of is_draw() over all legal moves.
 bool Position::upcoming_repetition(int ply) const {
 
+    (void) ply;
+    // The classical cuckoo table encodes same-board reversible moves. Exact
+    // StateInfo key comparison remains active; only the speculative shortcut is off.
+    return false;
+
+#if 0
     int j;
 
     int end = std::min(st->rule50, st->pliesFromNull);
@@ -1591,6 +2248,7 @@ bool Position::upcoming_repetition(int ply) const {
         }
     }
     return false;
+#endif
 }
 
 
@@ -1637,13 +2295,18 @@ bool Position::material_key_is_ok() const { return compute_material_key() == st-
 // This is meant to be helpful when debugging.
 bool Position::pos_is_ok() const {
 
+    if (st->boardB & ~pieces())
+        assert(0 && "pos_is_ok: boardB contains empty coordinates");
+
     if ((sideToMove != WHITE && sideToMove != BLACK) || piece_on(square<KING>(WHITE)) != W_KING
         || piece_on(square<KING>(BLACK)) != B_KING
         || (ep_square() != SQ_NONE && relative_rank(sideToMove, ep_square()) != RANK_6))
         assert(0 && "pos_is_ok: Default");
 
+    const Square opposingKing  = square<KING>(~sideToMove);
+    const Board  opposingBoard = board_of(opposingKing);
     if (count<KING>(WHITE) != 1 || count<KING>(BLACK) != 1
-        || attackers_to_exist(square<KING>(~sideToMove), pieces(), sideToMove))
+        || attackers_to_exist(opposingKing, opposingBoard, occupancy_on(opposingBoard), sideToMove))
         assert(0 && "pos_is_ok: Kings");
 
     if ((pieces(PAWN) & (Rank1BB | Rank8BB)) || count<PAWN>(WHITE) > 8 || count<PAWN>(BLACK) > 8)

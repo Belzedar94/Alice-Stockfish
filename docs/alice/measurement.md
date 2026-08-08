@@ -1,130 +1,178 @@
 # Alice Strength Measurement Contract
 
-Status: normative Phase 0 contract.
+Status: normative contract.
 
-This document freezes the local acceptance battery for Alice-Stockfish. It is a
-paired, exact-LOS experiment. It is deliberately separate from OpenBench and
-from any fixed-game release tournament.
+This document freezes the local Alice-Stockfish acceptance battery. It is
+separate from OpenBench and from the fixed-game release battery.
 
 ## 1. Engine roles and pinned inputs
 
-- `engine1` is always the Alice-Stockfish contender under test.
-- `engine2` is always the frozen reference.
-- The contender must play once as each color in every completed pair.
-- Record the executable path, source commit, build command, binary SHA-256,
-  loaded network SHA-256, opening-book SHA-256, runner revision, and statistics
-  wrapper revision before starting.
-- Both engines use one search thread and 512 MiB of hash. The battery runs two
-  concurrent match workers. All other UCI options must be recorded and held
-  equal unless the experiment explicitly tests one of them.
-- Do not mix binaries, networks, books, runners, or option sets inside one
+- `engine1` is always the contender and `engine2` is always the frozen
+  reference.
+- The contender plays once as each color in every complete pair.
+- Record the source commit, build command, binary SHA-256, evaluator identity,
+  network SHA-256, book SHA-256, opening seed, pair-worker SHA-256, runner
+  SHA-256, and every UCI option before starting.
+- Both engines use one search thread, 512 MiB of hash, and a 10 ms move
+  overhead. The controller keeps exactly two persistent pair processes.
+- Binaries, networks, books, runner code, and options never change inside one
   timing-control result.
 
 ## 2. Frozen timing controls
 
-Each timing control is an independent experiment with its own log and receipt.
+Each control is an independent experiment with its own evidence root.
 
-| Preset | Clock per engine | Increment | Maximum scored games |
-| --- | ---: | ---: | ---: |
-| VSTC | 2 s | 0.02 s | 64,000 |
-| STC | 10 s | 0.1 s | 64,000 |
-| LTC | 30 s | 0.3 s | 64,000 |
+| Preset | Clock | Increment | Maximum scored games | Maximum attempted games |
+| --- | ---: | ---: | ---: | ---: |
+| VSTC | 2 s | 0.02 s | 64,000 | 64,000 |
+| STC | 10 s | 0.1 s | 64,000 | 64,000 |
+| LTC | 30 s | 0.3 s | 64,000 | 64,000 |
 
-The notation is therefore `2+0.02`, `10+0.1`, and `30+0.3`. Time values are in
-seconds. The three presets may run concurrently, but their samples and evidence
-must remain separate.
+The UCI forms are `2+0.02`, `10+0.1`, and `30+0.3`. Samples and evidence from
+different controls remain separate.
 
-## 3. Pair and opening rules
+## 3. Pair, opening, and ordering rules
 
 One pair is the atomic sampling unit:
 
-1. Select one opening from the pinned Alice EPD book.
-2. Play the opening with contender and reference in the first color assignment.
-3. Replay the exact same opening with colors swapped.
-4. Admit both results together, or admit neither result.
+1. Select one position from the pinned Alice EPD book.
+2. Play contender versus reference in the first color assignment.
+3. Replay the exact position with colors swapped.
+4. Admit both results together, or admit neither.
 
-The opening-selection seed and selected EPD must be recoverable from the log.
-Only complete color-swapped pairs enter W/L/D, Elo, or LOS accounting. The
-scored-game count must consequently always be even.
+The versioned opening schedule is independent of completion timing. For each
+cycle it ranks every entry by SHA-256 over the schedule identifier, unsigned
+64-bit seed, cycle number, and entry index. Every entry occurs exactly once per
+cycle.
 
-## 4. Result and adjudication policy
+The controller dispatches exactly two pair attempts at a time, buffers
+completed results, and admits only the contiguous attempt-ordinal prefix. A
+quickly completed higher ordinal never replaces an unresolved lower ordinal.
+Only complete color-swapped pairs enter W/L/D, Elo, or LOS accounting.
 
-The local battery has no external score adjudication. Disable runner-level
-resign thresholds, evaluation-based win thresholds, evaluation-based draw
-thresholds, and tablebase adjudication. The only valid game endings are those
-produced by the Alice rules and UCI game state, including checkmate, stalemate,
-repetition, rule-defined draws, and flag fall.
+## 4. Terminal and abort policy
 
-An illegal move, malformed position, process exit, protocol failure, or runner
-exception is not an automatic loss. Discard the entire affected pair and audit
-the cause. Never convert a dialect or rules disagreement into a strength result.
+The local battery has no external score adjudication. Resign thresholds,
+evaluation win or draw thresholds, tablebase adjudication, and maximum-ply
+draws are disabled. Valid scored endings are Alice checkmate, stalemate,
+rule-defined draws, and flag fall.
 
-## 5. Exact stopping rule
+Each engine must publish the strict Alice terminal record when it returns no
+move. A missing, malformed, contradictory, or move-followed terminal record is
+a protocol failure. The safety ply limit is a policy failure, never a draw.
 
-Evaluate the displayed LOS to one decimal place after each admitted pair. A
-timing control may stop only when all of the following are true:
+Every game has one machine classification. `SCORABLE_NATURAL` and
+`SCORABLE_CLOCK` are the only strength-bearing classes. An operational failure
+discards its complete pair. A protocol, semantic, evidence, policy, or unknown
+failure invalidates the control and drains the other already-dispatched pair
+without scoring it. No failure is converted into an automatic strength loss.
+
+## 5. Frozen paired statistics
+
+Let the contender-perspective pentanomial counts be
+`[LL, LD, DD_or_WL, DW, WW]` and their normalized pair observations be
+`[0, 0.25, 0.5, 0.75, 1]`. For `N` admitted pairs, compute the population mean
+and variance of those observations, then:
+
+```text
+standard_error = sqrt(variance / N)
+LOS = Phi((mean - 0.5) / standard_error)
+```
+
+A zero-variance sample has LOS `0.5` at a mean of `0.5`; otherwise it has the
+corresponding exact extreme. The displayed percentage is exactly
+`format(100.0 * LOS, ".1f")`. The receipt also records the binary64 hexadecimal
+probability so the display can be reproduced.
+
+Decisive-only binomial LOS, game-independent LOS, combined LOS, and SPRT do not
+belong to this contract.
+
+## 6. Exact-LOS stopping rule
+
+Evaluate the display after every admitted pair. A control may stop at an
+extreme only when:
 
 - more than 100 games have been scored;
 - the scored-game count is even; and
-- the displayed LOS is exactly `0.0` or exactly `100.0`.
+- the display is exactly `0.0` or `100.0`.
 
-When an extreme is observed, seal that pair-complete snapshot. A pair already
-in flight may finish for orderly cleanup, but it must not alter the sealed
-statistical receipt. If neither extreme is reached, stop at 64,000 scored games
-and report that timing control as inconclusive.
+`100.0` is a pass and `0.0` is a failure. If neither extreme appears, reaching
+either the 64,000 scored-game cap or the 64,000 attempted-game cap produces
+`INCONCLUSIVE`.
 
-The two extremes have different acceptance meanings:
+The controller creates and flushes an immutable seal before draining a later
+in-flight pair. A result beyond that seal is `excluded_after_seal`; it is never
+described as discarded and never changes the sealed W/L/D, pentanomial, Elo,
+or LOS.
+The control receipt embeds that exact canonical seal payload and its SHA-256.
+Aggregation recomputes the digest and requires the seal's control, mode,
+attempt ordinal, admitted count, W/L/D, pentanomial, statistics, stop reason,
+and conclusion to agree with the final result. A syntactically valid arbitrary
+digest or a post-seal statistical rewrite is rejected.
 
-- `100.0` is a contender pass for that timing control.
-- `0.0` is a conclusive contender failure for that timing control.
+The exact battery passes only with `100.0` at VSTC, STC, and LTC. Interrupted
+experiments do not resume statistically.
 
-Alice-Stockfish passes the Phase 0 local battery only with `100.0` LOS at VSTC,
-STC, and LTC. Thus the acceptance condition is **LOS100 x 3**, with more than
-100 scored games in each experiment. A mix of passes, failures, or inconclusive
-results is not a pass. A wrapper message saying only that a statistical gate
-closed is insufficient; the receipt must state which extreme was reached.
+## 7. Release-only fixed Elo battery
 
-Interrupted experiments do not resume statistically. Restart the affected
-timing control from zero with the same pinned inputs, or declare a new run with
-new identifiers.
+The 400/300/200 battery is run only when preparing a release, to measure its
+published Elo sample. It is not a prerequisite for the earlier exact-LOS
+battery. It has no early stopping:
 
-## 6. Abort accounting and validity
+| Preset | Admitted games |
+| --- | ---: |
+| VSTC | 400 |
+| STC | 300 |
+| LTC | 200 |
 
-For every timing control, record:
+It uses the same pair, color, opening, terminal, and abort rules. Its conclusion
+is `FIXED_COMPLETE`; the fixed sample is not relabeled as a LOS pass or fail.
+A clean aggregate requires zero discarded pairs and zero abort evidence.
 
-- pair attempts, completed pairs, and admitted games;
-- discarded pairs grouped by exact reason;
-- offending opening, color assignment, and final valid position for each abort;
-- illegal-move, timeout, process-exit, and protocol-error counts;
-- natural terminal reasons and clock losses; and
-- the final W/L/D, Elo estimate, LOS, and stop reason.
+## 8. Evidence and commands
 
-Unexplained aborts must be zero. Any abort caused by an Alice rule, FEN, move,
-or board-transfer disagreement invalidates strength interpretation until the
-disagreement is reproduced and classified. A nonzero operational abort rate
-must be disclosed with both attempted and admitted sample sizes.
+Before a control starts, snapshot the pinned book, pair worker, runner core,
+engine binaries, networks, and rewritten worker definition. The control input
+inventory preserves absolute paths and SHA-256 values for both runner-code
+snapshots. Every aggregation pass reopens those files and recomputes both
+digests; a missing, modified, or merely self-declared runner identity fails
+closed. Run a complete pair on each persistent process as preflight. The
+preflight is not part of the statistical sample.
 
-Before starting the full battery, replay a small paired preflight through the
-same position parser and move path used by the tournament. The preflight must
-show exact opening reconstruction, legal-move agreement, correct color swaps,
-and clean completion without changing the frozen measurement policy.
+Run one control from an `alice-acceptance-run-definition-v1` file:
 
-## 7. Monitoring and final receipt
+```text
+python -m tools.alice_acceptance \
+  --definition <absolute-definition.json> \
+  --evidence-root <new-absolute-directory>
+```
 
-During a run, keep a five-minute status table covering all three timing controls.
-For each preset it should show process state, scored games, complete pairs,
-W/L/D, Elo, LOS, discarded pairs, log path, and last-progress time. Fifteen
-minutes without a new completed pair requires investigation and must be noted in
-the receipt.
+Every pair receives create-only PGN, machine result, request, and response
+files. Artifact hashes and the result-core hash are verified before admission.
+Interrupted controls receive an interruption receipt and cannot resume.
 
-A final receipt is complete only if it contains:
+Aggregate the three exact controls with:
 
-- a unique run identifier and UTC start/end times;
-- every pinned input and SHA-256 listed in section 1;
-- the exact command line and UCI option dump;
-- one result block per timing control;
-- the abort audit and the sealed pair-complete snapshot; and
-- an explicit conclusion: `PASS`, `FAIL`, or `INCONCLUSIVE`.
+```text
+python -m tools.alice_acceptance.aggregate --mode exact-los \
+  --run-id <battery-id> --vstc <receipt> --stc <receipt> --ltc <receipt> \
+  --output <new-receipt.json>
+```
 
-OpenBench results cannot replace this battery. Its scheduling, adjudication, and
-statistical contracts are defined separately in [openbench.md](openbench.md).
+Use `--mode fixed-final` for the separate 400/300/200 battery. Aggregation
+rejects nonzero abort evidence, missing controls, a non-extreme exact result,
+or a wrong fixed sample size. It embeds each canonical control receipt,
+reproduces its statistics, and requires one shared book, runner, binary,
+evaluator, network identity, UCI option set, and opening seed across VSTC, STC,
+and LTC. The exact-LOS and release-only fixed batteries may declare different
+opening seeds; each seed remains immutable within its own three controls.
+
+## 9. Monitoring and final interpretation
+
+Monitor state, attempted and scored games, complete and admitted pairs, W/L/D,
+pentanomial, Elo, LOS, abort classes, evidence path, and last progress. Fifteen
+minutes without a new complete pair requires investigation and disclosure.
+
+OpenBench results cannot replace either local battery. Its scheduling,
+adjudication, and shadow-audit contracts are defined in
+[openbench.md](openbench.md).

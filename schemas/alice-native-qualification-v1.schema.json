@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-native-qualification-v1.schema.json",
+  "$defs": {
+    "reference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {"minLength": 1, "type": "string"},
+        "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+      },
+      "required": ["path", "sha256"],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "checkpoint": {"$ref": "#/$defs/reference"},
+    "dataset_manifest": {"$ref": "#/$defs/reference"},
+    "export_receipt": {"$ref": "#/$defs/reference"},
+    "gates": {
+      "additionalProperties": false,
+      "properties": {
+        "G1": {"$ref": "#/$defs/reference"},
+        "G2": {"$ref": "#/$defs/reference"},
+        "G3": {"$ref": "#/$defs/reference"},
+        "G4": {"$ref": "#/$defs/reference"},
+        "G5": {"$ref": "#/$defs/reference"},
+        "G6": {"$ref": "#/$defs/reference"},
+        "G7": {"$ref": "#/$defs/reference"},
+        "G8": {"$ref": "#/$defs/reference"}
+      },
+      "required": ["G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"],
+      "type": "object"
+    },
+    "network_kind": {"const": "trained"},
+    "network_parameter_nonzero_bytes": {"minimum": 1, "type": "integer"},
+    "network_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "schema": {"const": "alice-native-qualification-v1"},
+    "status": {"const": "qualified"},
+    "training_run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "status",
+    "network_sha256",
+    "network_kind",
+    "training_run_id",
+    "dataset_manifest",
+    "checkpoint",
+    "export_receipt",
+    "network_parameter_nonzero_bytes",
+    "gates"
+  ],
+  "type": "object"
+}

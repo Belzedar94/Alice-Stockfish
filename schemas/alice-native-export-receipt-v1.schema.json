@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Belzedar94/Alice-Stockfish/schemas/alice-native-export-receipt-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "checkpoint_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "deterministic_reexport_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "element_count": {"const": 170222600},
+    "element_mismatches": {"const": 0},
+    "network_bytes": {"minimum": 1, "type": "integer"},
+    "network_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "schema": {"const": "alice-native-export-receipt-v1"},
+    "training_run_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "training_run_id",
+    "checkpoint_sha256",
+    "network_sha256",
+    "network_bytes",
+    "element_count",
+    "element_mismatches",
+    "deterministic_reexport_sha256"
+  ],
+  "type": "object"
+}

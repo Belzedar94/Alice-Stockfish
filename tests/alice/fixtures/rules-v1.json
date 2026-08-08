@@ -54,6 +54,12 @@
       "variant": "alice",
       "role": "Differential witness for legacy-compatible move and FEN behavior, not for corrected state identity."
     },
+    "frozen-book-bcd89d9f": {
+      "type": "opening-book",
+      "sha256": "BCD89D9FC3EA81FEB95932EB64D6B6F15AD25CC04CDCC9E0440F097CFFB8CCF6",
+      "uniquePositions": 38348,
+      "role": "Published OpenBench opening corpus and historical FEN compatibility witness."
+    },
     "pychess-alice-rules": {
       "type": "external-rules-reference",
       "url": "https://www.pychess.org/variants/alice"
@@ -412,6 +418,34 @@
       }
     },
     {
+      "id": "frozen-book-start-position-trailing-marker-normalizes",
+      "kind": "fen-normalization",
+      "description": "The frozen book's first rank carries one redundant terminal layer marker accepted by the historical parser.",
+      "inputFen": "|r|n|b|q|k|b|n|r|/|p|p|p|p|p|p|p|p/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"},
+        {"id": "legacy-binary-b70afe", "status": "agrees"},
+        {"id": "frozen-book-bcd89d9f", "status": "diagnostic"}
+      ],
+      "expected": {
+        "accepted": true,
+        "canonicalFen": "|r|n|b|q|k|b|n|r/|p|p|p|p|p|p|p|p/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+      }
+    },
+    {
+      "id": "incomplete-rank-trailing-marker-is-rejected",
+      "kind": "fen-validation",
+      "description": "The frozen-book exception applies only after all eight coordinates have already been encoded.",
+      "inputFen": "7k/8/8/8/8/8/8/4K2| w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "A layer marker cannot replace a missing coordinate."
+      }
+    },
+    {
       "id": "nonempty-en-passant-fen-field-is-rejected",
       "kind": "fen-validation",
       "description": "Rules v1 rejects a stale en-passant target instead of silently discarding it.",
@@ -531,6 +565,218 @@
             "threefold": true
           }
         ]
+      }
+    },
+    {
+      "id": "kingside-castling-transfers-b-to-a",
+      "kind": "move",
+      "description": "Castling is symmetric across layers: a king and rook on B complete castling and finish on A.",
+      "initialFen": "k7/8/8/8/8/8/8/4|K2|R w K - 0 1",
+      "move": "e1g1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "k7/8/8/8/8/8/8/5RK1 b - - 1 1",
+        "king": {"from": "B:e1", "to": "A:g1"},
+        "rook": {"from": "B:h1", "to": "A:f1"},
+        "sideToMoveInCheck": false,
+        "engineUndoMustRestoreInitial": true
+      }
+    },
+    {
+      "id": "queenside-castling-transfers-b-to-a",
+      "kind": "move",
+      "description": "Queenside castling transfers both pieces from B to A.",
+      "initialFen": "k7/8/8/8/8/8/8/|R3|K3 w Q - 0 1",
+      "move": "e1c1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "k7/8/8/8/8/8/8/2KR4 b - - 1 1",
+        "king": {"from": "B:e1", "to": "A:c1"},
+        "rook": {"from": "B:a1", "to": "A:d1"},
+        "sideToMoveInCheck": false,
+        "engineUndoMustRestoreInitial": true
+      }
+    },
+    {
+      "id": "castling-final-layer-attack-is-illegal",
+      "kind": "move",
+      "description": "Source-board castling safety is insufficient when the transferred king is attacked on its final layer.",
+      "initialFen": "k5|r1/8/8/8/8/8/8/4K2R w K - 0 1",
+      "move": "e1g1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "The king would finish on B:g1 in the B:g8 rook's line."
+      }
+    },
+    {
+      "id": "capturing-promotion-transfers-promoted-piece",
+      "kind": "move",
+      "description": "A pawn captures and promotes on its source layer before the promoted piece transfers.",
+      "initialFen": "r6k/1P6/8/8/8/8/8/7K w - - 0 1",
+      "move": "b7a8q",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "|Q6k/8/8/8/8/8/8/7K b - - 0 1",
+        "mover": {"piece": "P", "from": "A:b7", "to": "B:a8", "resultPiece": "Q"},
+        "captured": {"piece": "r", "at": "A:a8"},
+        "sideToMoveInCheck": false,
+        "engineUndoMustRestoreInitial": true
+      }
+    },
+    {
+      "id": "double-push-ignores-other-layer-intermediate-piece",
+      "kind": "move",
+      "description": "A pawn may cross an intermediate coordinate occupied only on the other layer.",
+      "initialFen": "4k3/8/8/8/8/4|p3/4P3/4K3 w - - 0 1",
+      "move": "e2e4",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": true,
+        "resultFen": "4k3/8/8/8/4|P3/4|p3/8/4K3 b - - 0 1",
+        "mover": {"piece": "P", "from": "A:e2", "to": "B:e4"},
+        "sideToMoveInCheck": false,
+        "engineUndoMustRestoreInitial": true
+      }
+    },
+    {
+      "id": "other-layer-interposition-does-not-erase-double-check",
+      "kind": "move",
+      "description": "A transferred interposition that blocks one checking line is illegal while a second checker remains.",
+      "initialFen": "4r2|k/8/8/8/1b6/8/|R7/4K3 w - - 0 1",
+      "move": "a2e2",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "A:e2 would block the rook, but the bishop on A:b4 would still check A:e1."
+      }
+    },
+    {
+      "id": "different-layer-castling-right-is-rejected",
+      "kind": "fen-validation",
+      "description": "A castling right is invalid when its king and rook occupy different layers.",
+      "inputFen": "k7/8/8/8/8/8/8/4K2|R w K - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "The white king and kingside rook do not share a source layer."
+      }
+    },
+    {
+      "id": "unreachable-promoted-material-is-rejected",
+      "kind": "fen-validation",
+      "description": "Promoted surplus cannot exceed the number of missing pawns.",
+      "inputFen": "4k3/8/8/8/8/QQ6/PPPPPPPP/4K3 w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "White has an extra queen but no missing pawn."
+      }
+    },
+    {
+      "id": "king-layer-contributes-to-non-pawn-identity",
+      "kind": "identity",
+      "description": "Moving only a king between layers changes the full and non-pawn identities.",
+      "positions": {
+        "left": "4k3/8/8/8/8/8/8/4K3 w - - 0 1",
+        "right": "4k3/8/8/8/8/8/8/4|K3 w - - 0 1"
+      },
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "fullPositionKeyRelation": "different",
+        "pawnKeyRelation": "same",
+        "minorPieceKeyRelation": "same",
+        "whiteNonPawnKeyRelation": "different",
+        "countOnlyMaterialKeyRelation": "same",
+        "repetitionEquivalent": false
+      }
+    },
+    {
+      "id": "knight-layer-contributes-to-minor-identity",
+      "kind": "identity",
+      "description": "Moving only a knight between layers changes minor and non-pawn identities.",
+      "positions": {
+        "left": "4k3/8/8/8/8/2N5/8/4K3 w - - 0 1",
+        "right": "4k3/8/8/8/8/2|N5/8/4K3 w - - 0 1"
+      },
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "fullPositionKeyRelation": "different",
+        "pawnKeyRelation": "same",
+        "minorPieceKeyRelation": "different",
+        "whiteNonPawnKeyRelation": "different",
+        "countOnlyMaterialKeyRelation": "same",
+        "repetitionEquivalent": false
+      }
+    },
+    {
+      "id": "rook-layer-contributes-only-to-non-pawn-identity",
+      "kind": "identity",
+      "description": "Moving only a rook between layers changes the full and non-pawn identities but not the minor key.",
+      "positions": {
+        "left": "4k3/8/8/8/8/2R5/8/4K3 w - - 0 1",
+        "right": "4k3/8/8/8/8/2|R5/8/4K3 w - - 0 1"
+      },
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "fullPositionKeyRelation": "different",
+        "pawnKeyRelation": "same",
+        "minorPieceKeyRelation": "same",
+        "whiteNonPawnKeyRelation": "different",
+        "countOnlyMaterialKeyRelation": "same",
+        "repetitionEquivalent": false
+      }
+    },
+    {
+      "id": "uppercase-uci-is-rejected",
+      "kind": "move",
+      "description": "Public UCI coordinates and promotion suffixes are lowercase and are not normalized silently.",
+      "initialFen": "7k/P7/8/8/8/8/8/7K w - - 0 1",
+      "move": "a7a8Q",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "legal": false,
+        "reason": "The promotion suffix must be lowercase."
+      }
+    },
+    {
+      "id": "fen-run-length-leading-zero-is-rejected",
+      "kind": "fen-validation",
+      "description": "Compact and legacy empty-square runs use canonical decimal notation without leading zeros.",
+      "inputFen": "04k3/08/08/08/08/08/08/04K3 w - - 0 1",
+      "oracles": [
+        {"id": "rules-spec-v1", "status": "normative"}
+      ],
+      "expected": {
+        "accepted": false,
+        "reason": "Empty-square runs cannot contain leading zeros."
       }
     }
   ]

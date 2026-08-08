@@ -178,6 +178,7 @@ Search::Worker::Worker(SharedState&                    sharedState,
     threads(sharedState.threads),
     tt(sharedState.tt),
     network(sharedState.network),
+    legacyEvaluator(sharedState.legacyEvaluator),
     refreshTable(network[token]) {
     clear();
 }
@@ -191,6 +192,8 @@ void Search::Worker::ensure_network_replicated() {
 void Search::Worker::start_searching() {
 
     accumulatorStack.reset();
+    legacyAccumulator = legacyEvaluator.make_accumulator(rootPos);
+    assert(legacyAccumulator);
 
     // Non-main threads go directly to iterative_deepening()
     if (!is_mainthread())
@@ -647,6 +650,7 @@ void Search::Worker::do_move(
 
     Dirties& dirties = accumulatorStack.push();
     pos.do_move(move, st, givesCheck, dirties, &tt, &sharedHistory);
+    legacyEvaluator.push(*legacyAccumulator, pos, dirties);
 
     if (ss != nullptr)
     {
@@ -667,6 +671,7 @@ void Search::Worker::do_null_move(Position& pos, StateInfo& st, Stack* const ss)
 }
 
 void Search::Worker::undo_move(Position& pos, const Move move) {
+    legacyEvaluator.pop(*legacyAccumulator);
     pos.undo_move(move);
     accumulatorStack.pop();
 }
@@ -1872,8 +1877,9 @@ TimePoint Search::Worker::elapsed() const {
 }
 
 Value Search::Worker::evaluate(const Position& pos) {
-    return Eval::evaluate(network[numaAccessToken], pos, accumulatorStack, refreshTable,
-                          optimism[pos.side_to_move()]);
+    const auto value = legacyEvaluator.evaluate(pos, *legacyAccumulator, true);
+    assert(value);
+    return *value;
 }
 
 namespace {

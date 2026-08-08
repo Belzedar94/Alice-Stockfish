@@ -1,10 +1,24 @@
 # Alice on OpenBench
 
-Status: normative Phase 0 integration and operations contract.
+Status: normative Phase 0 integration and operations contract; production
+registration is not yet complete.
 
 This document defines how Alice workloads may enter the shared OpenBench
 service. It does not change the local exact-LOS contract in
 [measurement.md](measurement.md).
+
+## Current implementation boundary
+
+The engine-side build and bench contract is implemented and locally verified.
+An OpenBench build request may provide `EXE` and `EVALFILE` to a bare `make`
+invocation, and a freshly started resulting executable loads that exact network
+before a bare `bench`. The canonical bench signature is `358993` nodes on the
+versioned eight-position Alice corpus.
+
+Alice has not yet been registered or scheduled on the official service. The
+server-side engine entry, `ALICE` book routing, paired runner, smoke test, and
+shadow audits remain admission work. No production result may be inferred from
+the local build receipt.
 
 ## 1. One official service
 
@@ -81,6 +95,17 @@ be counted toward a local LOS gate. It runs at Alice's lower queue priority.
 The official scheduler may assign it to any eligible worker, including T24,
 without manual worker intervention.
 
+The aggregate shadow receipt repeats the candidate source commit and network
+SHA-256. Each preset records the release binary role and exact binary SHA-256
+used for that audit and references its canonical configuration artifact.
+Release evidence reopens that artifact, recomputes its SHA-256, and requires
+the official service, `ALICE` book token and frozen book hash, one shared
+runner hash, exact candidate identities, `Threads=1`, `Hash=512`,
+`Move Overhead=10`, the preset timing, color-swapped pairing, `cpuflags=[]`,
+and both adjudication rules. The three configuration identities must be
+distinct. A source, network, binary, book, runner, option, timing, pairing, or
+worker-policy mismatch blocks the shadow gate.
+
 For each 200-pair audit, preserve and report:
 
 - all 200 opening identifiers and both color assignments;
@@ -94,6 +119,13 @@ For each 200-pair audit, preserve and report:
 Unexplained aborts must be zero. Any FEN, legal-move, transfer-board, color-swap,
 or result-accounting mismatch fails the shadow audit and suspends interpretation
 of that preset. The audit must be repeated from a clean sample after correction.
+
+The Alice runner suppresses the anomalous game from its `Finished game` result
+stream, writes its machine failure class to PGN, and exits nonzero after drain.
+Its color mate therefore cannot form a reported pentanomial pair. A shadow
+inversion has the same invalidating behavior. Any clean pairs already produced
+belong only to the failed audit identifier; they are never combined with the
+replacement audit.
 
 ## 6. Admission sequence
 
