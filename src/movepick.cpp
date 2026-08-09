@@ -401,7 +401,8 @@ top:
         return select([]() { return true; });
 
     case PROBCUT :
-        return select([&]() { return pos.see_ge(*cur, threshold); });
+        return select(
+          [&]() { return alice_capture_is_good(pos, *cur) && pos.see_ge(*cur, threshold); });
     }
 
     assert(false);
