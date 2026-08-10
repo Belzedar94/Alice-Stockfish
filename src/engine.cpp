@@ -41,6 +41,7 @@
 #include "misc.h"
 #include "nnue/alice_native/alice_native_features.h"
 #include "nnue/alice_native/alice_native_session.h"
+#include "nnue/alice_native_v2/alice_native_v2_session.h"
 #include "nnue/network.h"
 #include "nnue/nnue_common.h"
 #include "numa.h"
@@ -74,6 +75,7 @@ namespace {
 enum class AliceEvaluationBackend : u8 {
     LEGACY,
     NATIVE,
+    NATIVE_V2,
     ZERO
 };
 
@@ -82,6 +84,8 @@ AliceEvaluationBackend selected_evaluation_backend(const OptionsMap& options) {
         return AliceEvaluationBackend::ZERO;
     if (options["Alice Evaluation"] == "Native")
         return AliceEvaluationBackend::NATIVE;
+    if (options["Alice Evaluation"] == "NativeV2")
+        return AliceEvaluationBackend::NATIVE_V2;
     return AliceEvaluationBackend::LEGACY;
 }
 
@@ -454,12 +458,17 @@ Engine::Engine(std::optional<std::filesystem::path>) :
     options.add("UCI_ShowWDL", Option(false));
 
     options.add(
-      "Alice Evaluation", Option("Legacy var Native var Zero", "Legacy", [this](const Option& o) {
+      "Alice Evaluation", Option("Legacy var Native var NativeV2 var Zero", "Legacy", [this](const Option& o) {
           if (o == "Native")
               return std::optional<std::string>(
                 nativeQualification.loaded()
                   ? nativeQualification.status_line()
                   : "AliceNativeV1 selected; load an authenticated native EvalFile before eval or go.");
+          if (o == "NativeV2")
+              return std::optional<std::string>(
+                nativeV2.loaded()
+                  ? nativeV2.status_line()
+                  : "AliceNativeV2M512 selected; load an authenticated v2 EvalFile before eval or go.");
           if (o == "Zero")
               return std::optional<std::string>(
                 "Deterministic zero diagnostic evaluation selected.");
@@ -479,6 +488,11 @@ Engine::Engine(std::optional<std::filesystem::path>) :
                 nativeQualification.loaded()
                   ? nativeQualification.status_line()
                   : "Use NNUE enabled with AliceNativeV1 selected; load authenticated native parameters before eval or go.");
+          if (options["Alice Evaluation"] == "NativeV2")
+              return std::optional<std::string>(
+                nativeV2.loaded()
+                  ? nativeV2.status_line()
+                  : "Use NNUE enabled with AliceNativeV2M512 selected; load authenticated v2 parameters before eval or go.");
           if (options["Alice Evaluation"] == "Zero")
               return std::optional<std::string>(
                 "Use NNUE enabled; deterministic zero diagnostic evaluation remains selected.");
@@ -495,6 +509,14 @@ Engine::Engine(std::optional<std::filesystem::path>) :
     options.add(  //
       "Alice Native SHA256",
       Option("", [this](const Option&) { return configure_native_network(); }));
+
+    options.add(  //
+      "Alice Native v2 EvalFile",
+      Option("", [this](const Option&) { return configure_native_v2_network(); }));
+
+    options.add(  //
+      "Alice Native v2 SHA256",
+      Option("", [this](const Option&) { return configure_native_v2_network(); }));
 
     options.add(  //
       "Alice_Frozen_Network", Option(true, [this](const Option&) {
@@ -539,6 +561,9 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
         return "Legacy Alice evaluation is enabled, but no compatible network is loaded"
              + (legacyEvaluator.last_error().empty() ? std::string(".")
                                                      : ": " + legacyEvaluator.last_error());
+    if (evaluationBackend == AliceEvaluationBackend::NATIVE_V2 && !nativeV2.loaded())
+        return "AliceNativeV2M512 is selected, but no authenticated network is loaded"
+             + (nativeV2.last_error().empty() ? std::string(".") : ": " + nativeV2.last_error());
 
     if (evaluationBackend == AliceEvaluationBackend::LEGACY && !pos.is_draw(0))
     {
@@ -562,6 +587,16 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
         nativeLease = lease_native_network(leaseError);
         if (!nativeLease)
             return "AliceNativeV1 is selected, but its parameters cannot be leased: " + leaseError;
+    }
+
+    std::optional<Eval::NNUE::AliceNativeV2::Network::Lease> nativeV2Lease;
+    if (evaluationBackend == AliceEvaluationBackend::NATIVE_V2)
+    {
+        std::string leaseError;
+        nativeV2Lease = lease_native_v2_network(leaseError);
+        if (!nativeV2Lease)
+            return "AliceNativeV2M512 is selected, but its parameters cannot be leased: "
+                 + leaseError;
     }
 
     verify_network();
@@ -629,7 +664,8 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
     aliceSearchThread = std::thread([this, rootMoves = std::move(rootMoves), aliceLimits, rootFen,
                                      rootState, isChess960, waitForStop, evaluationBackend,
                                      legacyAccumulator = std::move(legacyAccumulator),
-                                     nativeLease       = std::move(nativeLease)]() mutable {
+                                     nativeLease       = std::move(nativeLease),
+                                     nativeV2Lease     = std::move(nativeV2Lease)]() mutable {
         StateInfo  searchRootState;
         Position   searchPos;
         const auto error = searchPos.set(rootFen, isChess960, &searchRootState);
@@ -660,6 +696,45 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
                     failed.rootRestored       = true;
                     onSearchError(format_search_failure(
                       {"AliceNativeV1", nativeLease->generation(), nativeLease->sha256()}, failed));
+                }
+                return;
+            }
+            if (!nativeSession->ready())
+            {
+                Value                    ignored = VALUE_ZERO;
+                AliceSearch::EvalFailure failure;
+                nativeSession->evaluate(searchPos, ignored, failure);
+                AliceSearch::Result failed;
+                failed.completion   = AliceSearch::Completion::FAILED;
+                failed.failure      = failure;
+                failed.rootRestored = true;
+                if (onSearchError)
+                    onSearchError(format_search_failure(nativeSession->identity(), failed));
+                return;
+            }
+            evaluator = std::move(nativeSession);
+        }
+        else if (evaluationBackend == AliceEvaluationBackend::NATIVE_V2)
+        {
+            assert(nativeV2Lease.has_value());
+            std::unique_ptr<Eval::NNUE::AliceNativeV2::SearchSession> nativeSession(
+              new (std::nothrow) Eval::NNUE::AliceNativeV2::SearchSession(
+                nativeV2Lease->parameter_view(), nativeV2Lease->generation(),
+                nativeV2Lease->sha256(), searchPos));
+            if (!nativeSession)
+            {
+                if (onSearchError)
+                {
+                    AliceSearch::Result failed;
+                    failed.completion         = AliceSearch::Completion::FAILED;
+                    failed.failure.code       = AliceSearch::EvalFailureCode::NOT_READY;
+                    failed.failure.stage      = AliceSearch::EvalStage::ROOT_REFRESH;
+                    failed.failure.generation = nativeV2Lease->generation();
+                    failed.rootRestored       = true;
+                    onSearchError(format_search_failure(
+                      {"AliceNativeV2M512", nativeV2Lease->generation(),
+                       nativeV2Lease->sha256()},
+                      failed));
                 }
                 return;
             }
@@ -910,6 +985,9 @@ void Engine::verify_network() const {
     case AliceEvaluationBackend::NATIVE :
         onVerifyNetwork(nativeQualification.status_line());
         break;
+    case AliceEvaluationBackend::NATIVE_V2 :
+        onVerifyNetwork(nativeV2.status_line());
+        break;
     case AliceEvaluationBackend::ZERO :
         onVerifyNetwork("Deterministic zero diagnostic evaluation is active.");
         break;
@@ -953,6 +1031,36 @@ std::optional<std::string> Engine::trace_eval() const {
         sync_cout << "info string AliceNativeV1 loaded generation=" << lease->generation()
                   << " sha256=" << lease->sha256() << "\n"
                   << "alice_native value " << value << " generation " << lease->generation()
+                  << " sha256 " << lease->sha256() << sync_endl;
+        return std::nullopt;
+    }
+    if (evaluationBackend == AliceEvaluationBackend::NATIVE_V2)
+    {
+        std::string leaseError;
+        auto        lease = lease_native_v2_network(leaseError);
+        if (!lease)
+            return "AliceNativeV2M512 evaluation requires leased parameters: " + leaseError;
+
+        std::unique_ptr<Eval::NNUE::AliceNativeV2::SearchSession> session(
+          new (std::nothrow) Eval::NNUE::AliceNativeV2::SearchSession(
+            lease->parameter_view(), lease->generation(), lease->sha256(), pos));
+        if (!session)
+            return "AliceNativeV2M512 evaluation could not allocate its fixed frame stack.";
+
+        Value                    value = VALUE_ZERO;
+        AliceSearch::EvalFailure failure;
+        if (!session->evaluate(pos, value, failure))
+        {
+            AliceSearch::Result failed;
+            failed.completion   = AliceSearch::Completion::FAILED;
+            failed.failure      = failure;
+            failed.rootRestored = session->matches_current(pos);
+            return format_search_failure(session->identity(), failed);
+        }
+
+        sync_cout << "info string AliceNativeV2M512 loaded generation=" << lease->generation()
+                  << " sha256=" << lease->sha256() << "\n"
+                  << "alice_native_v2 value " << value << " generation " << lease->generation()
                   << " sha256 " << lease->sha256() << sync_endl;
         return std::nullopt;
     }
@@ -1125,6 +1233,55 @@ std::optional<std::string> Engine::verify_native_lease(std::string& report) {
     return nativeQualification.verify_lease_contract(report);
 }
 
+std::optional<std::string> Engine::load_native_v2(const std::filesystem::path& file,
+                                                  std::string_view expectedSha256) {
+    if (auto error = nativeV2.load(file, expectedSha256))
+        return "AliceNativeV2M512 load rejected: " + *error;
+    return std::nullopt;
+}
+
+std::string Engine::native_v2_status() const { return nativeV2.status_line(); }
+
+std::string Engine::native_v2_tensor_status() const { return nativeV2.tensor_status_line(); }
+
+std::optional<std::string>
+Engine::probe_native_v2_parameter(std::string_view tensor, u64 index, std::string& report) const {
+    return nativeV2.probe(tensor, index, report);
+}
+
+std::optional<std::string> Engine::trace_native_v2_integer(std::string& report) {
+    wait_for_search_finished();
+    return nativeV2.integer_trace(pos, report);
+}
+
+std::optional<std::string> Engine::verify_native_v2_incremental(Depth        depth,
+                                                                std::string& report) {
+    wait_for_search_finished();
+    Eval::NNUE::AliceNativeV2::IncrementalVerificationStats stats;
+    if (auto error = nativeV2.verify_incremental(pos, depth, stats))
+        return error;
+
+    std::ostringstream out;
+    out << "alice_native_v2 incremental verified generation " << nativeV2.generation()
+        << " positions " << stats.positions << " transitions " << stats.transitions
+        << " captures " << stats.captures << " promotions " << stats.promotions
+        << " castlings " << stats.castlings << " king_moves " << stats.kingMoves
+        << " refreshes " << stats.fullRefreshes[WHITE] << ',' << stats.fullRefreshes[BLACK]
+        << " piece_adds " << stats.pieceAdds << " piece_removes " << stats.pieceRemoves
+        << " accumulator_comparisons " << stats.accumulatorComparisons
+        << " integer_stage_comparisons " << stats.stageComparisons << " undo_checks "
+        << stats.undoChecks << " fast_path_comparisons " << stats.fastPathComparisons << " depth "
+        << depth;
+    report = out.str();
+    return std::nullopt;
+}
+
+std::optional<std::string> Engine::verify_native_v2_search_session(Depth        depth,
+                                                                   std::string& report) {
+    wait_for_search_finished();
+    return nativeV2.verify_session(pos, depth, report);
+}
+
 std::optional<std::string> Engine::verify_legacy_incremental(Depth depth, u64& positions) {
     wait_for_search_finished();
     positions = 0;
@@ -1254,6 +1411,64 @@ Engine::lease_native_network(std::string& error) const {
         {
             error =
               "the selected EvalFile is unavailable or does not match the installed parameter source";
+            return std::nullopt;
+        }
+    }
+
+    error.clear();
+    return lease;
+}
+
+std::optional<std::string> Engine::configure_native_v2_network() {
+    const std::string file   = options["Alice Native v2 EvalFile"];
+    const std::string sha256 = options["Alice Native v2 SHA256"];
+    if (file.empty() && sha256.empty())
+        return nativeV2.loaded()
+               ? std::optional<std::string>(
+                   "Alice native v2 EvalFile options are empty; the explicitly loaded parameters remain installed.")
+               : std::optional<std::string>(
+                   "Alice native v2 EvalFile options are empty; no parameters are loaded.");
+    if (file.empty() || sha256.empty())
+        return "AliceNativeV2M512 loading requires both Alice Native v2 EvalFile and Alice Native v2 SHA256.";
+
+    if (auto error = nativeV2.load(path_from_utf8(file), sha256))
+        return "AliceNativeV2M512 rejected EvalFile: " + *error;
+    return nativeV2.status_line();
+}
+
+std::optional<Eval::NNUE::AliceNativeV2::Network::Lease>
+Engine::lease_native_v2_network(std::string& error) const {
+    auto lease = nativeV2.acquire_lease(error);
+    if (!lease)
+        return std::nullopt;
+
+    const std::string selectedFile = options["Alice Native v2 EvalFile"];
+    const std::string selectedSha  = options["Alice Native v2 SHA256"];
+    if (selectedFile.empty() != selectedSha.empty())
+    {
+        error =
+          "both Alice Native v2 EvalFile and Alice Native v2 SHA256 are required, or neither when parameters were loaded explicitly";
+        return std::nullopt;
+    }
+
+    if (!selectedSha.empty())
+    {
+        const CaseInsensitiveLess less;
+        const std::string         leasedSha(lease->sha256());
+        if (less(selectedSha, leasedSha) || less(leasedSha, selectedSha))
+        {
+            error = "the selected v2 SHA-256 does not match the installed parameters";
+            return std::nullopt;
+        }
+
+        std::error_code pathError;
+        const bool      samePath = std::filesystem::equivalent(
+          path_from_utf8(selectedFile), path_from_utf8(std::string(lease->normalized_path())),
+          pathError);
+        if (pathError || !samePath)
+        {
+            error =
+              "the selected v2 EvalFile is unavailable or does not match the installed parameter source";
             return std::nullopt;
         }
     }

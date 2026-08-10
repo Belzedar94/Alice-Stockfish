@@ -83,6 +83,9 @@ SRCS = alice_search.cpp legacy_alice_nnue.cpp attacks.cpp benchmark.cpp bitboard
 	nnue/features/half_ka_v2_hm.cpp nnue/features/full_threats.cpp nnue/features/pp_3wide.cpp \
 	nnue/alice_native/alice_native_features.cpp nnue/alice_native/alice_native_inference.cpp \
 	nnue/alice_native/alice_native_network.cpp nnue/alice_native/alice_native_session.cpp \
+	nnue/alice_native_v2/alice_native_v2_inference.cpp \
+	nnue/alice_native_v2/alice_native_v2_network.cpp \
+	nnue/alice_native_v2/alice_native_v2_session.cpp \
 	engine.cpp score.cpp memory.cpp
 
 OTHER_SRCS = universal/entry_x86.cpp universal/entry_arm64.cpp universal/entry_riscv64.cpp universal/nnue_embed.cpp
@@ -93,6 +96,8 @@ HEADERS = alice_search.h legacy_alice_nnue.h attacks.h benchmark.h bitboard.h ev
 		nnue/alice_native/manifest.h nnue/alice_native/alice_native_features.h \
 		nnue/alice_native/alice_native_inference.h \
 		nnue/alice_native/alice_native_network.h nnue/alice_native/alice_native_session.h \
+		nnue/alice_native_v2/manifest.h nnue/alice_native_v2/alice_native_v2_inference.h \
+		nnue/alice_native_v2/alice_native_v2_network.h nnue/alice_native_v2/alice_native_v2_session.h \
 		nnue/layers/clipped_relu.h nnue/layers/sqr_clipped_relu.h nnue/nnue_accumulator.h \
 		nnue/nnue_architecture.h nnue/nnue_common.h nnue/nnue_feature_transformer.h nnue/simd.h \
 		nnue/nnz_helper.h position.h search.h syzygy/tbprobe.h thread.h thread_native.h timeman.h \
@@ -100,7 +105,7 @@ HEADERS = alice_search.h legacy_alice_nnue.h attacks.h benchmark.h bitboard.h ev
 
 OBJS = $(notdir $(SRCS:.cpp=.o))
 
-VPATH = syzygy:nnue:nnue/features:nnue/alice_native
+VPATH = syzygy:nnue:nnue/features:nnue/alice_native:nnue/alice_native_v2
 
 ### ==========================================================================
 ### Section 2. High-level Configuration

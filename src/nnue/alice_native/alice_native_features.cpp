@@ -714,6 +714,36 @@ PositionTrace build_trace(const Position& position) {
     return result;
 }
 
+std::optional<std::string> build_piece_snapshot(const Position& position, PieceSnapshot& result) {
+    result = {};
+
+    if (position.count<KING>(WHITE) != 1 || position.count<KING>(BLACK) != 1)
+        return "Alice native piece snapshots require exactly one king per color.";
+
+    const int pieceCount = popcount(position.pieces());
+    if (pieceCount < 2 || pieceCount > int(MaximumPieceFeatures))
+        return "Alice native piece snapshots require between 2 and 32 pieces.";
+
+    for (Color perspective : {WHITE, BLACK})
+    {
+        PerspectivePieceSnapshot& snapshot = result[perspective];
+        snapshot.perspective               = perspective;
+        snapshot.kingSquare                = position.square<KING>(perspective);
+        snapshot.kingBoard                 = position.board_of(snapshot.kingSquare);
+
+        if (!enumerate_piece_features(
+              position, perspective, snapshot.kingSquare, snapshot.kingBoard,
+              [&](IndexType index, Piece, Square, Board, Relation) {
+                  return index < PieceSquareDimensions && snapshot.pieces.push_back(index);
+              }))
+            return "Alice native fixed piece feature capacity or index range was exceeded.";
+
+        std::sort(snapshot.pieces.begin(), snapshot.pieces.end());
+    }
+
+    return std::nullopt;
+}
+
 std::optional<std::string> build_fixed_snapshot(const Position& position, FeatureSnapshot& result) {
     result = {};
 

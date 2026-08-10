@@ -36,6 +36,7 @@
 #include "history.h"
 #include "legacy_alice_nnue.h"
 #include "nnue/alice_native/alice_native_network.h"
+#include "nnue/alice_native_v2/alice_native_v2_network.h"
 #include "nnue/network.h"
 #include "nnue/nnue_misc.h"
 #include "numa.h"
@@ -117,6 +118,15 @@ class Engine {
     std::optional<std::string> verify_loaded_native_incremental(Depth depth, std::string& report);
     std::optional<std::string> verify_native_search_session(Depth depth, std::string& report);
     std::optional<std::string> verify_native_lease(std::string& report);
+    std::optional<std::string> load_native_v2(const std::filesystem::path& file,
+                                              std::string_view expectedSha256);
+    std::string                native_v2_status() const;
+    std::string                native_v2_tensor_status() const;
+    std::optional<std::string>
+    probe_native_v2_parameter(std::string_view tensor, u64 index, std::string& report) const;
+    std::optional<std::string> trace_native_v2_integer(std::string& report);
+    std::optional<std::string> verify_native_v2_incremental(Depth depth, std::string& report);
+    std::optional<std::string> verify_native_v2_search_session(Depth depth, std::string& report);
     std::optional<std::string> verify_legacy_incremental(Depth depth, u64& positions);
 
     const OptionsMap& get_options() const;
@@ -146,6 +156,7 @@ class Engine {
     LegacyAliceExact                                  legacyEvaluator;
     Eval::NNUE::AliceNative::WireValidator            nativeWireValidator;
     Eval::NNUE::AliceNative::QualificationNetwork     nativeQualification;
+    Eval::NNUE::AliceNativeV2::Network                nativeV2;
 
     Search::SearchManager::UpdateContext  updateContext;
     std::function<void(std::string_view)> onSearchError;
@@ -158,8 +169,11 @@ class Engine {
 
     std::optional<std::string> configure_legacy_network(const std::filesystem::path&);
     std::optional<std::string> configure_native_network();
+    std::optional<std::string> configure_native_v2_network();
     std::optional<Eval::NNUE::AliceNative::QualificationNetwork::Lease>
     lease_native_network(std::string& error) const;
+    std::optional<Eval::NNUE::AliceNativeV2::Network::Lease>
+    lease_native_v2_network(std::string& error) const;
 };
 
 }  // namespace Stockfish

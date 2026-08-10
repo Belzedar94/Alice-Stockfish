@@ -210,8 +210,21 @@ struct PerspectiveFeatureSnapshot {
 
 using FeatureSnapshot = std::array<PerspectiveFeatureSnapshot, COLOR_NB>;
 
+// Piece-only snapshots are the shared sparse input contract for compact
+// AliceNative-v2 networks.  Keeping them separate from FeatureSnapshot avoids
+// constructing the substantially larger v1 threat set on every search ply.
+struct PerspectivePieceSnapshot {
+    Color                                perspective = WHITE;
+    Square                               kingSquare  = SQ_NONE;
+    Board                                kingBoard   = BOARD_A;
+    FixedIndexList<MaximumPieceFeatures> pieces;
+};
+
+using PieceSnapshot = std::array<PerspectivePieceSnapshot, COLOR_NB>;
+
 PositionTrace              build_trace(const Position& position);
 std::optional<std::string> build_fixed_snapshot(const Position& position, FeatureSnapshot& result);
+std::optional<std::string> build_piece_snapshot(const Position& position, PieceSnapshot& result);
 std::string                trace_json(const Position& position);
 std::optional<std::string>
 verify_incremental(Position& position, Depth depth, IncrementalVerificationStats& stats);
