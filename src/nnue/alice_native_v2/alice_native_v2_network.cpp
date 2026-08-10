@@ -1109,6 +1109,10 @@ Network::verify_session(Position& position, Depth depth, std::string& report) co
     u64 stageChecks       = 0;
     u64 valueChecks       = 0;
     u64 undoChecks        = 0;
+    u64 nullTransitions   = 0;
+    u64 nullAccumulatorChecks = 0;
+    u64 nullValueChecks   = 0;
+    u64 nullUndoChecks    = 0;
 
     std::function<std::optional<std::string>(Depth)> visit;
     visit = [&](Depth remaining) -> std::optional<std::string> {
@@ -1148,6 +1152,83 @@ Network::verify_session(Position& position, Depth depth, std::string& report) co
         if (sessionValue != fullStages.adjustedValue)
             return "AliceNative-v2 search-session value mismatch at " + position.fen() + ".";
         ++valueChecks;
+
+        // Stockfish's null-move search changes identity and side to move without changing
+        // any piece feature. Exercise that exact transition explicitly: the session must
+        // copy its accumulators, evaluate from the opposite perspective, and restore the
+        // parent transactionally.
+        if (!position.checkers())
+        {
+            const std::string nullParentFen    = position.fen();
+            const Key         nullParentKey    = position.key();
+            const Bitboard    nullParentBoardB = position.state()->boardB;
+            const Color       nullParentSide   = position.side_to_move();
+            const int         nullParentPieces = position.count<ALL_PIECES>();
+
+            StateInfo nullState;
+            position.do_null_move(nullState);
+            ++nullTransitions;
+
+            std::optional<std::string> nullError;
+            bool                       nullPushed = false;
+            AliceSearch::EvalFailure   nullPushFailure;
+            if (!session->push_null(position, nullPushFailure))
+                nullError = describe_failure("null push", nullPushFailure);
+            else
+            {
+                nullPushed = true;
+                Value                    nullSessionValue = VALUE_ZERO;
+                AliceSearch::EvalFailure nullEvaluationFailure;
+                if (!session->evaluate(position, nullSessionValue, nullEvaluationFailure))
+                    nullError = describe_failure("null evaluation", nullEvaluationFailure);
+                else
+                {
+                    AliceNative::PieceSnapshot nullSnapshot;
+                    IntegerAccumulatorSet      nullFull;
+                    if (auto error = AliceNative::build_piece_snapshot(position, nullSnapshot))
+                        nullError = error;
+                    for (Color perspective : {WHITE, BLACK})
+                        if (!nullError)
+                            if (auto error = refresh_accumulator(
+                                  view, nullSnapshot[perspective], nullFull[perspective]))
+                                nullError = error;
+                    if (!nullError && !same_accumulators(session->current_accumulators(), nullFull))
+                        nullError = "AliceNative-v2 null-move accumulator mismatch.";
+                    if (!nullError)
+                    {
+                        ++nullAccumulatorChecks;
+                        i32 nullFullValue = 0;
+                        if (auto error = evaluate_value(view, position, nullFull, true,
+                                                        nullFullValue))
+                            nullError = error;
+                        else if (nullSessionValue != nullFullValue)
+                            nullError = "AliceNative-v2 null-move value mismatch.";
+                        else
+                            ++nullValueChecks;
+                    }
+                }
+            }
+
+            position.undo_null_move();
+            if (nullPushed)
+            {
+                AliceSearch::EvalFailure nullPopFailure;
+                if (!session->pop(position, nullPopFailure) && !nullError)
+                    nullError = describe_failure("null pop", nullPopFailure);
+                else if (!nullError)
+                    ++nullUndoChecks;
+            }
+
+            if (!nullError
+                && (position.fen() != nullParentFen || position.key() != nullParentKey
+                    || position.state()->boardB != nullParentBoardB
+                    || position.side_to_move() != nullParentSide
+                    || position.count<ALL_PIECES>() != nullParentPieces
+                    || !session->matches_current(position)))
+                nullError = "AliceNative-v2 null move did not restore its parent position.";
+            if (nullError)
+                return nullError;
+        }
 
         if (remaining == 0)
             return std::nullopt;
@@ -1212,9 +1293,14 @@ Network::verify_session(Position& position, Depth depth, std::string& report) co
         return "AliceNative-v2 parameters changed during search-session verification.";
 
     const RuntimeSessionStats& runtime = session->stats();
-    if (runtime.evaluations != positions || runtime.pushes != transitions
-        || runtime.pops != transitions || accumulatorChecks != positions
-        || stageChecks != positions || valueChecks != positions || undoChecks != transitions)
+    if (runtime.evaluations != positions + nullValueChecks
+        || runtime.pushes != transitions + nullTransitions
+        || runtime.pops != transitions + nullTransitions
+        || runtime.nullPushes != nullTransitions || runtime.nullPops != nullTransitions
+        || accumulatorChecks != positions
+        || stageChecks != positions || valueChecks != positions || undoChecks != transitions
+        || nullAccumulatorChecks != nullTransitions || nullValueChecks != nullTransitions
+        || nullUndoChecks != nullTransitions)
         return "AliceNative-v2 search-session counters violated their traversal invariants.";
 
     std::ostringstream out;
@@ -1227,7 +1313,10 @@ Network::verify_session(Position& position, Depth depth, std::string& report) co
         << " piece_removes " << runtime.pieceRemoves << " max_piece_events "
         << runtime.maxPieceEvents << " accumulator_checks " << accumulatorChecks
         << " integer_stage_checks " << stageChecks << " value_checks " << valueChecks
-        << " undo_checks " << undoChecks << " depth " << depth << " search available";
+        << " undo_checks " << undoChecks << " null_transitions " << nullTransitions
+        << " null_accumulator_checks " << nullAccumulatorChecks << " null_value_checks "
+        << nullValueChecks << " null_undo_checks " << nullUndoChecks << " depth " << depth
+        << " search available";
     report = out.str();
     return std::nullopt;
 }

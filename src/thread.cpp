@@ -144,6 +144,13 @@ Search::SearchManager* ThreadPool::main_manager() { return main_thread()->worker
 u64 ThreadPool::nodes_searched() const { return accumulate(&Search::Worker::nodes); }
 u64 ThreadPool::tb_hits() const { return accumulate(&Search::Worker::tbHits); }
 
+std::optional<std::string> ThreadPool::search_failure() const {
+    for (const auto& thread : threads)
+        if (!thread->worker->searchFailure.empty())
+            return thread->worker->searchFailure;
+    return std::nullopt;
+}
+
 static usize next_power_of_two(u64 count) { return count > 1 ? (2ULL << msb(count - 1)) : 1; }
 
 // Creates/destroys threads to match the requested number.

@@ -175,6 +175,7 @@ bool SearchSession::push(const Position& position, const Dirties& dirties,
     Frame& child = frames[currentPly + 1];
     child.position = capture(position);
     child.accumulators = parent.accumulators;
+    child.nullTransition = false;
     for (Color perspective : {WHITE, BLACK})
     {
         child.kingSquares[perspective] = position.square<KING>(perspective);
@@ -255,6 +256,34 @@ bool SearchSession::push(const Position& position, const Dirties& dirties,
     return true;
 }
 
+bool SearchSession::push_null(const Position& position,
+                              AliceSearch::EvalFailure& failure) noexcept {
+    if (!initialized)
+    {
+        failure = initializationFailure;
+        return false;
+    }
+    if (currentPly >= MAX_PLY)
+        return fail(failure, AliceSearch::EvalFailureCode::STACK_OVERFLOW,
+                    AliceSearch::EvalStage::PUSH);
+
+    const Frame& parent = frames[currentPly];
+    if (position.state()->previous != parent.position.state
+        || position.state()->boardB != parent.position.boardB
+        || position.count<ALL_PIECES>() != parent.position.pieceCount)
+        return fail(failure, AliceSearch::EvalFailureCode::POSITION_MISMATCH,
+                    AliceSearch::EvalStage::PUSH);
+
+    Frame& child = frames[currentPly + 1];
+    child = parent;
+    child.position = capture(position);
+    child.nullTransition = true;
+    ++currentPly;
+    ++counters.pushes;
+    ++counters.nullPushes;
+    return true;
+}
+
 bool SearchSession::pop(const Position& restoredParent,
                         AliceSearch::EvalFailure& failure) noexcept {
     if (!initialized)
@@ -268,8 +297,10 @@ bool SearchSession::pop(const Position& restoredParent,
     if (!same_position(frames[currentPly - 1].position, restoredParent))
         return fail(failure, AliceSearch::EvalFailureCode::POSITION_MISMATCH,
                     AliceSearch::EvalStage::POP);
+    const bool nullTransition = frames[currentPly].nullTransition;
     --currentPly;
     ++counters.pops;
+    counters.nullPops += nullTransition;
     return true;
 }
 

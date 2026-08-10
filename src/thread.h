@@ -24,6 +24,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "memory.h"
@@ -144,6 +146,7 @@ class ThreadPool {
     Thread*                main_thread() const { return threads.front().get(); }
     u64                    nodes_searched() const;
     u64                    tb_hits() const;
+    std::optional<std::string> search_failure() const;
     Thread*                get_best_thread() const;
     void                   start_searching();
     void                   wait_for_search_finished() const;

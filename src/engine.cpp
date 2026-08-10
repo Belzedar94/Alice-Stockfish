@@ -478,6 +478,8 @@ Engine::Engine(std::optional<std::filesystem::path>) :
               : "LegacyAliceExact selected; load a compatible EvalFile before eval or go.");
       }));
 
+    options.add("Alice NativeV2 Search Stats", Option(false));
+
     options.add(  //
       "Use NNUE", Option(true, [this](const Option& o) {
           if (!int(o))
@@ -565,7 +567,8 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
         return "AliceNativeV2M512 is selected, but no authenticated network is loaded"
              + (nativeV2.last_error().empty() ? std::string(".") : ": " + nativeV2.last_error());
 
-    if (evaluationBackend == AliceEvaluationBackend::LEGACY && !pos.is_draw(0))
+    if ((evaluationBackend == AliceEvaluationBackend::LEGACY && !pos.is_draw(0))
+        || evaluationBackend == AliceEvaluationBackend::NATIVE_V2)
     {
         verify_network();
         threads.start_thinking(options, pos, states, limits);
@@ -587,16 +590,6 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
         nativeLease = lease_native_network(leaseError);
         if (!nativeLease)
             return "AliceNativeV1 is selected, but its parameters cannot be leased: " + leaseError;
-    }
-
-    std::optional<Eval::NNUE::AliceNativeV2::Network::Lease> nativeV2Lease;
-    if (evaluationBackend == AliceEvaluationBackend::NATIVE_V2)
-    {
-        std::string leaseError;
-        nativeV2Lease = lease_native_v2_network(leaseError);
-        if (!nativeV2Lease)
-            return "AliceNativeV2M512 is selected, but its parameters cannot be leased: "
-                 + leaseError;
     }
 
     verify_network();
@@ -664,8 +657,7 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
     aliceSearchThread = std::thread([this, rootMoves = std::move(rootMoves), aliceLimits, rootFen,
                                      rootState, isChess960, waitForStop, evaluationBackend,
                                      legacyAccumulator = std::move(legacyAccumulator),
-                                     nativeLease       = std::move(nativeLease),
-                                     nativeV2Lease     = std::move(nativeV2Lease)]() mutable {
+                                     nativeLease       = std::move(nativeLease)]() mutable {
         StateInfo  searchRootState;
         Position   searchPos;
         const auto error = searchPos.set(rootFen, isChess960, &searchRootState);
@@ -714,47 +706,11 @@ std::optional<std::string> Engine::go(Search::LimitsType& limits) {
             }
             evaluator = std::move(nativeSession);
         }
-        else if (evaluationBackend == AliceEvaluationBackend::NATIVE_V2)
-        {
-            assert(nativeV2Lease.has_value());
-            std::unique_ptr<Eval::NNUE::AliceNativeV2::SearchSession> nativeSession(
-              new (std::nothrow) Eval::NNUE::AliceNativeV2::SearchSession(
-                nativeV2Lease->parameter_view(), nativeV2Lease->generation(),
-                nativeV2Lease->sha256(), searchPos));
-            if (!nativeSession)
-            {
-                if (onSearchError)
-                {
-                    AliceSearch::Result failed;
-                    failed.completion         = AliceSearch::Completion::FAILED;
-                    failed.failure.code       = AliceSearch::EvalFailureCode::NOT_READY;
-                    failed.failure.stage      = AliceSearch::EvalStage::ROOT_REFRESH;
-                    failed.failure.generation = nativeV2Lease->generation();
-                    failed.rootRestored       = true;
-                    onSearchError(format_search_failure(
-                      {"AliceNativeV2M512", nativeV2Lease->generation(),
-                       nativeV2Lease->sha256()},
-                      failed));
-                }
-                return;
-            }
-            if (!nativeSession->ready())
-            {
-                Value                    ignored = VALUE_ZERO;
-                AliceSearch::EvalFailure failure;
-                nativeSession->evaluate(searchPos, ignored, failure);
-                AliceSearch::Result failed;
-                failed.completion   = AliceSearch::Completion::FAILED;
-                failed.failure      = failure;
-                failed.rootRestored = true;
-                if (onSearchError)
-                    onSearchError(format_search_failure(nativeSession->identity(), failed));
-                return;
-            }
-            evaluator = std::move(nativeSession);
-        }
         else
+        {
+            assert(evaluationBackend != AliceEvaluationBackend::NATIVE_V2);
             evaluator = std::make_unique<ZeroSearchEvaluator>(searchPos);
+        }
 
         const TimePoint started = now();
 
@@ -868,7 +824,8 @@ void Engine::set_on_bestmove(std::function<void(std::string_view, std::string_vi
 void Engine::set_on_start(std::function<void()>&& f) { updateContext.onStart = std::move(f); }
 
 void Engine::set_on_search_error(std::function<void(std::string_view)>&& f) {
-    onSearchError = std::move(f);
+    onSearchError             = f;
+    updateContext.onError = std::move(f);
 }
 
 void Engine::set_on_verify_network(std::function<void(std::string_view)>&& f) {
@@ -953,7 +910,8 @@ bool Engine::set_numa_config_from_option(const std::string& o) {
 void Engine::resize_threads() {
     threads.wait_for_search_finished();
     threads.set(numaContext.get_numa_config(),
-                {options, threads, tt, sharedHists, network, legacyEvaluator}, updateContext);
+                {options, threads, tt, sharedHists, network, legacyEvaluator, nativeV2},
+                updateContext);
 
     // Reallocate the hash with the new threadpool size
     set_tt_size(options["Hash"]);

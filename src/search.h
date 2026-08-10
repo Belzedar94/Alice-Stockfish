@@ -57,6 +57,13 @@ class OptionsMap;
 
 namespace Eval::NNUE {
 class Network;
+namespace AliceNativeV2 {
+class Network;
+}
+}
+
+namespace AliceSearch {
+struct EvalFailure;
 }
 
 namespace Search {
@@ -189,13 +196,15 @@ struct SharedState {
                 TranspositionTable&                                      transpositionTable,
                 std::map<NumaIndex, SharedHistories>&                    sharedHists,
                 const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& net,
-                const LegacyAliceExact&                                  legacy) :
+                const LegacyAliceExact&                                  legacy,
+                const Eval::NNUE::AliceNativeV2::Network&                nativeV2) :
         options(optionsMap),
         threads(threadPool),
         tt(transpositionTable),
         sharedHistories(sharedHists),
         network(net),
-        legacyEvaluator(legacy) {}
+        legacyEvaluator(legacy),
+        nativeV2Network(nativeV2) {}
 
     const OptionsMap&                                        options;
     ThreadPool&                                              threads;
@@ -203,6 +212,7 @@ struct SharedState {
     std::map<NumaIndex, SharedHistories>&                    sharedHistories;
     const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
     const LegacyAliceExact&                                  legacyEvaluator;
+    const Eval::NNUE::AliceNativeV2::Network&                nativeV2Network;
 };
 
 class Worker;
@@ -276,6 +286,7 @@ class SearchManager: public ISearchManager {
     using UpdateIter     = std::function<void(const InfoIteration&)>;
     using UpdateBestmove = std::function<void(std::string_view, std::string_view)>;
     using UpdateStart    = std::function<void()>;
+    using UpdateError    = std::function<void(std::string_view)>;
 
     struct UpdateContext {
         UpdateShort    onUpdateNoMoves;
@@ -283,6 +294,7 @@ class SearchManager: public ISearchManager {
         UpdateIter     onIter;
         UpdateBestmove onBestmove;
         UpdateStart    onStart;
+        UpdateError    onError;
     };
 
 
@@ -326,6 +338,7 @@ class Worker {
            usize,
            usize,
            NumaReplicatedAccessToken);
+    ~Worker();
 
     // Called at instantiation to initialize reductions tables.
     // Reset histories, usually before a new game.
@@ -351,6 +364,8 @@ class Worker {
     ContinuationHistory (&continuationHistory)[2][2];
 
    private:
+    struct NativeV2State;
+
     bool iterative_deepening();
 
     void do_move(Position& pos, const Move move, StateInfo& st, Stack* const ss);
@@ -380,6 +395,8 @@ class Worker {
     TimePoint elapsed() const;
 
     Value evaluate(const Position&);
+    bool  native_v2_selected() const;
+    void  record_native_v2_failure(const AliceSearch::EvalFailure&, std::string_view = {});
 
     LimitsType limits;
 
@@ -413,11 +430,14 @@ class Worker {
     TranspositionTable&                                      tt;
     const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
     const LegacyAliceExact&                                  legacyEvaluator;
+    const Eval::NNUE::AliceNativeV2::Network&                nativeV2Network;
 
     // Used by NNUE
     Eval::NNUE::AccumulatorStack                   accumulatorStack;
     Eval::NNUE::AccumulatorCaches                  refreshTable;
     std::unique_ptr<LegacyAliceExact::Accumulator> legacyAccumulator;
+    std::unique_ptr<NativeV2State> nativeV2State;
+    std::string                    searchFailure;
 
     friend class Stockfish::ThreadPool;
     friend class SearchManager;

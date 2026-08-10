@@ -29,7 +29,10 @@
 #include <initializer_list>
 #include <iostream>
 #include <list>
+#include <new>
+#include <optional>
 #include <ratio>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -39,6 +42,8 @@
 #include "misc.h"
 #include "movegen.h"
 #include "movepick.h"
+#include "nnue/alice_native_v2/alice_native_v2_network.h"
+#include "nnue/alice_native_v2/alice_native_v2_session.h"
 #include "nnue/network.h"
 #include "nnue/nnue_accumulator.h"
 #include "position.h"
@@ -72,6 +77,21 @@ constexpr bool ALICE_SEE_AVAILABLE = false;
 
 constexpr int SEARCHEDLIST_CAPACITY = 32;
 using SearchedList                  = ValueList<Move, SEARCHEDLIST_CAPACITY>;
+
+std::string format_native_v2_failure(const AliceSearch::EvaluatorIdentity& identity,
+                                     const AliceSearch::EvalFailure&       failure,
+                                     std::string_view                      detail) {
+    std::ostringstream out;
+    out << "Alice full-search evaluator failed backend=" << identity.backend
+        << " code=" << AliceSearch::failure_code_name(failure.code)
+        << " stage=" << AliceSearch::failure_stage_name(failure.stage)
+        << " ply=" << failure.ply << " generation=" << identity.generation;
+    if (!identity.sha256.empty())
+        out << " sha256=" << identity.sha256;
+    if (!detail.empty())
+        out << " detail=" << detail;
+    return out.str();
+}
 
 // (*Scalers):
 // The values with Scaler asterisks have proven non-linear scaling.
@@ -161,6 +181,11 @@ bool is_shuffling(Move move, Stack* const ss, const Position& pos) {
 
 }  // namespace
 
+struct Search::Worker::NativeV2State {
+    std::optional<Eval::NNUE::AliceNativeV2::Network::Lease> lease;
+    std::unique_ptr<Eval::NNUE::AliceNativeV2::SearchSession> session;
+};
+
 Search::Worker::Worker(SharedState&                    sharedState,
                        std::unique_ptr<ISearchManager> sm,
                        usize                           threadId,
@@ -180,9 +205,13 @@ Search::Worker::Worker(SharedState&                    sharedState,
     tt(sharedState.tt),
     network(sharedState.network),
     legacyEvaluator(sharedState.legacyEvaluator),
-    refreshTable(network[token]) {
+    nativeV2Network(sharedState.nativeV2Network),
+    refreshTable(network[token]),
+    nativeV2State(std::make_unique<NativeV2State>()) {
     clear();
 }
+
+Search::Worker::~Worker() = default;
 
 void Search::Worker::ensure_network_replicated() {
     // Access once to force lazy initialization.
@@ -193,8 +222,57 @@ void Search::Worker::ensure_network_replicated() {
 void Search::Worker::start_searching() {
 
     accumulatorStack.reset();
-    legacyAccumulator = legacyEvaluator.make_accumulator(rootPos);
-    assert(legacyAccumulator);
+    legacyAccumulator.reset();
+    nativeV2State->session.reset();
+    nativeV2State->lease.reset();
+    searchFailure.clear();
+
+    if (native_v2_selected())
+    {
+        std::string leaseError;
+        nativeV2State->lease = nativeV2Network.acquire_lease(leaseError);
+        if (!nativeV2State->lease)
+        {
+            AliceSearch::EvalFailure failure;
+            failure.code  = AliceSearch::EvalFailureCode::NOT_READY;
+            failure.stage = AliceSearch::EvalStage::ROOT_REFRESH;
+            record_native_v2_failure(failure, leaseError);
+        }
+        else
+        {
+            nativeV2State->session.reset(
+              new (std::nothrow) Eval::NNUE::AliceNativeV2::SearchSession(
+                nativeV2State->lease->parameter_view(), nativeV2State->lease->generation(),
+                nativeV2State->lease->sha256(), rootPos));
+            if (!nativeV2State->session)
+            {
+                AliceSearch::EvalFailure failure;
+                failure.code       = AliceSearch::EvalFailureCode::NOT_READY;
+                failure.stage      = AliceSearch::EvalStage::ROOT_REFRESH;
+                failure.generation = nativeV2State->lease->generation();
+                record_native_v2_failure(failure, "session allocation failed");
+            }
+            else if (!nativeV2State->session->ready())
+            {
+                Value                    ignored = VALUE_ZERO;
+                AliceSearch::EvalFailure failure;
+                nativeV2State->session->evaluate(rootPos, ignored, failure);
+                record_native_v2_failure(failure);
+            }
+        }
+    }
+    else
+    {
+        legacyAccumulator = legacyEvaluator.make_accumulator(rootPos);
+        assert(legacyAccumulator);
+    }
+
+    if (!searchFailure.empty())
+    {
+        if (is_mainthread() && main_manager()->updates.onError)
+            main_manager()->updates.onError(searchFailure);
+        return;
+    }
 
     // Non-main threads go directly to iterative_deepening()
     if (!is_mainthread())
@@ -208,10 +286,28 @@ void Search::Worker::start_searching() {
     tt.new_search();
     main_manager()->updates.onStart();
 
-    if (rootMoves.empty())
+    if (nativeV2State->session)
+        sync_cout << "info string alice_native_v2 full_search generation="
+                  << nativeV2State->session->identity().generation
+                  << " sha256=" << nativeV2State->session->identity().sha256
+                  << " threads=" << threads.size() << " hash_mib=" << int(options["Hash"])
+                  << sync_endl;
+
+    const bool rootRuleDraw = !rootMoves.empty() && rootPos.is_draw(0);
+    if (rootMoves.empty() || rootRuleDraw)
     {
+        const bool checkmate = rootMoves.empty() && bool(rootPos.checkers());
+        const std::string_view result = checkmate
+                                        ? (rootPos.side_to_move() == WHITE ? "0-1" : "1-0")
+                                        : "1/2-1/2";
+        const std::string_view reason = checkmate      ? "checkmate"
+                                        : rootRuleDraw ? "rule_draw"
+                                                       : "stalemate";
+
         main_manager()->updates.onUpdateNoMoves(
-          {0, {rootPos.checkers() ? -VALUE_MATE : VALUE_DRAW, rootPos}});
+          {0, {checkmate ? -VALUE_MATE : VALUE_DRAW, rootPos}});
+        sync_cout << "info string alice_result result=" << result << " reason=" << reason
+                  << sync_endl;
         main_manager()->updates.onBestmove(UCIEngine::move(Move::none()), "");
         return;
     }
@@ -234,6 +330,47 @@ void Search::Worker::start_searching() {
 
     // Wait until all threads have finished
     threads.wait_for_search_finished();
+
+    if (const auto failure = threads.search_failure())
+    {
+        if (main_manager()->updates.onError)
+            main_manager()->updates.onError(*failure);
+        return;
+    }
+
+    if (nativeV2State->session && bool(options["Alice NativeV2 Search Stats"]))
+    {
+        Eval::NNUE::AliceNativeV2::RuntimeSessionStats aggregate;
+        usize                                           workers = 0;
+        for (const auto& thread : threads)
+        {
+            if (!thread->worker->nativeV2State->session)
+                continue;
+
+            const auto& stats = thread->worker->nativeV2State->session->stats();
+            ++workers;
+            aggregate.evaluations += stats.evaluations;
+            aggregate.pushes += stats.pushes;
+            aggregate.pops += stats.pops;
+            aggregate.nullPushes += stats.nullPushes;
+            aggregate.nullPops += stats.nullPops;
+            aggregate.fullRefreshes[WHITE] += stats.fullRefreshes[WHITE];
+            aggregate.fullRefreshes[BLACK] += stats.fullRefreshes[BLACK];
+            aggregate.pieceAdds += stats.pieceAdds;
+            aggregate.pieceRemoves += stats.pieceRemoves;
+            aggregate.maxPieceEvents = std::max(aggregate.maxPieceEvents, stats.maxPieceEvents);
+        }
+
+        sync_cout << "info string alice_native_v2 full_search_stats workers=" << workers
+                  << " evaluations=" << aggregate.evaluations << " pushes=" << aggregate.pushes
+                  << " pops=" << aggregate.pops << " null_pushes=" << aggregate.nullPushes
+                  << " null_pops=" << aggregate.nullPops
+                  << " full_refresh_white=" << aggregate.fullRefreshes[WHITE]
+                  << " full_refresh_black=" << aggregate.fullRefreshes[BLACK]
+                  << " piece_adds=" << aggregate.pieceAdds
+                  << " piece_removes=" << aggregate.pieceRemoves
+                  << " max_piece_events=" << aggregate.maxPieceEvents << sync_endl;
+    }
 
     // When playing in 'nodes as time' mode, subtract the searched nodes from
     // the available ones before exiting.
@@ -651,7 +788,14 @@ void Search::Worker::do_move(
 
     Dirties& dirties = accumulatorStack.push();
     pos.do_move(move, st, givesCheck, dirties, &tt, &sharedHistory);
-    legacyEvaluator.push(*legacyAccumulator, pos, dirties);
+    if (nativeV2State->session)
+    {
+        AliceSearch::EvalFailure failure;
+        if (searchFailure.empty() && !nativeV2State->session->push(pos, dirties, failure))
+            record_native_v2_failure(failure);
+    }
+    else
+        legacyEvaluator.push(*legacyAccumulator, pos, dirties);
 
     if (ss != nullptr)
     {
@@ -666,18 +810,39 @@ void Search::Worker::do_move(
 
 void Search::Worker::do_null_move(Position& pos, StateInfo& st, Stack* const ss) {
     pos.do_null_move(st);
+    if (nativeV2State->session)
+    {
+        AliceSearch::EvalFailure failure;
+        if (searchFailure.empty() && !nativeV2State->session->push_null(pos, failure))
+            record_native_v2_failure(failure);
+    }
     ss->currentMove                   = Move::null();
     ss->continuationHistory           = &continuationHistory[0][0][NO_PIECE][0];
     ss->continuationCorrectionHistory = &continuationCorrectionHistory[NO_PIECE][0];
 }
 
 void Search::Worker::undo_move(Position& pos, const Move move) {
-    legacyEvaluator.pop(*legacyAccumulator);
+    if (!nativeV2State->session)
+        legacyEvaluator.pop(*legacyAccumulator);
     pos.undo_move(move);
+    if (nativeV2State->session && searchFailure.empty())
+    {
+        AliceSearch::EvalFailure failure;
+        if (!nativeV2State->session->pop(pos, failure))
+            record_native_v2_failure(failure);
+    }
     accumulatorStack.pop();
 }
 
-void Search::Worker::undo_null_move(Position& pos) { pos.undo_null_move(); }
+void Search::Worker::undo_null_move(Position& pos) {
+    pos.undo_null_move();
+    if (nativeV2State->session && searchFailure.empty())
+    {
+        AliceSearch::EvalFailure failure;
+        if (!nativeV2State->session->pop(pos, failure))
+            record_native_v2_failure(failure);
+    }
+}
 
 
 // Reset histories, usually before a new game
@@ -1878,9 +2043,35 @@ TimePoint Search::Worker::elapsed() const {
 }
 
 Value Search::Worker::evaluate(const Position& pos) {
+    if (nativeV2State->session)
+    {
+        Value                    value = VALUE_ZERO;
+        AliceSearch::EvalFailure failure;
+        if (searchFailure.empty() && nativeV2State->session->evaluate(pos, value, failure))
+            return value;
+        if (searchFailure.empty())
+            record_native_v2_failure(failure);
+        return VALUE_ZERO;
+    }
     const auto value = legacyEvaluator.evaluate(pos, *legacyAccumulator, true);
     assert(value);
     return *value;
+}
+
+bool Search::Worker::native_v2_selected() const {
+    return bool(options["Use NNUE"]) && options["Alice Evaluation"] == "NativeV2";
+}
+
+void Search::Worker::record_native_v2_failure(const AliceSearch::EvalFailure& failure,
+                                              std::string_view                detail) {
+    if (!searchFailure.empty())
+        return;
+    const AliceSearch::EvaluatorIdentity identity =
+      nativeV2State->session ? nativeV2State->session->identity()
+                      : AliceSearch::EvaluatorIdentity{"AliceNativeV2M512",
+                                                       nativeV2Network.generation(), {}};
+    searchFailure = format_native_v2_failure(identity, failure, detail);
+    threads.stop  = true;
 }
 
 namespace {

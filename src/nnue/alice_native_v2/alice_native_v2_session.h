@@ -29,6 +29,8 @@ struct RuntimeSessionStats {
     u64 evaluations             = 0;
     u64 pushes                  = 0;
     u64 pops                    = 0;
+    u64 nullPushes              = 0;
+    u64 nullPops                = 0;
     u64 fullRefreshes[COLOR_NB] = {};
     u64 pieceAdds               = 0;
     u64 pieceRemoves            = 0;
@@ -52,6 +54,7 @@ class SearchSession final: public AliceSearch::Evaluator {
                   AliceSearch::EvalFailure& failure) noexcept override;
     bool push(const Position& position, const Dirties& dirties,
               AliceSearch::EvalFailure& failure) noexcept override;
+    bool push_null(const Position& position, AliceSearch::EvalFailure& failure) noexcept;
     bool pop(const Position& restoredParent, AliceSearch::EvalFailure& failure) noexcept override;
 
     bool ready() const noexcept;
@@ -73,6 +76,7 @@ class SearchSession final: public AliceSearch::Evaluator {
         std::array<Square, COLOR_NB>   kingSquares{SQ_NONE, SQ_NONE};
         std::array<Board, COLOR_NB>    kingBoards{BOARD_A, BOARD_A};
         IntegerAccumulatorSet          accumulators;
+        bool                           nullTransition = false;
     };
 
     bool initialize(const Position& root) noexcept;

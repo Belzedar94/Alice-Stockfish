@@ -175,12 +175,63 @@ class AliceNativeV2Tests(unittest.TestCase):
 
             session.send("setoption name Alice Evaluation value NativeV2")
             session.wait_for(r"AliceNative-v2 M512 parameters loaded generation=1")
+            session.send("setoption name Alice NativeV2 Search Stats value true")
             session.send("position startpos")
             session.send("eval")
             session.wait_for(r"^alice_native_v2 value -?[0-9]+ generation 1")
-            session.send("go depth 1")
-            session.wait_for(r"^bestmove [a-h][1-8][a-h][1-8][qrbn]?")
+            for thread_count in (1, 2, 4):
+                session.send(f"setoption name Threads value {thread_count}")
+                session.send("ucinewgame")
+                session.send("setoption name Clear Hash")
+                session.send("position startpos")
+                session.send("go depth 12")
+                route = session.wait_for(
+                    rf"^info string alice_native_v2 full_search generation=1 "
+                    rf"sha256={self.network_sha} threads={thread_count} hash_mib=[0-9]+$"
+                )
+                self.assertIn("full_search", route)
+                stats_line = session.wait_for(
+                    r"^info string alice_native_v2 full_search_stats "
+                )
+                stats = dict(re.findall(r"([a-z_]+)=([0-9]+)", stats_line))
+                self.assertEqual(stats["workers"], str(thread_count))
+                self.assertGreater(int(stats["evaluations"]), 0)
+                self.assertEqual(stats["pushes"], stats["pops"])
+                self.assertGreater(int(stats["null_pushes"]), 0)
+                self.assertEqual(stats["null_pushes"], stats["null_pops"])
+                session.wait_for(r"^bestmove [a-h][1-8][a-h][1-8][qrbn]?")
+            self.assertTrue(any(re.match(r"^info depth 12\b", line) for line in session.lines))
             self.assertFalse(any("CRITICAL ERROR" in line for line in session.lines))
+
+    def test_full_search_reports_all_root_terminal_classes(self) -> None:
+        assert NETWORK_PATH is not None
+        cases = (
+            (
+                "8/6|Kk/8/8/8/3Q4/8/8 b - - 0 1",
+                "info string alice_result result=1-0 reason=checkmate",
+            ),
+            (
+                "8/8/8/8/8/3Q4/6|Kk/8 b - - 0 1",
+                "info string alice_result result=1/2-1/2 reason=stalemate",
+            ),
+            (
+                START_FEN.replace(" 0 1", " 100 1"),
+                "info string alice_result result=1/2-1/2 reason=rule_draw",
+            ),
+        )
+
+        with UciSession() as session:
+            session.send(load_command(NETWORK_PATH, self.network_sha))
+            session.wait_for(r"AliceNative-v2 M512 parameters loaded generation=1")
+            session.send("setoption name Alice Evaluation value NativeV2")
+            session.wait_for(r"AliceNative-v2 M512 parameters loaded generation=1")
+            for fen, expected in cases:
+                session.send(f"position fen {fen}")
+                session.send("go depth 3")
+                self.assertEqual(session.wait_for(r"^info string alice_result "), expected)
+                self.assertEqual(session.wait_for(r"^bestmove "), "bestmove (none)")
+
+        self.assertFalse(any("CRITICAL ERROR" in line for line in session.lines))
 
     def test_reference_trace_matches_every_sealed_integer_stage(self) -> None:
         if not REFERENCE_INPUT or not REFERENCE_OUTPUT or not VERIFIER_PATH:
@@ -307,6 +358,12 @@ class AliceNativeV2Tests(unittest.TestCase):
         self.assertEqual(int(session_fields["integer_stage_checks"]), 421)
         self.assertEqual(int(session_fields["value_checks"]), 421)
         self.assertEqual(int(session_fields["undo_checks"]), 420)
+        self.assertGreater(int(session_fields["null_transitions"]), 0)
+        self.assertEqual(
+            session_fields["null_accumulator_checks"], session_fields["null_transitions"]
+        )
+        self.assertEqual(session_fields["null_value_checks"], session_fields["null_transitions"])
+        self.assertEqual(session_fields["null_undo_checks"], session_fields["null_transitions"])
 
         focused: list[dict[str, str]] = []
         with UciSession() as session:
