@@ -1,0 +1,99 @@
+{
+  "schema": "ALICE_V2_CHUNK_V1",
+  "version": 1,
+  "byte_order": "little",
+  "header_bytes": 4096,
+  "record_schema": "ALICEV2_RECORD_V1",
+  "record_bytes": 84,
+  "layout": [
+    {
+      "name": "magic",
+      "offset": 0,
+      "bytes": 8,
+      "type": "bytes",
+      "value_hex": "414C43484E4B3100"
+    },
+    {
+      "name": "format_version",
+      "offset": 8,
+      "bytes": 2,
+      "type": "uint16",
+      "value": 1
+    },
+    {
+      "name": "header_bytes",
+      "offset": 10,
+      "bytes": 2,
+      "type": "uint16",
+      "value": 4096
+    },
+    {
+      "name": "manifest_bytes",
+      "offset": 12,
+      "bytes": 4,
+      "type": "uint32",
+      "maximum": 4048
+    },
+    {
+      "name": "manifest",
+      "offset": 16,
+      "bytes": "manifest_bytes",
+      "type": "utf8_json",
+      "canonicalization": "UTF-8, no BOM, no insignificant whitespace, fixed key order as listed in manifest_fields, decimal integers without leading zeroes, lowercase JSON booleans"
+    },
+    {
+      "name": "padding",
+      "offset": "16 + manifest_bytes",
+      "bytes": "4064 - (16 + manifest_bytes)",
+      "type": "zero"
+    },
+    {
+      "name": "header_sha256",
+      "offset": 4064,
+      "bytes": 32,
+      "type": "bytes",
+      "coverage": [0, 4063]
+    }
+  ],
+  "manifest_fields": [
+    "schema",
+    "schema_sha256",
+    "format_version",
+    "header_bytes",
+    "record_bytes",
+    "record_count",
+    "byte_order",
+    "run_config_sha256",
+    "source_commit",
+    "source_dirty",
+    "network",
+    "book_sha256",
+    "payload_sha256",
+    "record_schema",
+    "target_contract",
+    "partition",
+    "generation"
+  ],
+  "manifest_invariants": {
+    "schema": "ALICE_V2_CHUNK_V1",
+    "format_version": 1,
+    "header_bytes": 4096,
+    "record_bytes": 84,
+    "record_count": "positive uint64 equal to requested_records",
+    "byte_order": "little",
+    "source_commit": "40 lowercase hexadecimal digits",
+    "source_dirty": false,
+    "sha256": "64 uppercase hexadecimal digits",
+    "header_sha256_coverage": "bytes 0 through 4063 inclusive",
+    "seed": "resolved uint64 encoded as a decimal JSON string",
+    "payload_sha256_coverage": "all record bytes, excluding the 4096-byte header",
+    "file_size": "4096 + record_count * 84",
+    "trailing_bytes": "forbidden",
+    "chunk_seed": "base_seed + chunk_index",
+    "split": "train, validation, or test according to the preregistered contiguous chunk ranges",
+    "search_threads": 1,
+    "producer_attestation": "bound externally by the OpenBench protocol-41 publication receipt and intentionally excluded from canonical chunk bytes",
+    "worker_resources": "bound externally by the OpenBench receipt and intentionally excluded from canonical chunk bytes",
+    "retry": "one logical chunk must reproduce identical uncompressed bytes across workers"
+  }
+}

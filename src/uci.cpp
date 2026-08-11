@@ -43,6 +43,11 @@
 #include "types.h"
 #include "ucioption.h"
 
+#ifdef ALICE_V2_DATA_GENERATOR
+    #include "data/alice_v2_chunk.h"
+    #include "data/training_data_generator.h"
+#endif
+
 namespace Stockfish {
 
 using Time = std::chrono::steady_clock;
@@ -148,6 +153,16 @@ void UCIEngine::loop() {
             engine.search_clear();
         else if (token == "isready")
             sync_cout << "readyok" << sync_endl;
+
+#ifdef ALICE_V2_DATA_GENERATOR
+        else if (token == "alice_v2_data_schema")
+            sync_cout << Data::alice_v2_data_schema_json() << sync_endl;
+        else if (token == "alice_v2_generate_training_data")
+        {
+            if (!Data::generate_training_data(engine, is))
+                std::exit(EXIT_FAILURE);
+        }
+#endif
 
         // Add custom non-UCI commands, mainly for debugging purposes.
         else if (token == "flip")
