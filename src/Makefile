@@ -62,15 +62,23 @@ endif
 ### Executable name
 ifeq ($(target_windows),yes)
 	EXE = stockfish.exe
+	ALICE_DATA_GENERATOR_EXE = alice-stockfish-data-generator.exe
+	ALICE_V2_CHUNK_TEST_EXE = alice-v2-chunk-tests.exe
 else ifneq (,$(findstring wasm,$(ARCH)))
 	EXE = stockfish.js
+	ALICE_DATA_GENERATOR_EXE = alice-stockfish-data-generator.js
+	ALICE_V2_CHUNK_TEST_EXE = alice-v2-chunk-tests
 else
 	EXE = stockfish
+	ALICE_DATA_GENERATOR_EXE = alice-stockfish-data-generator
+	ALICE_V2_CHUNK_TEST_EXE = alice-v2-chunk-tests
 endif
 
 ### Installation dir definitions
 PREFIX = /usr/local
 BINDIR = $(PREFIX)/bin
+PYTHON ?= python3
+ALICE_TEST_NETWORK ?= ../networks/alice_run2rl_e40_l09.nnue
 
 ### Built-in benchmark for pgo-builds
 PGOBENCH = $(RUN_PREFIX) ./$(EXE) bench
@@ -100,7 +108,18 @@ HEADERS = alice_search.h legacy_alice_nnue.h attacks.h benchmark.h bitboard.h ev
 
 OBJS = $(notdir $(SRCS:.cpp=.o))
 
-VPATH = syzygy:nnue:nnue/features:nnue/alice_native
+ALICE_DATA_GENERATOR_SRCS = data/sha256.cpp data/alice_v2_chunk.cpp \
+	data/training_data_generator.cpp
+ALICE_DATA_GENERATOR_HEADERS = data/sha256.h data/alice_v2_chunk.h data/training_data.h \
+	data/random_seed.h data/training_data_generator.h
+ALICE_DATA_GENERATOR_OBJS = $(filter-out search.o uci.o,$(OBJS)) \
+	alice_data_generator_search.o alice_data_generator_uci.o \
+	alice_data_generator_sha256.o alice_data_generator_alice_v2_chunk.o \
+	alice_data_generator_training_data_generator.o
+ALICE_V2_CHUNK_TEST_OBJS = $(filter-out main.o,$(OBJS)) alice_data_generator_sha256.o \
+	alice_data_generator_alice_v2_chunk.o alice_v2_chunk_tests.o
+
+VPATH = syzygy:nnue:nnue/features:nnue/alice_native:data
 
 ### ==========================================================================
 ### Section 2. High-level Configuration
@@ -1097,7 +1116,8 @@ ifneq ($(SUPPORTED_ARCH), true)
 endif
 
 
-.PHONY: help analyze build profile-build macos-lipo strip install clean net \
+.PHONY: help analyze build profile-build macos-lipo strip install clean net data-generator \
+	alice-v2-chunk-tests alice-data-generator-tests \
 	objclean profileclean config-sanity \
 	icx-profile-use icx-profile-make \
 	gcc-profile-use gcc-profile-make \
@@ -1219,7 +1239,10 @@ clean: objclean profileclean universalclean
 
 # clean binaries and objects
 objclean:
-	@rm -f stockfish stockfish.exe *.o ./syzygy/*.o ./nnue/*.o ./nnue/features/*.o $(BUILD_SHA_FILE) $(BUILD_SHA_FULL_FILE) $(BUILD_DATE_FILE) $(BUILD_DIFFINDEX_FILE)
+	@rm -f stockfish stockfish.exe alice-stockfish-data-generator \
+		alice-stockfish-data-generator.exe alice-v2-chunk-tests alice-v2-chunk-tests.exe \
+		*.o ./syzygy/*.o ./nnue/*.o ./nnue/features/*.o \
+		$(BUILD_SHA_FILE) $(BUILD_SHA_FULL_FILE) $(BUILD_DATE_FILE) $(BUILD_DIFFINDEX_FILE)
 
 # clean auxiliary profiling files
 profileclean:
@@ -1240,13 +1263,24 @@ net:
 	@$(SHELL) ../scripts/net.sh
 
 format:
-	$(CLANG-FORMAT) -i $(SRCS) $(OTHER_SRCS) $(HEADERS) -style=file
+	$(CLANG-FORMAT) -i $(SRCS) $(ALICE_DATA_GENERATOR_SRCS) $(OTHER_SRCS) $(HEADERS) \
+		$(ALICE_DATA_GENERATOR_HEADERS) -style=file
 
 ### ==========================================================================
 ### Section 5. Private Targets
 ### ==========================================================================
 
 all: $(EXE) .depend
+
+data-generator: config-sanity $(ALICE_DATA_GENERATOR_EXE)
+
+alice-v2-chunk-tests: config-sanity $(ALICE_V2_CHUNK_TEST_EXE)
+	./$(ALICE_V2_CHUNK_TEST_EXE)
+
+alice-data-generator-tests: config-sanity $(EXE) $(ALICE_DATA_GENERATOR_EXE) $(ALICE_V2_CHUNK_TEST_EXE)
+	./$(ALICE_V2_CHUNK_TEST_EXE)
+	$(PYTHON) ../tests/alice_v2_data_generator.py --generator ./$(ALICE_DATA_GENERATOR_EXE) \
+		--normal-engine ./$(EXE) --network $(ALICE_TEST_NETWORK)
 
 config-sanity:
 	@echo ""
@@ -1321,6 +1355,28 @@ config-sanity:
 
 $(EXE): $(OBJS)
 	+$(CXX) -o $@ $(OBJS) $(LDFLAGS)
+
+$(ALICE_DATA_GENERATOR_EXE): $(ALICE_DATA_GENERATOR_OBJS)
+	+$(CXX) -o $@ $(ALICE_DATA_GENERATOR_OBJS) $(LDFLAGS)
+
+$(ALICE_V2_CHUNK_TEST_EXE): $(ALICE_V2_CHUNK_TEST_OBJS)
+	+$(CXX) -o $@ $(ALICE_V2_CHUNK_TEST_OBJS) $(LDFLAGS)
+
+ALICE_DATA_GENERATOR_DEFINES = -DALICE_V2_DATA_GENERATOR \
+	$(if $(GIT_SHA_FULL),-DALICE_SOURCE_COMMIT=\"$(GIT_SHA_FULL)\") \
+	-DALICE_SOURCE_DIRTY=$(if $(GIT_DIFFINDEX),1,0)
+
+alice_data_generator_uci.o: uci.cpp $(HEADERS) $(ALICE_DATA_GENERATOR_HEADERS)
+	$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(ALICE_DATA_GENERATOR_DEFINES)) -I. -c -o $@ $<
+
+alice_data_generator_search.o: search.cpp $(HEADERS) $(ALICE_DATA_GENERATOR_HEADERS)
+	$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(ALICE_DATA_GENERATOR_DEFINES)) -I. -c -o $@ $<
+
+alice_data_generator_%.o: data/%.cpp $(HEADERS) $(ALICE_DATA_GENERATOR_HEADERS)
+	$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(ALICE_DATA_GENERATOR_DEFINES)) -I. -c -o $@ $<
+
+alice_v2_chunk_tests.o: ../tests/alice_v2_chunk.cpp $(HEADERS) $(ALICE_DATA_GENERATOR_HEADERS)
+	$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS)) -UNDEBUG -I. -c -o $@ $<
 
 %.o: %.cpp
 	$(strip $(CXX) $(CPPFLAGS) $(CXXFLAGS)) -c -o $@ $<
@@ -1560,8 +1616,22 @@ else
     OPENBENCH_COMP = gcc
 endif
 
-.PHONY: openbench
+.PHONY: openbench openbench-datagen
 openbench:
 	+$(MAKE) build COMP=$(OPENBENCH_COMP)
 
+openbench-datagen:
+ifndef EVALFILE
+	@echo "ERROR: OpenBench Alice DATAGEN builds require EVALFILE=<Legacy Alice run2rl network>." >&2
+	@exit 2
+else
+	@test -f "$(EVALFILE)" || { echo "ERROR: OpenBench EVALFILE does not exist: $(EVALFILE)" >&2; exit 2; }
+	+$(MAKE) data-generator EXE=alice-openbench-playing-unused \
+		ALICE_DATA_GENERATOR_EXE="$(EXE)" CXX="$(CXX)" COMP=$(OPENBENCH_COMP)
+endif
+
+ifeq ($(OPENBENCH_DATAGEN),1)
+.DEFAULT_GOAL := openbench-datagen
+else
 .DEFAULT_GOAL := openbench
+endif

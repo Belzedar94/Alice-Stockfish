@@ -1,0 +1,41 @@
+{
+  "schema": "ALICE_V2_TARGET_CONTRACT_V1",
+  "version": 1,
+  "record_schema": "ALICEV2_RECORD_V1",
+  "teacher": {
+    "engine_family": "Alice-Stockfish",
+    "evaluation": "Legacy",
+    "network_schema": "ALICE_RUN2RL_LEGACY_V1",
+    "network_sha256": "9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9",
+    "use_nnue": true
+  },
+  "search": {
+    "limit": "bound by the preregistered run config",
+    "depth": "bound by the preregistered run config",
+    "nodes": "bound by the preregistered run config",
+    "threads": 1,
+    "hash_mb": "bound by the preregistered run config",
+    "time_management": "disabled",
+    "root_score": "exact non-bound engine Value"
+  },
+  "score": {
+    "storage": "little-endian int16",
+    "perspective": "side_to_move",
+    "mate_encoding": "engine-native Value constrained to int16",
+    "clipping": "forbidden"
+  },
+  "result": {
+    "storage": "int8 in {-1,0,1}",
+    "perspective": "record side_to_move",
+    "source": "completed generated game"
+  },
+  "termination_order": [
+    "checkmate_or_stalemate",
+    "fifty_move",
+    "repetition"
+  ],
+  "adjudication": "none",
+  "truncated_games": "discarded",
+  "en_passant": "forbidden",
+  "chess960": "forbidden"
+}
