@@ -12,6 +12,7 @@
 #include "data/alice_v2_chunk.h"
 #include "movegen.h"
 #include "position.h"
+#include "uci.h"
 
 using namespace Stockfish;
 using namespace Stockfish::Data;
