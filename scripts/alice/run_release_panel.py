@@ -19,6 +19,7 @@ import math
 import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -572,8 +573,24 @@ def terminate_active() -> None:
     with ACTIVE_LOCK:
         active = list(ACTIVE_PROCESSES)
     for process in active:
-        if process.poll() is None:
-            process.terminate()
+        terminate_process_tree(process)
+
+
+def terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
 
 def format_table(trackers: dict[str, PanelTracker]) -> str:
@@ -629,6 +646,10 @@ def run_time_control(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        creationflags=(
+            subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        ),
+        start_new_session=os.name != "nt",
     )
     with ACTIVE_LOCK:
         ACTIVE_PROCESSES.add(process)
@@ -642,11 +663,11 @@ def run_time_control(
                 log.flush()
                 tracker.consume(line)
                 if abort.is_set() and process.poll() is None:
-                    process.terminate()
+                    terminate_process_tree(process)
         return_code = process.wait()
     except BaseException:
         if process.poll() is None:
-            process.terminate()
+            terminate_process_tree(process)
             try:
                 process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
