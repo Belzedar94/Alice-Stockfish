@@ -22,9 +22,9 @@ class ReleasePanelTests(unittest.TestCase):
         self.assertEqual(
             [(item.label, item.tc, item.games) for item in panel.PANEL_SPECS],
             [
-                ("VSTC", "2+0.02", 400),
-                ("STC", "10+0.1", 300),
-                ("LTC", "30+0.3", 200),
+                ("VSTC", "2+0.02", 700),
+                ("STC", "10+0.1", 500),
+                ("LTC", "30+0.3", 300),
             ],
         )
         self.assertEqual({item.seed for item in panel.PANEL_SPECS}, {20260811})
@@ -44,10 +44,10 @@ class ReleasePanelTests(unittest.TestCase):
                 "1/2-1/2 {Draw by 3-fold repetition}"
             )
         result = tracker.require_complete()
-        self.assertEqual(result["games"], 200)
-        self.assertEqual(result["complete_pairs"], 100)
-        self.assertEqual(result["wdl"], {"wins": 0, "draws": 200, "losses": 0})
-        self.assertEqual(result["pentanomial"], [0, 0, 100, 0, 0])
+        self.assertEqual(result["games"], 300)
+        self.assertEqual(result["complete_pairs"], 150)
+        self.assertEqual(result["wdl"], {"wins": 0, "draws": 300, "losses": 0})
+        self.assertEqual(result["pentanomial"], [0, 0, 150, 0, 0])
 
     def test_tracker_fails_on_adjudication(self) -> None:
         tracker = panel.PanelTracker(panel.PANEL_SPECS[0])

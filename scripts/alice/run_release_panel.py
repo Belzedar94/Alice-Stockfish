@@ -64,9 +64,9 @@ class PanelSpec:
 
 
 PANEL_SPECS = (
-    PanelSpec("VSTC", "2+0.02", 400),
-    PanelSpec("STC", "10+0.1", 300),
-    PanelSpec("LTC", "30+0.3", 200),
+    PanelSpec("VSTC", "2+0.02", 700),
+    PanelSpec("STC", "10+0.1", 500),
+    PanelSpec("LTC", "30+0.3", 300),
 )
 
 FINISHED_RE = re.compile(
@@ -874,7 +874,7 @@ def run_panel(args: argparse.Namespace) -> int:
         },
     }
     write_json(args.output_root / "panel-receipt.json", receipt)
-    emit("Alice release panel PASS: 400/300/200 games complete with zero defects")
+    emit("Alice release panel PASS: 700/500/300 games complete with zero defects")
     return 0
 
 

@@ -42,9 +42,9 @@ in parallel with four games per control, consuming exactly 24 engine threads.
 
 | Preset | Time control | Games |
 |---|---:|---:|
-| VSTC | 2s + 0.02s | 400 |
-| STC | 10s + 0.1s | 300 |
-| LTC | 30s + 0.3s | 200 |
+| VSTC | 2s + 0.02s | 700 |
+| STC | 10s + 0.1s | 500 |
+| LTC | 30s + 0.3s | 300 |
 
 Before the panel, record the official T24 worker's PID, complete launch command,
 N1/T24 settings, and established OpenBench connection. Stop only that worker,

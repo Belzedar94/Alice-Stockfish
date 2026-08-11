@@ -1,6 +1,6 @@
 # Alice-Stockfish 1.0 release draft
 
-Status: preparation draft. Do not publish until the fixed 400/300/200 panel,
+Status: preparation draft. Do not publish until the fixed 700/500/300 panel,
 release builds, bench checks, and artifact checksums are complete.
 
 Alice-Stockfish 1.0 is the first stable release of a dedicated UCI engine for
@@ -27,9 +27,9 @@ result.
 
 | Time control | Games | Score | Elo |
 |---|---:|---|---:|
-| 2s + 0.02s | 400 | PENDING | **PENDING** |
-| 10s + 0.1s | 300 | PENDING | **PENDING** |
-| 30s + 0.3s | 200 | PENDING | **PENDING** |
+| 2s + 0.02s | 700 | PENDING | **PENDING** |
+| 10s + 0.1s | 500 | PENDING | **PENDING** |
+| 30s + 0.3s | 300 | PENDING | **PENDING** |
 
 The release panel must complete with zero discarded pairs, zero abort evidence,
 and no time-control or input changes. Its fixed sample is a measurement rather
