@@ -156,7 +156,7 @@ Bare `bench` uses eight versioned Alice positions, one thread, 16 MiB of hash,
 and depth 12. Its canonical signature is:
 
 ```text
-Nodes searched  : 358993
+Nodes searched  : 202963
 ```
 
 The positions are mirrored in `tests/alice/fixtures/bench-v1.epd`. The legacy

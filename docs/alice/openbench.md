@@ -1,7 +1,8 @@
 # Alice on OpenBench
 
-Status: normative Phase 0 integration and operations contract; production
-registration is not yet complete.
+Status: production integration and operations contract. Alice is registered on
+the official service and its admitted workloads use the identities and custody
+rules below.
 
 This document defines how Alice workloads may enter the shared OpenBench
 service. It does not change the local exact-LOS contract in
@@ -12,13 +13,13 @@ service. It does not change the local exact-LOS contract in
 The engine-side build and bench contract is implemented and locally verified.
 An OpenBench build request may provide `EXE` and `EVALFILE` to a bare `make`
 invocation, and a freshly started resulting executable loads that exact network
-before a bare `bench`. The canonical bench signature is `358993` nodes on the
+before a bare `bench`. The canonical bench signature is `202963` nodes on the
 versioned eight-position Alice corpus.
 
-Alice has not yet been registered or scheduled on the official service. The
-server-side engine entry, `ALICE` book routing, paired runner, smoke test, and
-shadow audits remain admission work. No production result may be inferred from
-the local build receipt.
+Alice is registered and scheduled on the official service with the dedicated
+engine entry, `ALICE` book routing, and Alice-capable paired runner. Only results
+whose workload and receipts satisfy this document are official; a local build
+or local OpenBench run remains integration evidence only.
 
 ## 1. One official service
 
