@@ -1,7 +1,8 @@
 # Alice-Stockfish 1.0 release draft
 
-Status: preparation draft. Do not publish until the fixed 700/500/300 panel,
-release builds, bench checks, and artifact checksums are complete.
+Status: preparation draft. The fixed 700/500/300 panel is complete; do not
+publish until the release builds, bench checks, and artifact checksums are
+complete.
 
 Alice-Stockfish 1.0 is the first stable release of a dedicated UCI engine for
 [Alice chess](https://www.chessvariants.com/other.dir/alice.html), derived from
@@ -23,13 +24,14 @@ fixed game counts. Every opening is played with colors swapped from the shared
 seed `20260811`; adjudication is disabled and only complete pairs enter the
 result.
 
-<!-- Replace every PENDING field from the sealed fixed-final receipt. -->
+All three samples reached 100% LOS. The sealed panel receipt has SHA-256
+`73BB64057239AC4A123E53F73CEE3F77C310DA6D3961A46E3B7B2FFCE7704B6D`.
 
 | Time control | Games | Score | Elo |
 |---|---:|---|---:|
-| 2s + 0.02s | 700 | PENDING | **PENDING** |
-| 10s + 0.1s | 500 | PENDING | **PENDING** |
-| 30s + 0.3s | 300 | PENDING | **PENDING** |
+| 2s + 0.02s | 700 | 618-0-82 (88.29%) | **+350.87 +/- 39.47** |
+| 10s + 0.1s | 500 | 404-0-96 (80.80%) | **+249.64 +/- 38.38** |
+| 30s + 0.3s | 300 | 231-1-68 (77.17%) | **+211.54 +/- 41.60** |
 
 The release panel must complete with zero discarded pairs, zero abort evidence,
 and no time-control or input changes. The sealed receipt must reconcile every
