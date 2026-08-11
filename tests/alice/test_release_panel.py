@@ -41,7 +41,7 @@ class ReleasePanelTests(unittest.TestCase):
             )
             tracker.consume(
                 f"Finished game {game} ({white} vs {black}): "
-                "1/2-1/2 {Draw by 3-fold repetition}"
+                "1/2-1/2 {Draw by rule}"
             )
         result = tracker.require_complete()
         self.assertEqual(result["games"], 300)
@@ -64,6 +64,15 @@ class ReleasePanelTests(unittest.TestCase):
             tracker.consume(
                 "Finished game 1 (Alice-Stockfish-release vs "
                 "Fairy-Stockfish-040925): 0-1 {White loses on time}"
+            )
+
+    def test_tracker_rejects_non_allowlisted_safety_limit(self) -> None:
+        tracker = panel.PanelTracker(panel.PANEL_SPECS[0])
+        with self.assertRaisesRegex(RuntimeError, "infrastructure defect"):
+            tracker.consume(
+                "Finished game 1 (Alice-Stockfish-release vs "
+                "Fairy-Stockfish-040925): 1/2-1/2 "
+                "{Pair aborted at the safety ply limit}"
             )
 
     def test_tracker_rejects_wrong_engine_identity(self) -> None:
@@ -99,6 +108,60 @@ class ReleasePanelTests(unittest.TestCase):
         self.assertNotIn("NativeV2", joined)
         self.assertNotIn("02A26647", joined)
         self.assertIn("-variant\nalice", joined)
+
+    def test_reconciliation_binds_opening_colors_log_and_pgn(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            book = root / "book.epd"
+            book.write_text("fen one\n", encoding="utf-8")
+            log = root / "referee.log"
+            log.write_text("sealed\n", encoding="utf-8")
+            pgn = root / "games.pgn"
+            template = (
+                '[Event "uci_pair_runner"]\n'
+                '[Site "?"]\n'
+                '[Date "2026.08.11"]\n'
+                '[Round "1"]\n'
+                '[White "{white}"]\n'
+                '[Black "{black}"]\n'
+                '[Result "{result}"]\n'
+                '[SetUp "1"]\n'
+                '[FEN "fen one"]\n'
+                '[Variant "alice"]\n'
+                '[TimeControl "2+0.02"]\n'
+                '[PlyCount "1"]\n'
+                '[GameEndTime "2026-08-11T00:00:00"]\n\n'
+                '1. a1a2 {result}\n\n'
+            )
+            pgn.write_text(
+                template.format(
+                    white=panel.CANDIDATE_NAME,
+                    black=panel.BASELINE_NAME,
+                    result="1-0",
+                )
+                + template.format(
+                    white=panel.BASELINE_NAME,
+                    black=panel.CANDIDATE_NAME,
+                    result="0-1",
+                ),
+                encoding="ascii",
+            )
+            spec = panel.PanelSpec("TEST", "2+0.02", 2)
+            tracker = panel.PanelTracker(spec)
+            tracker.consume(
+                "Finished game 1 (Alice-Stockfish-release vs "
+                "Fairy-Stockfish-040925): 1-0 {White mates}"
+            )
+            tracker.consume(
+                "Finished game 2 (Fairy-Stockfish-040925 vs "
+                "Alice-Stockfish-release): 0-1 {Black mates}"
+            )
+            receipt = panel.reconcile_time_control(
+                SimpleNamespace(book=book), spec, tracker, pgn, log
+            )
+            self.assertEqual(receipt["game_count"], 2)
+            self.assertEqual(receipt["pair_count"], 1)
+            self.assertEqual(receipt["status"], "PASS")
 
     def test_write_json_is_atomic_and_canonical_enough_for_receipts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

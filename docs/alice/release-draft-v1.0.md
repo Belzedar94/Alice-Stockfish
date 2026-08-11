@@ -32,8 +32,10 @@ result.
 | 30s + 0.3s | 300 | PENDING | **PENDING** |
 
 The release panel must complete with zero discarded pairs, zero abort evidence,
-and no time-control or input changes. Its fixed sample is a measurement rather
-than a pass/fail relabeling.
+and no time-control or input changes. The sealed receipt must reconcile every
+game between referee log, PGN, opening schedule, colors, result, and natural
+termination reason, while revalidating all snapshotted input hashes after the
+last game. Its fixed sample is a measurement rather than a pass/fail relabeling.
 
 ## Features
 

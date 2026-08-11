@@ -47,14 +47,22 @@ in parallel with four games per control, consuming exactly 24 engine threads.
 | LTC | 30s + 0.3s | 300 |
 
 Before the panel, record the official T24 worker's PID, complete launch command,
-N1/T24 settings, and established OpenBench connection. Stop only that worker,
-run the panel, and restore the exact command and settings immediately after the
-panel ends or aborts. Confirm a fresh connection to the official OpenBench
-service before accepting the panel receipt.
+N1/T24 settings, and established OpenBench connection. Stop only that worker.
+For this release transaction, keep it stopped through the panel, the authenticated
+native-data producer gates, and the one official 50,000,000-position DATAGEN
+submission. Restore the exact command and settings after all three operations
+either finish or fail closed. Confirm a fresh connection to the official
+OpenBench service before closing the transaction.
 
 The final receipt must include W/D/L, Elo and uncertainty, likelihood of
 superiority, pair counts, all input hashes, complete commands, start/end times,
-and zero time losses, aborts, or discarded pairs.
+and zero time losses, aborts, or discarded pairs. Before any game starts, bind
+the clean candidate source and tree to the compiler, binary, three canonical
+benches, mandatory zero-skip tests, and explicit NativeV2 exclusion in a hashed
+build receipt. Execute only create-exclusive read-only snapshots of the two
+binaries, two network copies, book, referee, runner, and build receipt. After
+each control, reconcile every logged result against its PGN, opening ordinal,
+color assignment, and allowlisted natural termination; then rehash every input.
 
 ## Exact-source quality gates
 
