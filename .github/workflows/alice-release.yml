@@ -43,7 +43,7 @@ jobs:
         run: |
           g++ --version > compiler-id.txt
           test -z "$(git status --porcelain --untracked-files=normal)"
-          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=gcc \
+          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=gcc GIT_DIFFINDEX= \
             PGOBENCH='python3 ../scripts/alice/run_pgo_bench.py ./stockfish ../Alice_v1.nnue'
       - name: Package and verify release binary
         env:
@@ -106,7 +106,7 @@ jobs:
         run: |
           g++ --version > compiler-id.txt
           test -z "$(git status --porcelain --untracked-files=normal)"
-          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=mingw \
+          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=mingw GIT_DIFFINDEX= \
             PGOBENCH='python ../scripts/alice/run_pgo_bench.py ./stockfish.exe ../Alice_v1.nnue'
       - name: Package and verify release binary
         shell: pwsh
