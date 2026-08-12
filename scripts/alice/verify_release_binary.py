@@ -61,6 +61,7 @@ def run_bench(engine: Path, network: Path) -> dict[str, Any]:
     required = (
         EXPECTED_ENGINE_NAME,
         "uciok",
+        f"option name EvalFile type string default {EXPECTED_NETWORK_NAME}",
         "readyok",
         "LegacyAliceExact loaded",
         "mode=frozen-baseline",
@@ -127,6 +128,7 @@ def main() -> int:
             "bytes": network.stat().st_size,
             "sha256": network_sha256,
             "mode": "frozen-baseline",
+            "uci_default": EXPECTED_NETWORK_NAME,
         },
         "benches": benches,
     }

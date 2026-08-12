@@ -43,7 +43,8 @@ jobs:
         run: |
           g++ --version > compiler-id.txt
           test -z "$(git status --porcelain --untracked-files=normal)"
-          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=gcc GIT_DIFFINDEX= \
+          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=gcc \
+            EVALFILE=Alice_v1.nnue GIT_DIFFINDEX= \
             PGOBENCH='python3 ../scripts/alice/run_pgo_bench.py ./stockfish ../Alice_v1.nnue'
       - name: Package and verify release binary
         env:
@@ -51,17 +52,18 @@ jobs:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           mv src/stockfish "alice-stockfish-1.0-linux-$RELEASE_ARCH"
+          mv Alice_v1.nnue "$RUNNER_TEMP/Alice_v1.nnue"
           python3 tests/alice/test_reference.py
           python3 tests/alice/test_engine.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
           python3 tests/alice/test_native_features.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
           python3 tests/alice/test_native_quant.py
           python3 tests/alice/test_native_wire.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
           python3 tests/alice/test_native_integer.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
-          python3 tests/alice/test_legacy_nnue.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH" --network Alice_v1.nnue
+          python3 tests/alice/test_legacy_nnue.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH" --network "$RUNNER_TEMP/Alice_v1.nnue"
           python3 -B -m unittest discover -s tests/alice/acceptance -p 'test_*.py' -v
           python3 scripts/alice/verify_release_binary.py \
             --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH" \
-            --network Alice_v1.nnue \
+            --network "$RUNNER_TEMP/Alice_v1.nnue" \
             --output "alice-stockfish-1.0-linux-$RELEASE_ARCH.receipt.json" \
             --arch "$RELEASE_ARCH" --compiler-id-file compiler-id.txt --source-commit "$SOURCE_COMMIT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -106,7 +108,8 @@ jobs:
         run: |
           g++ --version > compiler-id.txt
           test -z "$(git status --porcelain --untracked-files=normal)"
-          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=mingw GIT_DIFFINDEX= \
+          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=mingw \
+            EVALFILE=Alice_v1.nnue GIT_DIFFINDEX= \
             PGOBENCH='python ../scripts/alice/run_pgo_bench.py ./stockfish.exe ../Alice_v1.nnue'
       - name: Package and verify release binary
         shell: pwsh
@@ -115,16 +118,18 @@ jobs:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           $binary = "alice-stockfish-1.0-windows-$env:RELEASE_ARCH.exe"
+          $network = Join-Path $env:RUNNER_TEMP Alice_v1.nnue
           Move-Item -LiteralPath src/stockfish.exe -Destination $binary
+          Move-Item -LiteralPath Alice_v1.nnue -Destination $network
           python tests/alice/test_reference.py
           python tests/alice/test_engine.py --engine $binary
           python tests/alice/test_native_features.py --engine $binary
           python tests/alice/test_native_quant.py
           python tests/alice/test_native_wire.py --engine $binary
           python tests/alice/test_native_integer.py --engine $binary
-          python tests/alice/test_legacy_nnue.py --engine $binary --network Alice_v1.nnue
+          python tests/alice/test_legacy_nnue.py --engine $binary --network $network
           python -B -m unittest discover -s tests/alice/acceptance -p test_*.py -v
-          python scripts/alice/verify_release_binary.py --engine $binary --network Alice_v1.nnue --output "$binary.receipt.json" --arch $env:RELEASE_ARCH --compiler-id-file compiler-id.txt --source-commit $env:SOURCE_COMMIT
+          python scripts/alice/verify_release_binary.py --engine $binary --network $network --output "$binary.receipt.json" --arch $env:RELEASE_ARCH --compiler-id-file compiler-id.txt --source-commit $env:SOURCE_COMMIT
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: alice-stockfish-1.0-windows-${{ matrix.arch }}

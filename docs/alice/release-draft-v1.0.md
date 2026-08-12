@@ -63,8 +63,9 @@ last game. Its fixed sample is a measurement rather than a pass/fail relabeling.
 
 Download the binary matching your CPU (`x86-64-bmi2` for modern Intel and AMD
 processors, or `x86-64-avx2` as the portable fallback) together with
-`Alice_v1.nnue`. Keep the network next to the executable, or select
-its path explicitly before searching:
+`Alice_v1.nnue`. The release binaries expose that filename as their default
+`EvalFile`. Place the network in the engine working directory, or select its
+full path explicitly before searching:
 
 ```text
 setoption name Alice Evaluation value Legacy
