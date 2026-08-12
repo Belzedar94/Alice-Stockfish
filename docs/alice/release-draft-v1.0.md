@@ -1,8 +1,7 @@
-# Alice-Stockfish 1.0 release draft
+# Alice-Stockfish 1.0 release notes
 
-Status: preparation draft. The fixed 700/500/300 panel is complete; do not
-publish until the release builds, bench checks, and artifact checksums are
-complete.
+The fixed 700/500/300 comparison panel and the release artifact gates are the
+publication authority for this version.
 
 Alice-Stockfish 1.0 is the first stable release of a dedicated UCI engine for
 [Alice chess](https://www.chessvariants.com/other.dir/alice.html), derived from
@@ -23,6 +22,14 @@ the frozen Alice opening book, 1 thread, 512 MiB hash, 10 ms move overhead, and
 fixed game counts. Every opening is played with colors swapped from the shared
 seed `20260811`; adjudication is disabled and only complete pairs enter the
 result.
+
+The public v1.0 asset is named `Alice_v1.nnue`. It is a filename-only copy of
+the exact legacy network tested as `alice_run2rl_e40_l09.nnue`: 47,721,376
+bytes, SHA-256
+`9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9`.
+No training, fine-tuning, conversion, re-export, quantization, or weight
+modification was performed. The frozen panel therefore remains bound to the
+same network bytes.
 
 All three samples reached 100% LOS. The sealed panel receipt has SHA-256
 `73BB64057239AC4A123E53F73CEE3F77C310DA6D3961A46E3B7B2FFCE7704B6D`.
@@ -46,7 +53,7 @@ last game. Its fixed sample is a measurement rather than a pass/fail relabeling.
 - Alice-specific search with layer-aware threat ordering, arrival-board capture
   staging, and conservative pruning where an Alice-safe SEE is unavailable.
 - Exact `LegacyAliceExact` evaluation for the published
-  `alice_run2rl_e40_l09.nnue` network, with full-refresh and incremental parity.
+  `Alice_v1.nnue` network, with full-refresh and incremental parity.
 - Fail-closed network loading: missing, corrupt, incompatible, or ambiguous
   inputs cannot silently select another evaluator.
 - Standard UCI, deterministic Alice bench, multi-threading, and large hash
@@ -56,14 +63,14 @@ last game. Its fixed sample is a measurement rather than a pass/fail relabeling.
 
 Download the binary matching your CPU (`x86-64-bmi2` for modern Intel and AMD
 processors, or `x86-64-avx2` as the portable fallback) together with
-`alice_run2rl_e40_l09.nnue`. Keep the network next to the executable, or select
+`Alice_v1.nnue`. Keep the network next to the executable, or select
 its path explicitly before searching:
 
 ```text
 setoption name Alice Evaluation value Legacy
 setoption name Use NNUE value true
 setoption name Alice_Frozen_Network value true
-setoption name EvalFile value <path>/alice_run2rl_e40_l09.nnue
+setoption name EvalFile value <path>/Alice_v1.nnue
 ```
 
 The release network has SHA-256
@@ -75,17 +82,16 @@ must report exactly `202963` nodes searched.
 
 ## Checksums (SHA-256)
 
-<!-- Replace the binary placeholders only after the final release builds pass. -->
+The attached `SHA256SUMS` file is generated after the four binaries are built
+from the exact tagged commit and is authoritative for every manually uploaded
+asset. The release network entry must be:
 
-```text
-PENDING  alice-stockfish-1.0-windows-x86-64-bmi2.exe
-PENDING  alice-stockfish-1.0-windows-x86-64-avx2.exe
-PENDING  alice-stockfish-1.0-linux-x86-64-bmi2
-PENDING  alice-stockfish-1.0-linux-x86-64-avx2
-9f9e557015a55c0a6981db64e1f3044dedb91fd8a8c1a6d4f3c45d0eee91fbd9  alice_run2rl_e40_l09.nnue
-```
+`9f9e557015a55c0a6981db64e1f3044dedb91fd8a8c1a6d4f3c45d0eee91fbd9  Alice_v1.nnue`
 
 ## Acknowledgements
 
 Built on the work of the Stockfish, Fairy-Stockfish, and variant-NNUE
 communities. Testing infrastructure is based on OpenBench.
+
+The network notice and complete filename/provenance mapping are published with
+the release as `Alice_v1-NETWORK-NOTICE.txt` and `RELEASE-PROVENANCE.json`.

@@ -11,8 +11,12 @@ artifact checksums, and downloaded-draft verification are complete.
 - Source tree: `4288edda2f36e4de28507f1f8d046b27b6cf3af5`.
 - Canonical Alice bench after loading the release network: `202963` nodes.
 - Evaluation mode: `LegacyAliceExact` only.
-- Network: `alice_run2rl_e40_l09.nnue`, SHA-256
+- Frozen-panel filename: `alice_run2rl_e40_l09.nnue`.
+- Public v1.0 asset filename: `Alice_v1.nnue`.
+- Network identity under either filename: 47,721,376 bytes, SHA-256
   `9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9`.
+- The public asset must be produced by a binary copy only; no conversion,
+  re-export, metadata insertion, or other byte transformation is permitted.
 - Opening book: `alice.epd`, 38,348 positions, SHA-256
   `BCD89D9FC3EA81FEB95932EB64D6B6F15AD25CC04CDCC9E0440F097CFFB8CCF6`.
 - Reference engine: frozen Fairy-Stockfish binary, SHA-256
@@ -80,12 +84,21 @@ color assignment, and allowlisted natural termination; then rehash every input.
    evaluator.
 6. Run the fixed local comparison panel without changing any frozen input.
 7. Hash every final binary and the network, then write `SHA256SUMS` last.
+8. Verify the historical source and `Alice_v1.nnue` have the same size and
+   SHA-256 and pass a direct binary comparison.
+9. Require all four release binaries to load `Alice_v1.nnue` in frozen-baseline
+   mode, report the frozen digest, and return `202963` in three fresh canonical
+   bench processes.
+10. Rehash the downloaded draft network asset before publication and require
+    the same identity. This packaging validation does not rerun or relabel the
+    fixed 700/500/300 panel.
 
 ## Release assets
 
 - Windows x86-64 AVX2 and BMI2 executables.
 - Linux x86-64 AVX2 and BMI2 executables.
-- `alice_run2rl_e40_l09.nnue`.
+- `Alice_v1.nnue` (the only network copy in the release).
+- `Alice_v1-NETWORK-NOTICE.txt` and `RELEASE-PROVENANCE.json`.
 - Source archive, GPL, AUTHORS, README, release notes, and `SHA256SUMS`.
 
 ## Publication transaction
@@ -94,8 +107,9 @@ color assignment, and allowlisted natural termination; then rehash every input.
 2. Create a draft GitHub release and upload the complete frozen asset set.
 3. Download the draft into a new empty directory, require the exact expected
    filenames, and verify every byte against `SHA256SUMS`.
-4. Fill the strength table and checksums in `release-draft-v1.0.md` from the
-   sealed receipts. State the Legacy-only scope and the excluded NNUE V2 pilot.
+4. Render the GitHub release body from `release-draft-v1.0.md` and attach the
+   generated `SHA256SUMS` from the sealed build receipts. State the Legacy-only
+   scope and the excluded NNUE V2 pilot.
 5. Publish manually only after a final remote tag/commit check and human review
    of the downloaded draft. Any mismatch deletes the draft and restarts the
    candidate process; it never moves the tag.

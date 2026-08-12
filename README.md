@@ -1,8 +1,9 @@
 # Alice-Stockfish
 
 Alice-Stockfish is a dedicated [Alice Chess](https://www.chessvariants.com/other.dir/alice.html)
-engine derived from official Stockfish. The project is currently in its
-correctness-first engineering phase and is not yet a public playing release.
+engine derived from official Stockfish. Alice-Stockfish 1.0 is the public
+Legacy NNUE compatibility release. It uses the authenticated `Alice_v1.nnue`
+asset while the layer-aware native NNUE program remains under development.
 
 The pinned chassis, rules contract, legacy audit, NNUE compatibility boundary,
 and measurement protocol are collected in the
@@ -44,11 +45,13 @@ python -m tools.alice_acceptance \
 
 The exact-LOS and fixed 400/300/200 batteries are separate. Exact LOS at all
 three time controls comes first; the fixed battery is run only to measure Elo
-when preparing a release. A release remains blocked until a trained
-AliceNative-v1 network, exact parity receipts, both local batteries, four
-release binaries, triple bench, negative load probes, and official OpenBench
-shadow audits are all present. The public contracts and commands are listed in
-the [engineering dossier](docs/alice/README.md).
+when preparing a native release. A native AliceNNUE release remains blocked
+until a trained AliceNative-v1 network, exact parity receipts, both local
+batteries, four release binaries, triple bench, negative load probes, and
+official OpenBench shadow audits are all present. These native gates do not
+describe the separately documented Alice-Stockfish 1.0 Legacy NNUE
+compatibility release. The public contracts and commands are listed in the
+[engineering dossier](docs/alice/README.md).
 
 ---
 
@@ -192,7 +195,7 @@ project][lc0-data-link], which is made available under the [Open Database Licens
 [programming-link]:   https://www.chessprogramming.org/Main_Page
 [programmingsf-link]: https://www.chessprogramming.org/Stockfish
 [readme-link]:        https://github.com/official-stockfish/Stockfish/blob/master/README.md
-[release-link]:       https://github.com/official-stockfish/Stockfish/releases/latest
+[release-link]:       https://github.com/Belzedar94/Alice-Stockfish/releases/latest
 [src-link]:           https://github.com/official-stockfish/Stockfish/tree/master/src
 [stockfish128-logo]:  https://stockfishchess.org/images/logo/icon_128x128.png
 [uci-link]:           https://backscattering.de/chess/uci/
@@ -211,5 +214,5 @@ project][lc0-data-link], which is made available under the [Open Database Licens
 [discord-badge]:      https://img.shields.io/discord/435943710472011776?style=for-the-badge&label=discord&logo=Discord
 [fishtest-badge]:     https://img.shields.io/website?style=for-the-badge&down_color=red&down_message=Offline&label=Fishtest&up_color=success&up_message=Online&url=https%3A%2F%2Ftests.stockfishchess.org%2Ftests%2Ffinished
 [license-badge]:      https://img.shields.io/github/license/official-stockfish/Stockfish?style=for-the-badge&label=license&color=success
-[release-badge]:      https://img.shields.io/github/v/release/official-stockfish/Stockfish?style=for-the-badge&label=official%20release
+[release-badge]:      https://img.shields.io/github/v/release/Belzedar94/Alice-Stockfish?style=for-the-badge&label=official%20release
 [website-badge]:      https://img.shields.io/website?style=for-the-badge&down_color=red&down_message=Offline&label=website&up_color=success&up_message=Online&url=https%3A%2F%2Fstockfishchess.org

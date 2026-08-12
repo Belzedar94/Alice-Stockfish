@@ -1,0 +1,33 @@
+Alice_v1.nnue network notice
+============================
+
+Copyright (C) 2026 Belzedar94
+
+Alice_v1.nnue is free network parameter data: you can redistribute it and/or
+modify it under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 3 of the License, or (at your option)
+any later version.
+
+Alice_v1.nnue is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+The complete license text is shipped as Copying.txt in Alice-Stockfish 1.0 and
+is available at https://www.gnu.org/licenses/gpl-3.0.html.
+
+Release identity and provenance
+-------------------------------
+
+Public filename: Alice_v1.nnue
+Historical/panel filename: alice_run2rl_e40_l09.nnue
+Transformation: filename-only binary copy
+Bytes: 47,721,376
+SHA-256: 9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9
+NNUE serialization version: 0x7AF32F20
+Composite architecture hash: 0x3C103E72
+Trainer: https://github.com/ianfab/variant-nnue-pytorch
+Source checkpoint: epoch 40, global step 50061
+Source checkpoint SHA-256: 3FDFD2B9D03B192B1D2BE4D5498C551B5AB3757D5A5AF3FA4DF476B4AA7B54F1
+
+The public filename does not denote new training, fine-tuning, conversion,
+re-export, quantization, native Alice layer awareness, or changed weights.

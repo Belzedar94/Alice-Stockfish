@@ -8,7 +8,8 @@
 
 | Property | Value |
 | --- | --- |
-| Canonical source file name | `alice_run2rl_e40_l09.nnue` |
+| Historical/panel filename | `alice_run2rl_e40_l09.nnue` |
+| Public Alice-Stockfish 1.0 filename | `Alice_v1.nnue` |
 | File size | 47,721,376 bytes |
 | SHA-256 | `9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9` |
 | NNUE serialization version | `0x7AF32F20` |
@@ -19,6 +20,12 @@ The first two little-endian 32-bit words of the file independently reproduce
 the version and architecture hash. The complete-file SHA-256 is the identity
 used for baseline experiments; a matching header alone does not prove that a
 file contains the frozen weights.
+
+`Alice_v1.nnue` is a public release alias only. Its bytes are identical to the
+frozen legacy artifact; the rename does not represent new training or migration
+to native Alice NNUE. Reproduction with the historical Fairy-Stockfish loader
+may use a byte-identical copy under the original lowercase filename because
+that loader performs variant-name basename dispatch.
 
 ## Legacy architecture
 

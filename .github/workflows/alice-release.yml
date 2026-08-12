@@ -1,0 +1,131 @@
+name: Alice release artifacts
+
+on:
+  push:
+    branches:
+      - release/alice-v1.0-prep
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NETWORK_URL: https://github.com/Belzedar94/Alice-Stockfish/releases/download/openbench-assets-v1/alice_run2rl_e40_l09.nnue
+  NETWORK_SHA256: 9f9e557015a55c0a6981db64e1f3044dedb91fd8a8c1a6d4f3c45d0eee91fbd9
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86-64-bmi2, x86-64-avx2]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Authenticate filename-only network copy
+        run: |
+          curl --fail --location --retry 3 "$NETWORK_URL" --output alice_run2rl_e40_l09.nnue
+          cp alice_run2rl_e40_l09.nnue Alice_v1.nnue
+          test "$(stat -c%s Alice_v1.nnue)" = 47721376
+          echo "$NETWORK_SHA256  alice_run2rl_e40_l09.nnue" | sha256sum --check --strict
+          echo "$NETWORK_SHA256  Alice_v1.nnue" | sha256sum --check --strict
+          cmp alice_run2rl_e40_l09.nnue Alice_v1.nnue
+      - name: Build release binary
+        run: |
+          g++ --version > compiler-id.txt
+          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=gcc \
+            PGOBENCH='python3 ../scripts/alice/run_pgo_bench.py ./stockfish ../Alice_v1.nnue'
+      - name: Package and verify release binary
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          mv src/stockfish "alice-stockfish-1.0-linux-$RELEASE_ARCH"
+          python3 tests/alice/test_reference.py
+          python3 tests/alice/test_engine.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
+          python3 tests/alice/test_native_features.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
+          python3 tests/alice/test_native_quant.py
+          python3 tests/alice/test_native_wire.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
+          python3 tests/alice/test_native_integer.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH"
+          python3 tests/alice/test_legacy_nnue.py --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH" --network Alice_v1.nnue
+          python3 -B -m unittest discover -s tests/alice/acceptance -p 'test_*.py' -v
+          python3 scripts/alice/verify_release_binary.py \
+            --engine "alice-stockfish-1.0-linux-$RELEASE_ARCH" \
+            --network Alice_v1.nnue \
+            --output "alice-stockfish-1.0-linux-$RELEASE_ARCH.receipt.json" \
+            --arch "$RELEASE_ARCH" --compiler-id-file compiler-id.txt --source-commit "$SOURCE_COMMIT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alice-stockfish-1.0-linux-${{ matrix.arch }}
+          path: |
+            alice-stockfish-1.0-linux-${{ matrix.arch }}
+            alice-stockfish-1.0-linux-${{ matrix.arch }}.receipt.json
+          compression-level: 0
+          retention-days: 7
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86-64-bmi2, x86-64-avx2]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up MinGW
+        uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2.31.1
+        with:
+          msystem: mingw64
+          install: mingw-w64-x86_64-gcc make
+      - name: Authenticate filename-only network copy
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:NETWORK_URL -OutFile alice_run2rl_e40_l09.nnue
+          Copy-Item -LiteralPath alice_run2rl_e40_l09.nnue -Destination Alice_v1.nnue
+          if ((Get-Item Alice_v1.nnue).Length -ne 47721376) { throw "Wrong network size" }
+          if ((Get-FileHash alice_run2rl_e40_l09.nnue -Algorithm SHA256).Hash -ne $env:NETWORK_SHA256.ToUpperInvariant()) { throw "Wrong source hash" }
+          if ((Get-FileHash Alice_v1.nnue -Algorithm SHA256).Hash -ne $env:NETWORK_SHA256.ToUpperInvariant()) { throw "Wrong public hash" }
+          & cmd /c fc /b alice_run2rl_e40_l09.nnue Alice_v1.nnue
+          if ($LASTEXITCODE -ne 0) { throw "Network copy differs" }
+      - name: Build release binary
+        shell: msys2 {0}
+        run: |
+          g++ --version > compiler-id.txt
+          make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=mingw \
+            PGOBENCH='python ../scripts/alice/run_pgo_bench.py ./stockfish.exe ../Alice_v1.nnue'
+      - name: Package and verify release binary
+        shell: pwsh
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          $binary = "alice-stockfish-1.0-windows-$env:RELEASE_ARCH.exe"
+          Move-Item -LiteralPath src/stockfish.exe -Destination $binary
+          python tests/alice/test_reference.py
+          python tests/alice/test_engine.py --engine $binary
+          python tests/alice/test_native_features.py --engine $binary
+          python tests/alice/test_native_quant.py
+          python tests/alice/test_native_wire.py --engine $binary
+          python tests/alice/test_native_integer.py --engine $binary
+          python tests/alice/test_legacy_nnue.py --engine $binary --network Alice_v1.nnue
+          python -B -m unittest discover -s tests/alice/acceptance -p test_*.py -v
+          python scripts/alice/verify_release_binary.py --engine $binary --network Alice_v1.nnue --output "$binary.receipt.json" --arch $env:RELEASE_ARCH --compiler-id-file compiler-id.txt --source-commit $env:SOURCE_COMMIT
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alice-stockfish-1.0-windows-${{ matrix.arch }}
+          path: |
+            alice-stockfish-1.0-windows-${{ matrix.arch }}.exe
+            alice-stockfish-1.0-windows-${{ matrix.arch }}.exe.receipt.json
+          compression-level: 0
+          retention-days: 7
