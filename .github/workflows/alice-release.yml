@@ -38,9 +38,11 @@ jobs:
           echo "$NETWORK_SHA256  alice_run2rl_e40_l09.nnue" | sha256sum --check --strict
           echo "$NETWORK_SHA256  Alice_v1.nnue" | sha256sum --check --strict
           cmp alice_run2rl_e40_l09.nnue Alice_v1.nnue
+          printf '%s\n' /alice_run2rl_e40_l09.nnue /Alice_v1.nnue /compiler-id.txt >> .git/info/exclude
       - name: Build release binary
         run: |
           g++ --version > compiler-id.txt
+          test -z "$(git status --porcelain --untracked-files=normal)"
           make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=gcc \
             PGOBENCH='python3 ../scripts/alice/run_pgo_bench.py ./stockfish ../Alice_v1.nnue'
       - name: Package and verify release binary
@@ -87,7 +89,7 @@ jobs:
         uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2.31.1
         with:
           msystem: mingw64
-          install: mingw-w64-x86_64-gcc make
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-python make
       - name: Authenticate filename-only network copy
         shell: pwsh
         run: |
@@ -98,10 +100,12 @@ jobs:
           if ((Get-FileHash Alice_v1.nnue -Algorithm SHA256).Hash -ne $env:NETWORK_SHA256.ToUpperInvariant()) { throw "Wrong public hash" }
           & cmd /c fc /b alice_run2rl_e40_l09.nnue Alice_v1.nnue
           if ($LASTEXITCODE -ne 0) { throw "Network copy differs" }
+          Add-Content -LiteralPath .git/info/exclude -Value "/alice_run2rl_e40_l09.nnue`n/Alice_v1.nnue`n/compiler-id.txt"
       - name: Build release binary
         shell: msys2 {0}
         run: |
           g++ --version > compiler-id.txt
+          test -z "$(git status --porcelain --untracked-files=normal)"
           make -C src -j2 profile-build ARCH=${{ matrix.arch }} COMP=mingw \
             PGOBENCH='python ../scripts/alice/run_pgo_bench.py ./stockfish.exe ../Alice_v1.nnue'
       - name: Package and verify release binary
