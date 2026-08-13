@@ -445,6 +445,8 @@ Engine::Engine(std::optional<std::filesystem::path>) :
 
     options.add("UCI_Chess960", Option(false));
 
+    options.add("UCI_Variant", Option("alice var alice", "alice"));
+
     options.add("UCI_LimitStrength", Option(false));
 
     options.add("UCI_Elo",
