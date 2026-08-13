@@ -454,7 +454,7 @@ Engine::Engine(std::optional<std::filesystem::path>) :
     options.add("UCI_ShowWDL", Option(false));
 
     options.add(
-      "Alice Evaluation", Option("Legacy var Native var Zero", "Legacy", [this](const Option& o) {
+      "Alice Evaluation", Option("Legacy var Legacy var Native var Zero", "Legacy", [this](const Option& o) {
           if (o == "Native")
               return std::optional<std::string>(
                 nativeQualification.loaded()
