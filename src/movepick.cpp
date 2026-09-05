@@ -263,13 +263,15 @@ ExtMove* MovePicker::score(const MoveList<Type>& ml) {
             m.value += (*continuationHistory[3])[pc][to];
             m.value += (*continuationHistory[5])[pc][to];
 
-            // bonus for checks
-            m.value += ((pos.check_squares(pt) & to) && pos.see_ge(m, -75)) * 16384;
+            const Board source  = pos.board_of(from);
+            const Board arrival = opposite(source);
+
+            // bonus for checks the checker survives on its arrival board
+            m.value += ((pos.check_squares(pt) & to) && !(threatByLesser[arrival][pt] & to))
+                     * 16384;
 
             // penalty for moving to a square threatened by a lesser piece
             // or bonus for escaping an attack by a lesser piece.
-            const Board source  = pos.board_of(from);
-            const Board arrival = opposite(source);
             int v = 20 * (bool(threatByLesser[source][pt] & from)
                           - bool(threatByLesser[arrival][pt] & to));
             m.value += PieceValue[pt] * v;
