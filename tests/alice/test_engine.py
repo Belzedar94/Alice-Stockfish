@@ -315,7 +315,7 @@ class EngineFixtureTests(unittest.TestCase):
             session.wait_for(r"^uciok$")
             self.assertTrue(any("option name EvalFile" in line for line in session.lines))
             self.assertIn(
-                "option name Alice Evaluation type combo default Legacy var Native var Zero",
+                "option name Alice Evaluation type combo default Legacy var Legacy var Native var Zero",
                 session.lines,
             )
             session.send("setoption name Use NNUE value false")
