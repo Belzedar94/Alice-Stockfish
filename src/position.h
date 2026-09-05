@@ -154,6 +154,7 @@ class Position {
     bool  legal(Move m) const;
     bool  pseudo_legal(const Move m) const;
     bool  capture(Move m) const;
+    bool  alice_quiet_is_challenged(Move m) const;
     bool  capture_stage(Move m) const;
     bool  gives_check(Move m) const;
     Piece moved_piece(Move m) const;
@@ -426,6 +427,22 @@ inline bool Position::capture(Move m) const {
         return !empty(m.to_sq());
 
     return mt == EN_PASSANT;
+}
+
+// Classify a quiet move by the board where the moving piece arrives. The piece
+// is challenged when an enemy man attacks its destination on that board.
+inline bool Position::alice_quiet_is_challenged(Move m) const {
+    if (capture(m) || m.type_of() != NORMAL)
+        return false;
+
+    const Square to    = m.to_sq();
+    const Piece  mover = moved_piece(m);
+
+    const Board    arrival  = opposite(board_of(m.from_sq()));
+    const Bitboard occupied = occupancy_on(arrival) | to;
+
+    return bool(attackers_to(to, arrival, occupied)
+                & pieces_on(arrival, ~color_of(mover)));
 }
 
 // Returns true if a move is generated from the capture stage, having also

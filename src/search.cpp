@@ -1220,8 +1220,8 @@ moves_loop:  // When in check, search starts here
 
                 lmrDepth = std::max(lmrDepth, 0);
 
-                // Prune moves with negative SEE
-                if (!pos.see_ge(move, -23 * lmrDepth * lmrDepth))
+                // Prune quiets whose piece can be challenged where it lands
+                if (pos.alice_quiet_is_challenged(move))
                     continue;
             }
         }
