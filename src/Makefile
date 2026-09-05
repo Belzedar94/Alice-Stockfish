@@ -1097,6 +1097,13 @@ ifneq ($(SUPPORTED_ARCH), true)
 endif
 
 
+### Cap the parallelism of the recursive sub-make: OpenBench workers invoke
+### `make -j` with no job limit, and one cc1plus per hardware thread runs a
+### many-core machine out of memory on the largest translation units. Defaults
+### to min(nproc, 8); override with BUILD_JOBS=<n> or OPENBENCH_BUILD_JOBS=<n>.
+BUILD_JOBS_NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo $(NUMBER_OF_PROCESSORS))
+BUILD_JOBS ?= $(or $(OPENBENCH_BUILD_JOBS),$(firstword $(filter 1 2 3 4 5 6 7,$(BUILD_JOBS_NPROC)) 8))
+
 .PHONY: help analyze build profile-build macos-lipo strip install clean net \
 	objclean profileclean config-sanity \
 	icx-profile-use icx-profile-make \
@@ -1109,12 +1116,12 @@ analyze: config-sanity objclean
 
 ifeq ($(UNIVERSAL_BUILD),false)
 build: config-sanity
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) all
+	$(MAKE) -j$(BUILD_JOBS) ARCH=$(ARCH) COMP=$(COMP) all
 
 profile-build: config-sanity objclean profileclean
 	@echo ""
 	@echo "Step 1/4. Building instrumented executable ..."
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) $(profile_make)
+	$(MAKE) -j$(BUILD_JOBS) ARCH=$(ARCH) COMP=$(COMP) $(profile_make)
 	@echo ""
 	@echo "Step 2/4. Running benchmark for pgo-build ..."
 	$(PGOBENCH) > PGOBENCH.out 2>&1
@@ -1122,7 +1129,7 @@ profile-build: config-sanity objclean profileclean
 	@echo ""
 	@echo "Step 3/4. Building optimized executable ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) objclean
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) $(profile_use)
+	$(MAKE) -j$(BUILD_JOBS) ARCH=$(ARCH) COMP=$(COMP) $(profile_use)
 	@echo ""
 	@echo "Step 4/4. Deleting profile data ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) profileclean
