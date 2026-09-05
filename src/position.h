@@ -154,6 +154,7 @@ class Position {
     bool  legal(Move m) const;
     bool  pseudo_legal(const Move m) const;
     bool  capture(Move m) const;
+    bool  alice_capture_is_good(Move m) const;
     bool  capture_stage(Move m) const;
     bool  gives_check(Move m) const;
     Piece moved_piece(Move m) const;
@@ -426,6 +427,27 @@ inline bool Position::capture(Move m) const {
         return !empty(m.to_sq());
 
     return mt == EN_PASSANT;
+}
+
+// Classify a capture by the board where its attacker arrives. Material losers
+// remain good when the transferred piece cannot be challenged there.
+inline bool Position::alice_capture_is_good(Move m) const {
+    if (!capture(m) || m.type_of() != NORMAL)
+        return true;
+
+    const Square from     = m.from_sq();
+    const Square to       = m.to_sq();
+    const Piece  attacker = moved_piece(m);
+    const Piece  victim   = piece_on(to);
+
+    if (PieceValue[victim] >= PieceValue[attacker])
+        return true;
+
+    const Board    arrival  = opposite(board_of(from));
+    const Bitboard occupied = occupancy_on(arrival) | to;
+
+    return !(attackers_to(to, arrival, occupied)
+             & pieces_on(arrival, ~color_of(attacker)));
 }
 
 // Returns true if a move is generated from the capture stage, having also
