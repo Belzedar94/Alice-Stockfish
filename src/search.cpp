@@ -1785,9 +1785,9 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
                     continue;
                 }
 
-                // If static exchange evaluation is low enough
+                // If the capture cannot survive on the board where it lands
                 // we can prune this move.
-                if (!pos.see_ge(move, alpha - futilityBase))
+                if (!pos.alice_capture_is_good(move))
                 {
                     bestValue = std::max(bestValue, std::min(alpha, futilityBase));
                     continue;
