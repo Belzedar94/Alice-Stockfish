@@ -1632,7 +1632,7 @@ ifndef EVALFILE
 	@exit 2
 else
 	@test -f "$(EVALFILE)" || { echo "ERROR: OpenBench EVALFILE does not exist: $(EVALFILE)" >&2; exit 2; }
-	+$(MAKE) data-generator EXE=alice-openbench-playing-unused \
+	+$(MAKE) -j$(BUILD_JOBS) data-generator EXE=alice-openbench-playing-unused \
 		ALICE_DATA_GENERATOR_EXE="$(EXE)" CXX="$(CXX)" COMP=$(OPENBENCH_COMP)
 endif
 
