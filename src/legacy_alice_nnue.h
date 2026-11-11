@@ -84,7 +84,7 @@ class LegacyAliceExact {
     std::string          status_line() const;
 
     static constexpr const char* FrozenSha256 =
-      "9F9E557015A55C0A6981DB64E1F3044DEDB91FD8A8C1A6D4F3C45D0EEE91FBD9";
+      "42CEBD86E074BBFFD958AAE2D926AD2100F272F80E3BF27FC9733C5E01DB7948";
     static constexpr u32 ExpectedVersion      = 0x7AF32F20U;
     static constexpr u32 ExpectedArchitecture = 0x3C103E72U;
 
