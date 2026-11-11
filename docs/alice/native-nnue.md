@@ -207,8 +207,10 @@ stage without modifying the target volume.
 
 The canonical pipeline is one directional chain:
 
-1. The generator writes a versioned Alice record containing the lossless state,
-   target, seed, and provenance hashes.
+1. The generator writes immutable 84-byte Alice records containing lossless
+   state and targets. Seed derivation and provenance are authenticated once per
+   chunk by the `ALICE_V2_CHUNK_V1` header and its externally preregistered run
+   configuration; they are not duplicated or inferred inside each record.
 2. The auditor independently reconstructs the position, legal moves, terminal
    state, and SAME/OTHER features.
 3. The trainer reads only audited records of the declared version and records

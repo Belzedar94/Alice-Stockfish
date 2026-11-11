@@ -1,0 +1,68 @@
+{
+  "schema": "ALICE_V2_DATAGEN_RUN_V1",
+  "version": 1,
+  "canonicalization": "UTF-8, no BOM, JSON keys sorted recursively, separators comma and colon, newline forbidden",
+  "required_fields": [
+    "schema",
+    "version",
+    "run_schema_sha256",
+    "campaign",
+    "production_url",
+    "source_commit",
+    "source_dirty",
+    "target_contract_sha256",
+    "record_schema_sha256",
+    "chunk_schema_sha256",
+    "network_sha256",
+    "book_sha256",
+    "total_records",
+    "records_per_chunk",
+    "total_chunks",
+    "base_seed",
+    "seed_derivation",
+    "rng",
+    "record_order",
+    "split",
+    "openbench",
+    "retry",
+    "generation",
+    "acceptance"
+  ],
+  "invariants": {
+    "production_url": "https://belzedar.duckdns.org",
+    "run_schema_sha256": "SHA-256 of this exact schema file, encoded as 64 uppercase hexadecimal digits",
+    "source_commit": "40 lowercase hexadecimal digits identifying a clean tree",
+    "total_records": 50000000,
+    "records_per_chunk": 1000000,
+    "total_chunks": 50,
+    "seed_derivation": "chunk_seed = base_seed + chunk_index",
+    "record_order": "single-thread game ordinal then game ply",
+    "split": {
+      "train_chunks": 48,
+      "validation_chunks": 1,
+      "test_chunks": 1
+    },
+    "openbench": {
+      "priority": 300,
+      "throughput": 1000,
+      "publication_protocol": 41,
+      "producer_artifact_required": true,
+      "workload_size": 1,
+      "campaign_id": "equal to the top-level campaign slug",
+      "external_workload_id": "native-v2-selfplay-50m",
+      "role": "selfplay-all-splits",
+      "cohort": "piece-rel-d6"
+    },
+    "retry": "the same logical chunk must reproduce identical uncompressed bytes across workers; producer and worker-resource attestations live in the external OpenBench receipt",
+    "acceptance": {
+      "scope": "aggregate over exactly 50 authenticated chunks",
+      "record_count": 50000000,
+      "malformed_records_max": 0,
+      "duplicate_chunk_indices_max": 0,
+      "identity_mismatches_max": 0,
+      "native_relation_coverage": "SAME and OTHER must both be nonzero for both king perspectives; at least 1000 records per million must contain both relations for both perspectives",
+      "board_coverage": "both king boards and both move-source boards must be nonzero",
+      "target_coverage": "all three result labels, captures, promotions, and castling must be nonzero"
+    }
+  }
+}
